@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 from pydantic import BaseModel, Field, field_validator
@@ -17,7 +17,7 @@ from pydantic import BaseModel, Field, field_validator
 # ── Enums ─────────────────────────────────────────────────────────────────────
 
 
-class Severity(str, Enum):
+class Severity(StrEnum):
     """
     Severity levels for findings. Inherits from str so it serialises
     to JSON as a plain string ("HIGH") not as {"value": "HIGH"}.
@@ -31,7 +31,7 @@ class Severity(str, Enum):
     PASS = "PASS"
 
 
-class ScanMode(str, Enum):
+class ScanMode(StrEnum):
     """
     Controls which attack modules run.
     SCAN    = passive detection only
@@ -44,7 +44,7 @@ class ScanMode(str, Enum):
     DEEP = "DEEP"
 
 
-class Framework(str, Enum):
+class Framework(StrEnum):
     """Known agent frameworks. AUTO means AgentScan will try to detect it."""
 
     LANGCHAIN = "langchain"
