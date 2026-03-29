@@ -1,0 +1,58 @@
+# .github/workflows/ci.yml
+#
+# Runs on every push to main and every pull request.
+# Blocks merge if tests fail or linting fails.
+#
+# This is what hiring managers see when they visit your repo.
+# A green CI badge = professional project.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    name: Tests + Lint
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        python-version: ["3.12"]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+
+      - name: Set up Python ${{ matrix.python-version }}
+        run: uv python install ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: uv sync --all-extras --dev
+
+      - name: Install project in editable mode
+        run: uv pip install -e .
+
+      - name: Run ruff lint
+        run: uv run ruff check agentscan/ tests/
+
+      - name: Run ruff format check
+        run: uv run ruff format --check agentscan/ tests/
+
+      - name: Run mypy type check
+        run: uv run mypy agentscan/ --ignore-missing-imports
+
+      - name: Run pytest
+        run: uv run pytest tests/ -v --tb=short
+
+      - name: Upload coverage (optional — add codecov later)
+        if: always()
+        run: echo "Coverage upload placeholder — add codecov in Phase 2"

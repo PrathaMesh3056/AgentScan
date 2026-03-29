@@ -1,0 +1,28 @@
+# --- Project Specific ---
+.venv/
+venv/
+agentscan.egg-info/
+.python-version
+uv.lock
+
+# --- Python Cache ---
+__pycache__/
+*.py[cod]
+*$py.class
+
+# --- Tools & Testing ---
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# --- IDEs & OS ---
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# --- Environment Secrets ---
+.env
+*.log
