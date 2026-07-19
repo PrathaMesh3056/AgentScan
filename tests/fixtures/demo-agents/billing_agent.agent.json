@@ -1,0 +1,17 @@
+{
+  "agent_id": "billing_agent",
+  "declared_role": "billing_agent",
+  "credential_ref": "OPENAI_KEY_PROD",
+  "tools": [
+    {
+      "tool_name": "read_invoices",
+      "capability_scopes": ["read_invoices"],
+      "source": "mcp_config"
+    },
+    {
+      "tool_name": "generate_report",
+      "capability_scopes": ["generate_report"],
+      "source": "mcp_config"
+    }
+  ]
+}

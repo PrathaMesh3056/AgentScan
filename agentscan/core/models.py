@@ -124,8 +124,12 @@ class Finding(BaseModel):
 
     attack_id: str = Field(
         ...,
-        description="Attack module ID. e.g. 'ATK-001'",
-        pattern=r"^ATK-[A-Z0-9\-]+$",
+        description=(
+            "Finding ID. Prefix indicates which subsystem produced it: "
+            "'ATK-' = live attack module, 'SC-' = supply chain scanner, "
+            "'ID-' = identity & authorization audit."
+        ),
+        pattern=r"^(ATK|SC|ID)-[A-Z0-9\-]+$",
     )
 
     attack_name: str = Field(

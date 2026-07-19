@@ -1,0 +1,69 @@
+# agentscan/identity/policies/roles.yaml
+#
+# Least-privilege baseline for common agent roles.
+# No Python required to add a new role — same philosophy as
+# attacks/payloads/*.yaml. Edit this file, the auditor picks it up.
+#
+# Format:
+#   roles:                        — list of role policies
+#     - role: <name>               — must match AgentIdentity.declared_role exactly
+#       allowed_scopes: [...]      — capabilities this role is expected to need
+#       disallowed_scopes: [...]   — capabilities explicitly forbidden for this role
+#                                     (a scope that is neither allowed nor disallowed
+#                                     is STILL flagged — silence is not permission)
+#
+#   dangerous_capability_keywords: — substring match against ANY tool_name or
+#                                     capability_scope, for agents with NO
+#                                     declared_role at all (or a role not listed
+#                                     below). This is the fallback safety net.
+
+roles:
+
+  - role: customer_support_agent
+    allowed_scopes:
+      - read_customer_data
+      - send_email
+      - create_ticket
+    disallowed_scopes:
+      - delete_database
+      - execute_shell
+      - modify_permissions
+      - transfer_funds
+
+  - role: coding_agent
+    allowed_scopes:
+      - read_repo
+      - write_repo
+      - run_tests
+      - create_pr
+    disallowed_scopes:
+      - deploy_production
+      - modify_billing
+      - delete_repo
+
+  - role: research_agent
+    allowed_scopes:
+      - web_search
+      - read_documents
+      - summarize
+    disallowed_scopes:
+      - send_email
+      - execute_shell
+      - write_repo
+
+  - role: billing_agent
+    allowed_scopes:
+      - read_invoices
+      - generate_report
+    disallowed_scopes:
+      - transfer_funds
+      - delete_database
+      - modify_permissions
+
+dangerous_capability_keywords:
+  - "delete_"
+  - "exec_"
+  - "shell"
+  - "admin"
+  - "transfer_"
+  - "modify_permissions"
