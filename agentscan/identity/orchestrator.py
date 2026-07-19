@@ -71,9 +71,11 @@ def format_terminal_report(report: IdentityReport) -> str:
     severity_order = ["CRITICAL", "HIGH", "MEDIUM", "LOW"]
     sorted_findings = sorted(
         report.findings,
-        key=lambda f: severity_order.index(f.severity.value)
-        if f.severity.value in severity_order
-        else len(severity_order),
+        key=lambda f: (
+            severity_order.index(f.severity.value)
+            if f.severity.value in severity_order
+            else len(severity_order)
+        ),
     )
 
     for f in sorted_findings:
