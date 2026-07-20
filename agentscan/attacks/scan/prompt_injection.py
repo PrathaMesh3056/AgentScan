@@ -162,8 +162,7 @@ class PromptInjectionModule(AttackModule):
                     logger.error(f"Error testing variant {variant.get('id', '?')}: {e}")
 
         logger.info(
-            f"Prompt injection scan complete: "
-            f"{len(findings)}/{len(variants)} variants succeeded"
+            f"Prompt injection scan complete: {len(findings)}/{len(variants)} variants succeeded"
         )
         return findings
 
