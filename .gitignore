@@ -19,6 +19,7 @@ htmlcov/
 
 # --- IDEs & OS ---
 .vscode/
+.obsidian/
 .idea/
 .DS_Store
 Thumbs.db
