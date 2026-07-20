@@ -13,6 +13,9 @@ dependencies = [
     "loguru>=0.7",
 ]
 
+[project.scripts]
+agentscan = "agentscan.cli:app"
+
 [dependency-groups]
 dev = [
     "pytest>=9.0",

@@ -91,6 +91,7 @@ class AttackModule(ABC):
         remediation: str = "",
         payload_used: str | None = None,
         turn_number: int | None = None,
+        metadata: dict[str, object] | None = None,
     ) -> Finding:
         """
         Convenience factory so subclasses don't repeat boilerplate.
@@ -106,6 +107,7 @@ class AttackModule(ABC):
             remediation=remediation,
             payload_used=payload_used,
             turn_number=turn_number,
+            metadata=metadata or {},
         )
 
     def make_pass(self, description: str = "") -> Finding:
@@ -117,6 +119,15 @@ class AttackModule(ABC):
             severity=Severity.PASS,
             description=description or f"{self.attack_name}: target passed.",
         )
+
+    def variant_count(self) -> int:
+        """
+        How many attack variants this module tries.
+        Default is 1. Override in modules with multiple payloads
+        (e.g. YAML-driven modules) so the scorer's total_tests_run
+        denominator is correct.
+        """
+        return 1
 
     def __repr__(self) -> str:
         return (

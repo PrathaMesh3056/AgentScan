@@ -633,4 +633,72 @@ def format_terminal_report(report: IdentityReport) -> str:
 
 ---
 
-*26 concept sections covering Module 0 and Module 2B.*
+## 27. asyncio.gather with return_exceptions=True for resilient concurrency
+
+**File:** `agentscan/core/runner.py` — `run_scan`
+
+When orchestrating multiple attack modules against a target, the runner uses `asyncio.gather(*tasks, return_exceptions=True)`. This tells the Python asyncio event loop to run all attack tasks concurrently, but critically, if one module throws an unhandled exception (e.g. a parsing bug or network crash), it returns the `Exception` object in the results list rather than propagating it. Without `return_exceptions=True`, one broken attack module would crash the entire scan orchestration. This ensures maximum resilience: failing modules are logged and skipped, while successful modules still contribute their findings to the final report.
+
+```python
+    results = await asyncio.gather(
+        *[m.run(target) for m in modules],
+        return_exceptions=True,
+    )
+```
+
+**Test yourself:** If you remove `return_exceptions=True` and module 3 out of 10 raises a `ValueError`, what does `run_scan` return?
+
+---
+
+## 28. Deliberate duplication to avoid tight coupling (Micro-architecture)
+
+**File:** `agentscan/core/scorer.py` — `SEVERITY_WEIGHTS`
+
+The `SEVERITY_WEIGHTS` dictionary in the core attack scorer is an exact duplicate of the one in the identity audit module (`agentscan/identity/identity_scorer.py`). This violates DRY (Don't Repeat Yourself), but it is intentional. The core attack engine and the identity audit are distinct subsystems with different lifecycles and rules (e.g., core scores are denominator-based on `total_tests_run`, identity on `total_agents_audited`). Importing a shared constant from a generic `utils.py` creates a tight coupling where a change to severity weighting for live attacks might unintentionally break identity scoring. Deliberate duplication ensures these subsystems can evolve independently.
+
+```python
+SEVERITY_WEIGHTS: dict[Severity, float] = {
+    Severity.CRITICAL: 10,
+    Severity.HIGH: 5,
+    ...
+```
+
+**Test yourself:** What are the downsides of putting `SEVERITY_WEIGHTS` into a single `agentscan/common/constants.py` file?
+
+---
+
+## 29. Exit Codes for CI/CD Pipeline Integration
+
+**File:** `agentscan/cli.py` — `scan` command `--fail-on` check
+
+Security tools are mostly run by automated pipelines (GitHub Actions, GitLab CI), not humans. Pipelines determine success or failure strictly through process exit codes (0 = pass, non-zero = fail). The CLI implements a `--fail-on` flag that checks the highest severity finding against a numeric threshold. If a finding meets or exceeds that threshold, the CLI raises `typer.Exit(code=1)`. This signals to the CI/CD pipeline to halt the build or deployment, ensuring insecure AI agents never reach production.
+
+```python
+    if fail_on is not None:
+        threshold = _SEVERITY_ORDER.get(fail_on.upper(), 0)
+        for finding in report.findings:
+            finding_level = _SEVERITY_ORDER.get(finding.severity.value, 0)
+            if finding_level >= threshold:
+                raise typer.Exit(code=1)
+```
+
+**Test yourself:** What exit code does Python return when a script runs to the end normally without encountering `typer.Exit` or `sys.exit`?
+
+---
+
+## 30. Suppressing expected type errors in tests
+
+**File:** `tests/test_base.py` — `TestAttackModuleABC`
+
+Sometimes the code you write in a unit test is deliberately invalid in order to test error-handling or Python's built-in guards. When testing that `AttackModule` enforces the `@abstractmethod` contract on `run()`, we create an `IncompleteAttack` class and attempt to instantiate it to catch the expected `TypeError`. A strict type-checker (like Pyright/mypy) will correctly flag this instantiation as a compile-time error. Adding `# type: ignore[abstract]` tells the type-checker: "Yes, I know this is illegal at runtime, but I'm doing it on purpose."
+
+```python
+        with pytest.raises(TypeError):
+            IncompleteAttack()  # type: ignore[abstract]
+```
+
+**Test yourself:** If you delete `# type: ignore[abstract]`, will the `pytest` test fail to run, or will the static type-checker (e.g. `mypy` or `ruff`) complain?
+
+---
+
+*30 concept sections covering Module 0 (foundation), Module 1 (core attack engine), and Module 2B (identity audit).*
