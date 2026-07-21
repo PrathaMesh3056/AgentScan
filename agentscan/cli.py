@@ -189,9 +189,9 @@ def audit(  # noqa: PLR0912, PLR0913
         sev_order = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO", "PASS"]
         sorted_findings = sorted(
             all_findings,
-            key=lambda f: sev_order.index(f.severity.value)
-            if f.severity.value in sev_order
-            else 99,
+            key=lambda f: (
+                sev_order.index(f.severity.value) if f.severity.value in sev_order else 99
+            ),
         )
         for finding in sorted_findings:
             sev_str = finding.severity.value
