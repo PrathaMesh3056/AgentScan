@@ -1,0 +1,69 @@
+# agentscan/supply_chain/known_vulnerabilities.yaml
+#
+# Bundled offline vulnerability database for the AI Supply Chain Scanner.
+# v0.1: exact-pin matching only (package + bad_version must match exactly).
+# Future: version-range matching via the `packaging` library.
+#
+# Fields:
+#   package      — normalised PyPI name (lowercase, hyphens)
+#   bad_version  — exact pinned version that is vulnerable
+#   cve_id       — CVE identifier
+#   severity     — CRITICAL | HIGH | MEDIUM | LOW
+#   fix_version  — first safe version
+#   description  — one-line human summary of the vulnerability
+
+vulnerabilities:
+  - package: langchain
+    bad_version: "0.0.154"
+    cve_id: CVE-2023-34541
+    severity: CRITICAL
+    fix_version: "0.0.155"
+    description: >
+      Arbitrary code execution via eval() in LLMMathChain and similar chains.
+      An attacker controlling the LLM response can run arbitrary Python code
+      on the host machine.
+
+  - package: transformers
+    bad_version: "4.29.0"
+    cve_id: CVE-2023-7018
+    severity: HIGH
+    fix_version: "4.30.0"
+    description: >
+      Unsafe deserialization in from_pretrained() when loading untrusted
+      model weights via pickle. Allows arbitrary code execution.
+
+  - package: chromadb
+    bad_version: "0.3.22"
+    cve_id: CVE-2023-48022
+    severity: CRITICAL
+    fix_version: "0.4.0"
+    description: >
+      Unauthenticated API endpoints in the Chroma HTTP server allow any
+      network client to read, write, and delete all collections and documents.
+
+  - package: llama-index
+    bad_version: "0.8.5"
+    cve_id: CVE-2023-43793
+    severity: HIGH
+    fix_version: "0.8.6"
+    description: >
+      Prompt injection via untrusted document content in SimpleDirectoryReader.
+      Malicious documents can hijack the agent's reasoning chain.
+
+  - package: openai
+    bad_version: "0.27.0"
+    cve_id: CVE-2023-51736
+    severity: MEDIUM
+    fix_version: "1.0.0"
+    description: >
+      Deprecated library version with known API surface issues; lacks
+      certificate validation improvements present in v1+.
+
+  - package: langchain-community
+    bad_version: "0.0.1"
+    cve_id: CVE-2024-2965
+    severity: HIGH
+    fix_version: "0.0.20"
+    description: >
+      SQLDatabaseChain allows SQL injection via unsanitised LLM output
+      when construct_examples is enabled.

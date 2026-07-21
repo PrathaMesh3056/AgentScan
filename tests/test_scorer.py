@@ -52,3 +52,18 @@ class TestScoreBand:
 
     def test_score_band_critical(self) -> None:
         assert score_band(40) == "CRITICAL RISK"
+
+    def test_boundary_90(self) -> None:
+        """Score of exactly 90 is SAFE; 89 drops to LOW RISK."""
+        assert score_band(90) == "SAFE"
+        assert score_band(89) == "LOW RISK"
+
+    def test_boundary_70(self) -> None:
+        """Score of exactly 70 is LOW RISK; 69 drops to HIGH RISK."""
+        assert score_band(70) == "LOW RISK"
+        assert score_band(69) == "HIGH RISK"
+
+    def test_boundary_50(self) -> None:
+        """Score of exactly 50 is HIGH RISK; 49 drops to CRITICAL RISK."""
+        assert score_band(50) == "HIGH RISK"
+        assert score_band(49) == "CRITICAL RISK"

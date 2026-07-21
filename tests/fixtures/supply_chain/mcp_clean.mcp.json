@@ -1,0 +1,13 @@
+{
+  "name": "safe-agent-tools",
+  "auth": {
+    "type": "api_key",
+    "header": "X-API-Key"
+  },
+  "tools": [
+    {
+      "name": "read_document",
+      "scopes": ["read_customer_data"]
+    }
+  ]
+}

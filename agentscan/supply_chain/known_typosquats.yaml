@@ -1,0 +1,14 @@
+# agentscan/supply_chain/known_typosquats.yaml
+#
+# Mapping of malicious / lookalike package names to the legitimate package
+# they impersonate. Used by typosquat_detector.py for case-insensitive
+# substring + exact matching against installed dependencies.
+#
+# Format:
+#   malicious_name: legitimate_name
+
+typosquats:
+  langchian: langchain
+  openai-unofficial: openai
+  huggingface-hub-unofficial: huggingface-hub
+  anthropics: anthropic

@@ -74,3 +74,27 @@ class TestListAttacks:
         assert "ATK-001" in result.output
         assert "Direct Prompt Injection" in result.output
         assert "LLM01" in result.output
+
+
+class TestAuditCommand:
+    def test_audit_scan_deps_vulnerable_fixture(self) -> None:
+        """audit --scan-deps against vulnerable_requirements.txt fixture produces SC-001 in output."""
+        fixture_dir = "tests/fixtures/supply_chain"
+        result = runner.invoke(app, ["audit", fixture_dir, "--scan-deps"])
+        assert result.exit_code == 0
+        assert "SC-001" in result.output
+
+    def test_audit_scan_identity_demo_agents(self) -> None:
+        """audit --scan-identity against demo-agents fixture produces ID- findings in output."""
+        fixture_dir = "tests/fixtures/demo-agents"
+        result = runner.invoke(app, ["audit", fixture_dir, "--scan-identity"])
+        assert result.exit_code == 0
+        # The demo-agents fixture produces ID-005 (shared credential) and others
+        assert "ID-" in result.output
+
+    def test_audit_no_flags_runs_all_categories(self) -> None:
+        """audit with no flags runs all six scanners and shows a score."""
+        fixture_dir = "tests/fixtures/supply_chain"
+        result = runner.invoke(app, ["audit", fixture_dir])
+        assert result.exit_code == 0
+        assert "Audit Score" in result.output

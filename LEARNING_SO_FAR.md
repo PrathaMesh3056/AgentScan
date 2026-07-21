@@ -1,7 +1,8 @@
 # LEARNING_SO_FAR.md
 
-Everything I've learned by building AgentScan's Module 0 (foundation) and
-Module 2B (identity & authorization audit). One section per concept, ordered
+Everything I've learned by building AgentScan's Module 0 (foundation),
+Module 1 (core attack engine), Module 2B (identity & authorization audit),
+and Module 2A (AI supply chain scanner). One section per concept, ordered
 by the file it first appears in.
 
 ---
@@ -701,4 +702,196 @@ Sometimes the code you write in a unit test is deliberately invalid in order to 
 
 ---
 
-*30 concept sections covering Module 0 (foundation), Module 1 (core attack engine), and Module 2B (identity audit).*
+## 31. tomllib — stdlib TOML parsing (read-binary mode)
+
+**File:** `agentscan/supply_chain/dep_scanner.py` — `_parse_dependencies`
+
+Python 3.11 added `tomllib` to the stdlib, making it possible to parse `pyproject.toml` without any third-party library. One critical gotcha: `tomllib.load()` requires the file to be opened in **binary** mode (`"rb"`), not text mode (`"r"`). This is by design — the TOML spec requires UTF-8 encoding, and reading bytes lets the parser handle the BOM and encoding validation itself. Passing a text-mode file raises `AttributeError: read` because `tomllib` calls `.read()` expecting bytes. The dependency list lives at `data["project"]["dependencies"]` — a list of raw strings like `"langchain==0.0.154"` that still need further parsing.
+
+```python
+with open(pyproject, "rb") as f:  # must be binary mode
+    data = tomllib.load(f)
+raw_deps: list[str] = data.get("project", {}).get("dependencies", [])
+```
+
+**Test yourself:** What exception does `tomllib.load(open("pyproject.toml", "r"))` raise, and at which layer — Python's `open()`, `tomllib.load()`, or during parsing?
+
+---
+
+## 32. Regex exact-pin parsing for requirements.txt
+
+**File:** `agentscan/supply_chain/dep_scanner.py` — `_parse_dependencies`, `_EXACT_PIN_RE`
+
+Requirements files support many operator forms: `>=`, `~=`, `!=`, `==`, etc. Version-range matching (e.g. `langchain>=0.0.150,<0.0.160`) requires the `packaging` library to evaluate correctly — that's a new dependency. The v0.1 decision is: **only match exact pins** (`==`), which covers the most dangerous case (someone pinned a known-bad version) without adding a dependency. The regex `^([\w\-]+)==([\d.]+)$` captures `(package_name, version)` for lines like `langchain==0.0.154` and silently skips anything else. The `^...$` anchors prevent partial-line matches on edge cases like `langchain>=0.0.150`.
+
+```python
+_EXACT_PIN_RE = re.compile(r"^([\w\-]+)==([\d.]+)$")
+
+for line in req_txt.read_text(encoding="utf-8").splitlines():
+    line = line.strip()
+    if not line or line.startswith("#"):
+        continue
+    m = _EXACT_PIN_RE.match(line)
+    if m:
+        deps.append((m.group(1).lower(), m.group(2)))
+```
+
+**Test yourself:** Why does `_parse_dependencies` normalise the package name with `.lower()` before storing it, but keeps the version string as-is?
+
+---
+
+## 33. Bundled offline YAML vulnerability database — "start narrow" for testability
+
+**File:** `agentscan/supply_chain/known_vulnerabilities.yaml` — design decision
+
+The original roadmap included a live `cve_lookup.py` that queries NVD/OSV.dev APIs. That was deliberately deferred. Live API calls in a scanner create three problems: (1) tests become flaky — the API might be down or rate-limit during CI; (2) results are non-deterministic — the same scan produces different output as new CVEs are added; (3) network access is a new dependency for offline environments. The bundled YAML mirrors the same `manifest_loader.py` "start narrow" principle from Module 2B — ship something that works offline, document the live-lookup as a future refinement. The data file shape (`package`, `bad_version`, `cve_id`, `severity`, `fix_version`, `description`) is designed so adding live-lookup later only changes *how the data is fetched*, not *how it is consumed*.
+
+```yaml
+vulnerabilities:
+  - package: langchain
+    bad_version: "0.0.154"
+    cve_id: CVE-2023-34541
+    severity: CRITICAL
+    fix_version: "0.0.155"
+    description: >
+      Arbitrary code execution via eval() in LLMMathChain...
+```
+
+**Test yourself:** If you later add live CVE lookup, which function in `dep_scanner.py` do you replace, and which function stays identical?
+
+---
+
+## 34. AST-based static analysis — `ast.parse` + `ast.walk`
+
+**File:** `agentscan/supply_chain/config_auditor.py` — `_check_file`
+
+Parsing Python source with regex is fragile — strings, comments, and multi-line expressions all break naive patterns. `ast.parse(source)` produces a proper syntax tree where every construct is a typed node. `ast.walk(tree)` visits every node in the tree in breadth-first order, regardless of nesting depth. The scanner looks for three node types: `ast.Call` (function calls, for `torch.load` and `allow_dangerous_deserialization`), and `ast.Assign` (variable assignment, for `DEBUG = True`). Both `ast.parse` and `ast.walk` are in the stdlib — no external dependencies. If the file has a `SyntaxError`, `ast.parse` raises it; the scanner catches it and logs a warning, then continues to the next file.
+
+```python
+tree = ast.parse(source, filename=str(filepath))
+for node in ast.walk(tree):
+    if isinstance(node, ast.Call) and _is_torch_load(node):
+        ...
+```
+
+**Test yourself:** Why does `ast.walk` visit *all* nodes recursively, including nodes inside function bodies and class definitions? What would happen if you used `ast.iter_child_nodes` on the top-level module instead?
+
+---
+
+## 35. Inspecting AST keyword arguments
+
+**File:** `agentscan/supply_chain/config_auditor.py` — `_has_keyword`, `_is_torch_load`
+
+Every `ast.Call` node has a `keywords` list of `ast.keyword` objects. Each `ast.keyword` has `.arg` (the keyword name as a string) and `.value` (an AST node for the value expression). To check `weights_only=True`, the code checks `.arg == "weights_only"`, then `isinstance(.value, ast.Constant)`, then `.value.value is True`. The three-part check is necessary because: `.arg` could be anything; `.value` could be a variable reference (`ast.Name`), not a literal; and `.value.value` could be `False`, `None`, or any other constant. `_is_torch_load` checks that the call's `.func` is an `ast.Attribute` node with `.attr == "load"` and the object (`func.value`) is an `ast.Name` with `.id == "torch"` — matching only `torch.load(...)` not `my_torch.load(...)` or plain `load()`.
+
+```python
+if kw.arg == name and isinstance(kw.value, ast.Constant) and kw.value.value == value:
+    return True
+```
+
+**Test yourself:** What AST node type would `weights_only=SAFE_FLAG` produce for the keyword value (where `SAFE_FLAG` is a variable), and why would `_has_keyword` return `False` for it?
+
+---
+
+## 36. Shannon entropy for secret detection — filtering false positives
+
+**File:** `agentscan/supply_chain/secret_scanner.py` — `_shannon_entropy`, `scan_secrets`
+
+A regex for `SOME_KEY = "value"` will match both `OPENAI_API_KEY = "sk-proj-aB3x..."` (a real secret) and `DEBUG_TOKEN = "password123"` (a human-typed placeholder). The entropy gate separates them: Shannon entropy measures the *randomness* of a string in bits. `"password123"` has low entropy (~2.9 bits) — it uses a small character alphabet with repetitive patterns. `"sk-proj-aB3xK9..."` has high entropy (~4.5 bits) — it uses uppercase, lowercase, digits, and hyphens in an effectively random distribution. The threshold `3.5` was chosen empirically: real generated secrets (OpenAI, Anthropic, AWS) consistently score above it, while human-typed placeholders consistently score below it. Formula: `-∑ p(c) * log₂(p(c))` for each distinct character `c` in the string.
+
+```python
+def _shannon_entropy(s: str) -> float:
+    length = len(s)
+    freq: dict[str, int] = {}
+    for ch in s:
+        freq[ch] = freq.get(ch, 0) + 1
+    return -sum((count / length) * math.log2(count / length) for count in freq.values())
+```
+
+**Test yourself:** Why does the entropy formula use `log2` (base 2) instead of `log10` or `ln`? What unit does the result have?
+
+---
+
+## 37. Cross-module imports between sibling feature modules
+
+**File:** `agentscan/supply_chain/mcp_auditor.py` — `from agentscan.identity.permission_mapper import load_dangerous_keywords`
+
+`mcp_auditor.py` imports `load_dangerous_keywords` from `identity/permission_mapper.py`. This crosses the `supply_chain` → `identity` boundary. The rule that forbids cross-module imports in `core/scorer.py`'s docstring is: *core must not depend on identity/supply_chain* — because `core` is a foundation layer used by everyone. The reverse direction (feature module → feature module) is allowed when there is a genuine shared concept: in this case, the dangerous-keyword list is a security policy, not an `identity`-specific internal. `typosquat_detector.py` similarly imports `_parse_dependencies` from `dep_scanner.py` within the same package — avoiding duplicate file-parsing logic. The key test: would importing this break the dependency hierarchy? Here it doesn't, because neither `supply_chain` nor `identity` is in `core`.
+
+```python
+from agentscan.identity.permission_mapper import load_dangerous_keywords
+```
+
+**Test yourself:** If `core/scorer.py` needed the dangerous keywords list, why would importing from `identity.permission_mapper` be a problem there — even though it's fine in `mcp_auditor.py`?
+
+---
+
+## 38. `tuple[list[Finding], int]` return convention — `checks_run` as the scorer's denominator
+
+**File:** All scanner functions in `supply_chain/` — `scan_dependencies`, `scan_typosquats`, `scan_config`, `scan_secrets`, `scan_mcp_configs`
+
+Every static-audit scanner returns `tuple[list[Finding], int]`. The second value is `checks_run` — the count of individual items examined (packages parsed, files scanned, MCP configs found). This number fills the same role as `variant_count()` in the attack modules: it is the denominator in `calculate_score(findings, total_checks)`. Without it, the score would be meaningless — 1 finding from scanning 1 package is a 100% failure rate, while 1 finding from scanning 100 packages is 1%. The convention is documented in the function signatures and docstrings so future scanner authors know exactly what the second return value means. It also lets the CLI aggregate `total_checks` across all scanners for a single combined score.
+
+```python
+def scan_dependencies(path: str) -> tuple[list[Finding], int]:
+    deps = _parse_dependencies(path)
+    checks_run = len(deps)
+    ...  # match against CVE db
+    return findings, checks_run
+```
+
+**Test yourself:** If `scan_config` finds 3 `.py` files and one has `torch.load` without `weights_only=True`, what are the values of `findings` and `checks_run` returned?
+
+---
+
+## 39. Lazy imports in CLI — keeping startup fast
+
+**File:** `agentscan/cli.py` — `audit` command
+
+The `audit` command imports all six scanner modules inside the `if run_all or scan_deps:` branches, not at the top of `cli.py`. This is *lazy importing*: the module is only loaded when that branch is actually executed. The benefit is startup speed — if you run `agentscan scan <url>`, Python never imports `tomllib`, `ast`, or `yaml` for the supply-chain scanners. For a CLI tool, startup latency is user-visible (every tab-complete, every `--help` call). The pattern is idiomatic for large CLI apps (e.g. pip, black). The trade-off: import errors surface at runtime, not at startup — mitigated here because all modules are stdlib or already-installed (pyyaml is in `pyproject.toml` as a dependency).
+
+```python
+if run_all or scan_deps:
+    from agentscan.supply_chain.dep_scanner import scan_dependencies
+    f, c = scan_dependencies(path)
+    all_findings.extend(f)
+    total_checks += c
+```
+
+**Test yourself:** If you moved all the `from agentscan.supply_chain.*` imports to the top of `cli.py`, what would happen to the output of `time agentscan list-attacks`?
+
+---
+
+## 40. "Run all by default, filter by flag" CLI convention
+
+**File:** `agentscan/cli.py` — `audit` command, `run_all` logic
+
+The `audit` command has six `--scan-*` boolean flags, all defaulting to `False`. When **none** of them are passed, `run_all` is set to `True` and all six scanners execute. This is a deliberate UX decision: a developer running `agentscan audit .` for the first time gets a complete picture immediately — they don't have to discover that six flags exist and pass them all manually. Only when they want to isolate one scanner (e.g. in CI to fail fast on secrets) do they pass a specific flag. The detection logic is: `run_all = not any([scan_deps, scan_config, scan_secrets, scan_typo, scan_mcp, scan_identity])`. This mirrors the `identity` orchestrator's design: `run_identity_audit()` runs all checks by default. The pattern is used by many security tools (nmap, semgrep) — sensible defaults, opt-in narrowing.
+
+```python
+run_all = not any([scan_deps, scan_config, scan_secrets, scan_typo, scan_mcp, scan_identity])
+```
+
+**Test yourself:** If you pass both `--scan-deps` and `--scan-secrets`, does `run_all` become `True` or `False`? What runs?
+
+---
+
+## 41. Fixture naming must match scanner expectations
+
+**File:** `tests/fixtures/supply_chain/requirements.txt` — discovered during debugging
+
+The `dep_scanner._parse_dependencies()` function looks for exactly `requirements.txt` in the given path. The fixture was originally named `vulnerable_requirements.txt` (descriptive) — but the scanner never found it because it only looks for the standard filename. This produced a silent failure: `checks_run = 0`, `findings = []`, and the CLI test asserted `"SC-001" in result.output` but got `"No issues found."` instead. The fix was to rename the fixture to `requirements.txt`. The lesson: fixture filenames must match the exact filename patterns your scanner code looks for. The alternative — making the scanner accept any `*requirements*.txt` glob — was rejected because it would also match `clean_requirements.txt` in the same dir, producing false positives in the CLI smoke test. Standard filenames (`requirements.txt`, `pyproject.toml`) are correct: the scanner emulates how a real project is structured, not how a test suite is organised.
+
+```powershell
+# Before (wrong): scanner looks for requirements.txt, finds nothing
+# tests/fixtures/supply_chain/vulnerable_requirements.txt
+
+# After (correct): standard name, scanner discovers it
+# tests/fixtures/supply_chain/requirements.txt
+```
+
+**Test yourself:** If you have both `requirements.txt` and `requirements-dev.txt` in a project, and your scanner only reads `requirements.txt`, what class of vulnerabilities would it miss?
+
+---
+
+*41 concept sections covering Module 0 (foundation), Module 1 (core attack engine), Module 2B (identity audit), and Module 2A (AI supply chain scanner).*

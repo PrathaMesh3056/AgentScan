@@ -3,7 +3,9 @@
 # CLI entry point for AgentScan.
 #
 # Commands:
-#   agentscan scan <target> [--framework auto] [--output report.json] [--fail-on CRITICAL]
+#   agentscan scan   <target> [--framework auto] [--output report.json] [--fail-on CRITICAL]
+#   agentscan audit  <path>   [--scan-deps] [--scan-config] [--scan-secrets]
+#                             [--scan-typo] [--scan-mcp] [--scan-identity]
 #   agentscan list-attacks
 #
 # Uses Typer for argument parsing and Rich for coloured terminal output.
@@ -19,9 +21,9 @@ from rich.console import Console
 from rich.table import Table
 
 from agentscan.attacks.registry import registry
-from agentscan.core.models import Framework, Target
+from agentscan.core.models import Finding, Framework, Target
 from agentscan.core.runner import run_scan
-from agentscan.core.scorer import score_band
+from agentscan.core.scorer import calculate_score, score_band
 
 app = typer.Typer(
     name="agentscan",
@@ -109,6 +111,110 @@ def scan(
             finding_level = _SEVERITY_ORDER.get(finding.severity.value, 0)
             if finding_level >= threshold:
                 raise typer.Exit(code=1)
+
+
+@app.command()
+def audit(  # noqa: PLR0912, PLR0913
+    path: str = typer.Argument(..., help="Directory to audit (manifests, source files, deps)."),
+    scan_deps: bool = typer.Option(False, "--scan-deps", help="Scan dependencies for known CVEs."),
+    scan_config: bool = typer.Option(
+        False, "--scan-config", help="Audit config files for dangerous patterns."
+    ),
+    scan_secrets: bool = typer.Option(False, "--scan-secrets", help="Scan for hardcoded secrets."),
+    scan_typo: bool = typer.Option(False, "--scan-typo", help="Detect typosquatted packages."),
+    scan_mcp: bool = typer.Option(False, "--scan-mcp", help="Audit MCP configuration files."),
+    scan_identity: bool = typer.Option(
+        False, "--scan-identity", help="Run identity & authorization audit."
+    ),
+    output: Path | None = typer.Option(None, help="Write JSON findings to this file."),  # noqa: B008
+) -> None:
+    """Audit a project directory for AI supply-chain and identity risks."""
+    # If no flag is given, run all six categories (sensible default)
+    run_all = not any([scan_deps, scan_config, scan_secrets, scan_typo, scan_mcp, scan_identity])
+
+    all_findings: list[Finding] = []
+    total_checks = 0
+
+    # ── Lazy imports (keep startup fast when only `scan` is used) ─────────────
+    if run_all or scan_deps:
+        from agentscan.supply_chain.dep_scanner import scan_dependencies
+
+        f, c = scan_dependencies(path)
+        all_findings.extend(f)
+        total_checks += c
+
+    if run_all or scan_config:
+        from agentscan.supply_chain.config_auditor import scan_config as _scan_cfg
+
+        f, c = _scan_cfg(path)
+        all_findings.extend(f)
+        total_checks += c
+
+    if run_all or scan_secrets:
+        from agentscan.supply_chain.secret_scanner import scan_secrets as _scan_sec
+
+        f, c = _scan_sec(path)
+        all_findings.extend(f)
+        total_checks += c
+
+    if run_all or scan_typo:
+        from agentscan.supply_chain.typosquat_detector import scan_typosquats
+
+        f, c = scan_typosquats(path)
+        all_findings.extend(f)
+        total_checks += c
+
+    if run_all or scan_mcp:
+        from agentscan.supply_chain.mcp_auditor import scan_mcp_configs
+
+        f, c = scan_mcp_configs(path)
+        all_findings.extend(f)
+        total_checks += c
+
+    if run_all or scan_identity:
+        from agentscan.identity.orchestrator import run_identity_audit
+
+        report = run_identity_audit(path)
+        all_findings.extend(report.findings)
+        total_checks += max(len(report.agents_found), 1)
+
+    # ── Render findings table ──────────────────────────────────────────────────
+    if all_findings:
+        table = Table(title="AgentScan Audit Findings", show_lines=True)
+        table.add_column("Finding ID", style="cyan", no_wrap=True)
+        table.add_column("Severity", no_wrap=True)
+        table.add_column("Description")
+
+        # Sort: CRITICAL first
+        sev_order = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO", "PASS"]
+        sorted_findings = sorted(
+            all_findings,
+            key=lambda f: sev_order.index(f.severity.value)
+            if f.severity.value in sev_order
+            else 99,
+        )
+        for finding in sorted_findings:
+            sev_str = finding.severity.value
+            colour = _SEVERITY_COLOURS.get(sev_str, "")
+            table.add_row(
+                finding.attack_id,
+                f"[{colour}]{sev_str}[/{colour}]",
+                finding.description,
+            )
+        console.print(table)
+    else:
+        console.print("[green]No issues found.[/green]")
+
+    # ── Score ──────────────────────────────────────────────────────────────────
+    score = calculate_score(all_findings, max(total_checks, 1))
+    band = score_band(score)
+    console.print(f"\nAgentScan Audit Score: {score}/100  [{band}]")
+
+    # ── JSON output ────────────────────────────────────────────────────────────
+    if output is not None:
+        data = [f.model_dump(mode="json") for f in all_findings]
+        output.write_text(json.dumps(data, indent=2))
+        console.print(f"Findings written to {output}")
 
 
 @app.command("list-attacks")

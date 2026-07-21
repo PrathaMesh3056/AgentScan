@@ -41,6 +41,16 @@ class TestExtractText:
     def test_extract_text_output_key(self, module: PromptInjectionModule) -> None:
         assert module._extract_text({"output": "bar"}) == "bar"
 
+    def test_extract_text_content_key(self, module: PromptInjectionModule) -> None:
+        assert module._extract_text({"content": "content_value"}) == "content_value"
+
+    def test_extract_text_raw_key(self, module: PromptInjectionModule) -> None:
+        assert module._extract_text({"raw": "raw_value"}) == "raw_value"
+
+    def test_extract_text_fallback(self, module: PromptInjectionModule) -> None:
+        """No recognised key → falls back to str(response)."""
+        assert module._extract_text({"unknown_key": "val"}) == str({"unknown_key": "val"})
+
 
 # ── _check_detection tests ───────────────────────────────────────────────────
 
