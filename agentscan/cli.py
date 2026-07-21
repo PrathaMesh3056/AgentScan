@@ -21,8 +21,8 @@ from rich.console import Console
 from rich.table import Table
 
 from agentscan.attacks.registry import registry
-from agentscan.core.models import Finding, Framework, Target
-from agentscan.core.runner import run_scan
+from agentscan.core.models import Finding, Framework, ScanMode, Target
+from agentscan.core.runner import run_scan_multi
 from agentscan.core.scorer import calculate_score, score_band
 
 app = typer.Typer(
@@ -66,13 +66,24 @@ def scan(
         "--fail-on",
         help="Exit with code 1 if any finding has severity >= this threshold.",
     ),  # noqa: B008
+    exploit: bool = typer.Option(
+        False, "--exploit", help="Run active EXPLOIT modules alongside SCAN modules."
+    ),
+    system_prompt: str | None = typer.Option(
+        None,
+        "--system-prompt",
+        help="The expected system prompt content for EXPLOIT mode exfiltration tests.",
+    ),
 ) -> None:
     """Run a security scan against an LLM agent endpoint."""
     # Build target
-    target_obj = Target(url=target, framework=Framework(framework))
+    target_obj = Target(url=target, framework=Framework(framework), system_prompt=system_prompt)
+
+    # Determine modes
+    modes = [ScanMode.SCAN] + ([ScanMode.EXPLOIT] if exploit else [])
 
     # Run scan
-    report = asyncio.run(run_scan(target_obj))
+    report = asyncio.run(run_scan_multi(target_obj, modes))
 
     # Render findings table
     if report.findings:

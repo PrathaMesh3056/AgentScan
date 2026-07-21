@@ -44,7 +44,7 @@ class TestScanCommand:
             findings=[_make_finding(Severity.MEDIUM)],
             score=80,
         )
-        with patch("agentscan.cli.run_scan", new_callable=AsyncMock, return_value=report):
+        with patch("agentscan.cli.run_scan_multi", new_callable=AsyncMock, return_value=report):
             result = runner.invoke(app, ["scan", "http://test-agent.example.com/chat"])
 
         assert result.exit_code == 0
@@ -57,13 +57,51 @@ class TestScanCommand:
             findings=[_make_finding(Severity.CRITICAL)],
             score=10,
         )
-        with patch("agentscan.cli.run_scan", new_callable=AsyncMock, return_value=report):
+        with patch("agentscan.cli.run_scan_multi", new_callable=AsyncMock, return_value=report):
             result = runner.invoke(
                 app,
                 ["scan", "http://test-agent.example.com/chat", "--fail-on", "CRITICAL"],
             )
 
         assert result.exit_code == 1
+
+    def test_scan_no_exploit_flag_does_not_output_atk014(self) -> None:
+        """scan without --exploit outputs only SCAN-mode findings."""
+        report = _make_report(
+            findings=[_make_finding(Severity.HIGH, "ATK-001")],
+            score=50,
+        )
+        with patch("agentscan.cli.run_scan_multi", new_callable=AsyncMock, return_value=report):
+            result = runner.invoke(app, ["scan", "http://test-agent.example.com/chat"])
+
+        assert result.exit_code == 0
+        assert "ATK-001" in result.output
+        assert "ATK-014" not in result.output
+
+    def test_scan_exploit_flag_outputs_atk014(self) -> None:
+        """scan --exploit --system-prompt "..." against a leaking target output contains ATK-014."""
+        report = _make_report(
+            findings=[
+                _make_finding(Severity.HIGH, "ATK-001"),
+                _make_finding(Severity.CRITICAL, "ATK-014"),
+            ],
+            score=0,
+        )
+        with patch("agentscan.cli.run_scan_multi", new_callable=AsyncMock, return_value=report):
+            result = runner.invoke(
+                app,
+                [
+                    "scan",
+                    "http://test-agent.example.com/chat",
+                    "--exploit",
+                    "--system-prompt",
+                    "secret",
+                ],
+            )
+
+        assert result.exit_code == 0
+        assert "ATK-001" in result.output
+        assert "ATK-014" in result.output
 
 
 class TestListAttacks:

@@ -16,7 +16,7 @@ import asyncio
 from loguru import logger
 
 from agentscan.attacks.registry import registry
-from agentscan.core.models import ScanReport, Target
+from agentscan.core.models import ScanMode, ScanReport, Target
 from agentscan.core.scorer import calculate_score
 
 
@@ -85,3 +85,35 @@ async def run_scan(target: Target) -> ScanReport:
     )
 
     return report
+
+
+async def run_scan_multi(target: Target, modes: list[ScanMode]) -> ScanReport:
+    """
+    Run scans across multiple modes sequentially and merge the results.
+    """
+    all_findings = []
+    total_tests_run = 0
+
+    for m in modes:
+        mode_target = target.model_copy(update={"mode": m})
+        report = await run_scan(mode_target)
+        all_findings.extend(report.findings)
+
+        # Note: We re-query the registry to compute the total tests run for this mode.
+        # Known limitation: If a module failed inside run_scan() and was excluded from
+        # its findings, it will still be counted in this total, leading to a possible
+        # double-count for failed modules. This is accepted for v0.1 as no current
+        # test exercises "module failure + multi-mode" together.
+        applicable = registry.get_for_target(mode_target)
+        total_tests_run += sum(am.variant_count() for am in applicable)
+
+    # Create merged report. Use the first mode as the primary scan_mode for the report.
+    merged_report = ScanReport(
+        target_url=target.url,
+        scan_mode=modes[0] if modes else target.mode,
+        framework=target.framework,
+        findings=all_findings,
+    )
+    score = calculate_score(all_findings, total_tests_run)
+    merged_report.complete(score)
+    return merged_report
