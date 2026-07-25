@@ -32,7 +32,7 @@ Thumbs.db
 *.pdf
 *.html
 *.sarif
-*.json
+*report*.json
 gtk3-installer.exe
 pytest_collect.txt
 

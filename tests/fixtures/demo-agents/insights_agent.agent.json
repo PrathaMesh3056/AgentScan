@@ -1,0 +1,22 @@
+{
+  "agent_id": "insights_agent",
+  "declared_role": null,
+  "credential_ref": "INSIGHTS_KEY",
+  "tools": [
+    {
+      "tool_name": "web_search",
+      "capability_scopes": ["web_search"],
+      "source": "mcp_config"
+    },
+    {
+      "tool_name": "read_documents",
+      "capability_scopes": ["read_documents"],
+      "source": "mcp_config"
+    },
+    {
+      "tool_name": "summarize",
+      "capability_scopes": ["summarize"],
+      "source": "mcp_config"
+    }
+  ]
+}

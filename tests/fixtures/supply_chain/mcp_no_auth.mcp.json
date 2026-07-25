@@ -1,0 +1,9 @@
+{
+  "name": "agent-tools",
+  "tools": [
+    {
+      "name": "execute_shell",
+      "scopes": ["shell_access", "run_commands"]
+    }
+  ]
+}
