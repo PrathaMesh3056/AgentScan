@@ -41,8 +41,8 @@ AgentScan operates in both **Live Target Modes** (firing payloads over the netwo
 AgentScan can be installed directly from source or via PyPI (once published).
 
 ```bash
-git clone https://github.com/prathamesh/AgentScan.git
-cd AgentScan
+git clone https://github.com/PrathaMesh3056/AgentScan
+cd agentscan
 pip install -e .
 ```
 
