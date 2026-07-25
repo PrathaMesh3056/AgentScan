@@ -1,0 +1,36 @@
+{% extends "base.html.j2" %}
+{% block content %}
+    <h1>AgentScan Identity Report</h1>
+    <h2>Identity Score: {{ report.identity_score }} / 100</h2>
+
+    <h3>Agents Audited</h3>
+    <ul>
+        {% for agent in report.agents_found %}
+        <li>{{ agent.agent_id }} ({{ agent.declared_role or 'No role' }})</li>
+        {% else %}
+        <li>No agents found.</li>
+        {% endfor %}
+    </ul>
+
+    <h3>Findings</h3>
+    {% if report.findings %}
+    <div class="findings-table">
+        <div class="table-header">Finding ID</div>
+        <div class="table-header">Severity</div>
+        <div class="table-header">Description</div>
+
+        {% for finding in report.findings %}
+        <div>{{ finding.attack_id }}</div>
+        <div class="severity-{{ finding.severity.value }}">{{ finding.severity.value }}</div>
+        <div>
+            {{ finding.description }}
+            {% if finding.evidence %}
+            <br><small><strong>Evidence:</strong> {{ finding.evidence }}</small>
+            {% endif %}
+        </div>
+        {% endfor %}
+    </div>
+    {% else %}
+    <p>No findings to report.</p>
+    {% endif %}
+{% endblock %}

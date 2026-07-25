@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>AgentScan Report</title>
+    <style>
+        :root {
+            --color-critical: #C0392B;
+            --color-high: #D68910;
+            --color-medium: #D4AC0D;
+            --color-low: #1E8449;
+            --color-info: #7F8C8D;
+            --color-pass: #27AE60;
+            --bg-color: #F8F9F9;
+            --text-color: #2C3E50;
+            --border-color: #BDC3C7;
+        }
+        @page { margin: 20mm; }
+        body {
+            font-family: Arial, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            margin: 0;
+            padding: 20px;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        h1, h2, h3 {
+            color: #2C3E50;
+        }
+        .severity-CRITICAL { color: var(--color-critical); font-weight: bold; }
+        .severity-HIGH { color: var(--color-high); font-weight: bold; }
+        .severity-MEDIUM { color: var(--color-medium); font-weight: bold; }
+        .severity-LOW { color: var(--color-low); font-weight: bold; }
+        .severity-INFO { color: var(--color-info); font-weight: bold; }
+        .severity-PASS { color: var(--color-pass); font-weight: bold; }
+
+        .findings-table {
+            display: grid;
+            grid-template-columns: 1fr 1fr 3fr;
+            gap: 1px;
+            background-color: var(--border-color);
+            border: 1px solid var(--border-color);
+            margin-top: 20px;
+        }
+        .findings-table > div {
+            background-color: #FFFFFF;
+            padding: 10px;
+        }
+        .table-header {
+            font-weight: bold;
+            background-color: #EAECEE !important;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        {% block content %}{% endblock %}
+    </div>
+</body>
+</html>

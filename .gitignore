@@ -27,3 +27,14 @@ Thumbs.db
 # --- Environment Secrets ---
 .env
 *.log
+
+# --- AgentScan Reports & Temp Files ---
+*.pdf
+*.html
+*.sarif
+*.json
+gtk3-installer.exe
+pytest_collect.txt
+
+generate_sample.py
+

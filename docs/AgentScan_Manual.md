@@ -77,7 +77,7 @@ The `scan` command is your primary tool for red-teaming an active endpoint.
 agentscan scan \
   --target http://localhost:8000/chat \
   --framework auto \
-  --output report.json \
+  --output report.[json|html|pdf|sarif] \
   --fail-on HIGH \
   --exploit \
   --system-prompt "You are a helpful assistant. Secret: RED-7"
@@ -138,9 +138,12 @@ Located in `agentscan/core/`, the attack engine is built for extreme concurrency
 
 > [!TIP]
 > **EXPLOIT Mode Modules**
-> AgentScan currently ships with two active EXPLOIT modules:
+> AgentScan currently ships with five active EXPLOIT modules:
 > - **Active Data Exfiltration (`ATK-014`)**: Attempts to exfiltrate the system prompt by tricking the agent into leaking it. Emits a CRITICAL finding if a >50% word overlap is detected.
 > - **Tool Call Hijacking (`ATK-015`)**: Attempts to coerce the agent into calling a tool towards an attacker-controlled destination (e.g., `agentscan-hijack-test.invalid`). Emits a CRITICAL finding if the injection is successful.
+> - **Memory / Persistent State Poisoning (`ATK-016`)**: Plants a malicious "fact" in turn 1 and verifies if the agent hallucinates it back as truth in turn 2.
+> - **Cross-Agent Trust Injection (`ATK-017`)**: Tests if the agent grants elevated privileges to a payload merely *framed* as originating from a trusted orchestrator.
+> - **Credential Harvest (`ATK-018`)**: Extracts hardcoded secrets from the system prompt while safely redacting them from the final report.
 
 ### 4.2. Identity & Authorization Audit
 
@@ -157,6 +160,15 @@ Located in `agentscan/supply_chain/`, this subsystem parses configurations.
 - **Config Auditor:** Uses Python's `ast` (Abstract Syntax Tree) to walk Python code looking for dangerous functions like `eval()`, `exec()`, or `subprocess.Popen(..., shell=True)`.
 
 ---
+
+### 4.4. Reporting Engine
+
+Located in `agentscan/reporting/`, this subsystem translates raw scan findings into human-readable or CI-consumable formats.
+
+- **Compliance Mapping:** Cross-references OWASP LLM IDs against NIST AI RMF, MITRE ATLAS, and the EU AI Act using a decoupled data file (`compliance_mappings.yaml`).
+- **HTML & PDF Generation:** Uses Jinja2 templates (with strict autoescaping to prevent XSS from reflected prompt injections) and WeasyPrint to generate static, offline-ready reports.
+- **SARIF Export:** Generates OASIS-compliant SARIF JSON for seamless integration into GitHub Code Scanning and enterprise security dashboards.
+
 
 ## 5. Extending AgentScan (Developer Guide)
 
@@ -233,5 +245,4 @@ AgentScan is currently in Phase 0 / Phase 1. Upcoming features include:
 > [!NOTE]
 > 1. **DEEP Mode Expansion:** Local neural probing modules utilizing PyTorch/Transformers hooks to detect latent trojans and memory drift in open-weight models.
 > 2. **Advanced Exploitation:** `langgraph` based multi-turn automated exploitation chains (e.g., combining Prompt Injection with RAG poisoning to exfiltrate data).
-> 3. **Comprehensive Reporting:** Exporting PDF and HTML compliance reports mapped specifically to EU AI Act and MITRE ATLAS frameworks.
-> 4. **AgentScan SaaS:** A centralized dashboard for continuous agent monitoring.
+> 3. **AgentScan SaaS:** A centralized dashboard for continuous agent monitoring.

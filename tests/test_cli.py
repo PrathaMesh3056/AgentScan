@@ -103,6 +103,34 @@ class TestScanCommand:
         assert "ATK-001" in result.output
         assert "ATK-014" in result.output
 
+    def test_scan_output_html_writes_valid_file(self, tmp_path) -> None:
+        """scan --output report.html writes valid HTML and exits 0."""
+        report = _make_report([_make_finding(Severity.HIGH)], 50)
+        out = tmp_path / "report.html"
+        with patch("agentscan.cli.run_scan_multi", new_callable=AsyncMock, return_value=report):
+            result = runner.invoke(
+                app, ["scan", "http://test-agent.example.com/chat", "--output", str(out)]
+            )
+
+        assert result.exit_code == 0
+        assert out.exists()
+        assert "<!DOCTYPE html>" in out.read_text()
+
+    def test_scan_output_sarif_writes_valid_file(self, tmp_path) -> None:
+        """scan --output report.sarif writes valid SARIF JSON and exits 0."""
+        report = _make_report([_make_finding(Severity.HIGH)], 50)
+        out = tmp_path / "report.sarif"
+        with patch("agentscan.cli.run_scan_multi", new_callable=AsyncMock, return_value=report):
+            result = runner.invoke(
+                app, ["scan", "http://test-agent.example.com/chat", "--output", str(out)]
+            )
+
+        assert result.exit_code == 0
+        assert out.exists()
+        content = out.read_text()
+        assert '"version": "2.1.0"' in content
+        assert '"$schema"' in content
+
 
 class TestListAttacks:
     def test_list_attacks_shows_atk001(self) -> None:

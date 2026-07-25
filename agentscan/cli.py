@@ -21,9 +21,10 @@ from rich.console import Console
 from rich.table import Table
 
 from agentscan.attacks.registry import registry
-from agentscan.core.models import Finding, Framework, ScanMode, Target
+from agentscan.core.models import Finding, Framework, ScanMode, ScanReport, Target
 from agentscan.core.runner import run_scan_multi
 from agentscan.core.scorer import calculate_score, score_band
+from agentscan.identity.models import IdentityReport
 
 app = typer.Typer(
     name="agentscan",
@@ -54,6 +55,29 @@ _SEVERITY_ORDER: dict[str, int] = {
     "INFO": 0,
     "PASS": 0,
 }
+
+
+def write_report(report: ScanReport | IdentityReport, output_path: Path) -> None:
+    ext = output_path.suffix.lower()
+    if ext == ".json":
+        data = report.to_dict() if hasattr(report, "to_dict") else report.model_dump(mode="json")
+        output_path.write_text(json.dumps(data, indent=2))
+    elif ext == ".html":
+        from agentscan.reporting.html_report import render_html_report
+
+        html = render_html_report(report)
+        output_path.write_text(html, encoding="utf-8")
+    elif ext == ".pdf":
+        from agentscan.reporting.pdf_report import render_pdf_report
+
+        render_pdf_report(report, output_path)
+    elif ext == ".sarif":
+        from agentscan.reporting.sarif_report import to_sarif
+
+        data = to_sarif(report)
+        output_path.write_text(json.dumps(data, indent=2))
+    else:
+        raise typer.BadParameter(f"Unsupported output format: {ext}")
 
 
 @app.command()
@@ -112,7 +136,7 @@ def scan(
 
     # Write JSON output
     if output is not None:
-        output.write_text(json.dumps(report.to_dict(), indent=2))
+        write_report(report, output)
         console.print(f"Report written to {output}")
 
     # Fail-on threshold check
@@ -223,8 +247,18 @@ def audit(  # noqa: PLR0912, PLR0913
 
     # ── JSON output ────────────────────────────────────────────────────────────
     if output is not None:
-        data = [f.model_dump(mode="json") for f in all_findings]
-        output.write_text(json.dumps(data, indent=2))
+        import uuid
+
+        from agentscan.identity.models import IdentityReport
+
+        report = IdentityReport(
+            audit_id=str(uuid.uuid4()),
+            path_audited=path,
+            agents_found=[],
+            findings=all_findings,
+            identity_score=score,
+        )
+        write_report(report, output)
         console.print(f"Findings written to {output}")
 
 

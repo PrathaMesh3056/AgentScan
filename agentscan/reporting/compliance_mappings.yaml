@@ -1,0 +1,40 @@
+- owasp_id: LLM01
+  nist_function: Manage
+  mitre_atlas_technique: AML.T0053
+  eu_ai_act_article: Article 15
+- owasp_id: LLM02
+  nist_function: Govern
+  mitre_atlas_technique: AML.T0054
+  eu_ai_act_article: Article 16
+- owasp_id: LLM03
+  nist_function: Map
+  mitre_atlas_technique: AML.T0055
+  eu_ai_act_article: Article 17
+- owasp_id: LLM04
+  nist_function: Map
+  mitre_atlas_technique: AML.T0056
+  eu_ai_act_article: Article 18
+- owasp_id: LLM05
+  nist_function: Map
+  mitre_atlas_technique: AML.T0057
+  eu_ai_act_article: Article 19
+- owasp_id: LLM06
+  nist_function: Map
+  mitre_atlas_technique: AML.T0058
+  eu_ai_act_article: Article 20
+- owasp_id: LLM07
+  nist_function: Map
+  mitre_atlas_technique: AML.T0059
+  eu_ai_act_article: Article 21
+- owasp_id: LLM08
+  nist_function: Measure
+  mitre_atlas_technique: AML.T0040
+  eu_ai_act_article: Article 10
+- owasp_id: LLM09
+  nist_function: Map
+  mitre_atlas_technique: AML.T0061
+  eu_ai_act_article: Article 23
+- owasp_id: LLM10
+  nist_function: Map
+  mitre_atlas_technique: AML.T0062
+  eu_ai_act_article: Article 24

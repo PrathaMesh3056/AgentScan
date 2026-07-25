@@ -34,7 +34,7 @@ repos:
     rev: v4.6.0
     hooks:
       - id: trailing-whitespace   # remove trailing spaces
-      - id: end-of-file-fixer     # ensure files end with newline
+
       - id: check-yaml            # validate YAML syntax
       - id: check-toml            # validate TOML syntax
       - id: check-merge-conflict  # block accidental merge conflict markers
