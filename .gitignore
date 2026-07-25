@@ -38,3 +38,8 @@ pytest_collect.txt
 
 generate_sample.py
 
+AGENTSCAN_IDE_CONTEXT.md
+architectural_analysis.md
+PROJECT_STATUS.md
+LEARNING_SO_FAR.md
+implementation_strategy.md
