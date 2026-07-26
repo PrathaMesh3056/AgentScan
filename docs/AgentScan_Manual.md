@@ -47,7 +47,11 @@ pip install -e .
 ```
 
 > [!TIP]
-> For Deep Mode, you must install the `[deep]` optional dependencies (like `torch` and `transformers`).
+> For DEEP mode neural activation probing, install the CPU PyTorch build and transformers dependencies via:
+> ```bash
+> uv add torch --extra-index-url https://download.pytorch.org/whl/cpu
+> uv add transformers
+> ```
 
 ### Quickstart
 
@@ -168,6 +172,16 @@ Located in `agentscan/reporting/`, this subsystem translates raw scan findings i
 - **Compliance Mapping:** Cross-references OWASP LLM IDs against NIST AI RMF, MITRE ATLAS, and the EU AI Act using a decoupled data file (`compliance_mappings.yaml`).
 - **HTML & PDF Generation:** Uses Jinja2 templates (with strict autoescaping to prevent XSS from reflected prompt injections) and WeasyPrint to generate static, offline-ready reports.
 - **SARIF Export:** Generates OASIS-compliant SARIF JSON for seamless integration into GitHub Code Scanning and enterprise security dashboards.
+
+---
+
+### 4.5. Neural Probing Engine (DEEP Mode)
+
+Located in `agentscan/neural/` and `agentscan/attacks/deep/`, this subsystem inspects representation space dynamics inside local open-weight models (`Qwen/Qwen2.5-0.5B-Instruct`).
+
+- **Activation Capture Context Manager (`hooks.py`)**: `ActivationCapture` registers a PyTorch `forward_hook` that stores layer output tensors detached (`.detach()`) and guarantees handle teardown on context exit (`.remove()`) to prevent hook leakage.
+- **Pure Tensor Metrics (`activation_delta.py`)**: Pure tensor functions (`l2_distance` and `cosine_similarity`) for measuring hidden state representation geometry.
+- **Activation-Level Anomaly Detection (`activation_probe.py`, `ATK-023`)**: Captures middle-layer representations (layer 12 for Qwen2.5-0.5B-Instruct). Establishes a relative baseline noise floor between benign prompts (`baseline_noise = l2_distance(hidden_1, hidden_2)`), flagging a HIGH severity finding when `adversarial_delta > 2.0 * baseline_noise`.
 
 
 ## 5. Extending AgentScan (Developer Guide)

@@ -98,13 +98,18 @@ def scan(
         "--system-prompt",
         help="The expected system prompt content for EXPLOIT mode exfiltration tests.",
     ),
+    deep: bool = typer.Option(False, "--deep", help="Run DEEP mode neural activation probes."),
 ) -> None:
     """Run a security scan against an LLM agent endpoint."""
     # Build target
     target_obj = Target(url=target, framework=Framework(framework), system_prompt=system_prompt)
 
     # Determine modes
-    modes = [ScanMode.SCAN] + ([ScanMode.EXPLOIT] if exploit else [])
+    modes = (
+        [ScanMode.SCAN]
+        + ([ScanMode.EXPLOIT] if exploit else [])
+        + ([ScanMode.DEEP] if deep else [])
+    )
 
     # Run scan
     report = asyncio.run(run_scan_multi(target_obj, modes))

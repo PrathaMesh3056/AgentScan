@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, patch
 
+import pytest
 from typer.testing import CliRunner
 
 from agentscan.cli import app
@@ -130,6 +131,20 @@ class TestScanCommand:
         content = out.read_text()
         assert '"version": "2.1.0"' in content
         assert '"$schema"' in content
+
+    @pytest.mark.slow
+    def test_scan_deep_includes_deep_mode(self) -> None:
+        """scan --deep correctly includes DEEP mode in the built modes list."""
+        report = _make_report([], 100)
+        with patch(
+            "agentscan.cli.run_scan_multi", new_callable=AsyncMock, return_value=report
+        ) as mock_run:
+            result = runner.invoke(app, ["scan", "http://test-agent.example.com/chat", "--deep"])
+
+        assert result.exit_code == 0
+        mock_run.assert_called_once()
+        _, modes_arg = mock_run.call_args[0]
+        assert ScanMode.DEEP in modes_arg
 
 
 class TestListAttacks:
