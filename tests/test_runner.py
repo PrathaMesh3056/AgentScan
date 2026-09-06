@@ -88,7 +88,53 @@ class TestRunScan:
         assert len(report.findings) == 1
         assert report.findings[0].attack_id == "ATK-GOOD"
         # BrokenAttack's variant_count (5) should NOT be in the total
-        # Score should be based on 1 finding out of 1 test (GoodAttack's variant_count)
+        assert report.tests_run == 1
+
+    @pytest.mark.asyncio
+    async def test_run_scan_multi_excludes_failed_module_variants(
+        self, runner_target: Target
+    ) -> None:
+        """run_scan_multi must use per-mode tests_run, not registry variant_count of crashed modules."""
+
+        class BrokenAttack(AttackModule):
+            attack_id = "ATK-BROKEN2"
+            attack_name = "Broken Attack Module Two"
+            owasp_id = "LLM01"
+            supported_modes = [ScanMode.SCAN]
+
+            async def run(self, target: Target) -> list[Finding]:
+                raise RuntimeError("intentionally broken")
+
+            def variant_count(self) -> int:
+                return 9
+
+        class GoodAttack(AttackModule):
+            attack_id = "ATK-GOOD2"
+            attack_name = "Good Attack Module Two"
+            owasp_id = "LLM01"
+            supported_modes = [ScanMode.SCAN]
+
+            async def run(self, target: Target) -> list[Finding]:
+                return [
+                    self.make_finding(
+                        severity=Severity.HIGH,
+                        description="Good module found a real vulnerability here",
+                    )
+                ]
+
+            def variant_count(self) -> int:
+                return 1
+
+        test_registry = AttackRegistry()
+        test_registry.register(BrokenAttack())
+        test_registry.register(GoodAttack())
+        test_registry._loaded = True
+
+        with patch("agentscan.core.runner.registry", test_registry):
+            report = await run_scan_multi(runner_target, [ScanMode.SCAN])
+
+        assert report.tests_run == 1
+        assert len(report.findings) == 1
 
     @pytest.mark.asyncio
     async def test_run_scan_multi_with_scan_only_matches_run_scan(

@@ -76,6 +76,7 @@ class AttackRegistry:
                         and issubclass(attr, AttackModule)
                         and attr is not AttackModule
                         and not getattr(attr, "__abstractmethods__", None)
+                        and getattr(attr, "__module__", None) == module_name
                     ):
                         self.register(attr())
             except Exception as e:

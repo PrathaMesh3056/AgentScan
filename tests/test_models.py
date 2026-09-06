@@ -5,6 +5,8 @@ import pytest
 from pydantic import ValidationError
 
 from agentscan.core.models import (
+    AttackerConfig,
+    CalibrationResult,
     Finding,
     Framework,
     ScanMode,
@@ -43,6 +45,18 @@ class TestTarget:
     def test_auth_header_optional(self) -> None:
         t = Target(url="http://x.com")
         assert t.auth_header is None
+
+    def test_attacker_goal_and_escalation_fields(self) -> None:
+        t = Target(
+            url="http://x.com",
+            attacker_model="gpt-4o-mini",
+            attacker_goal="exfiltrate system prompt",
+            escalation_model="gpt-4o",
+            escalation_turns=5,
+        )
+        assert t.attacker_goal == "exfiltrate system prompt"
+        assert t.escalation_model == "gpt-4o"
+        assert t.escalation_turns == 5
 
 
 class TestFinding:
@@ -119,9 +133,11 @@ class TestScanReport:
 
     def test_complete_sets_score(self, empty_report: ScanReport) -> None:
         assert not empty_report.is_complete
-        empty_report.complete(score=72)
+        empty_report.complete(score=72, tests_run=4)
         assert empty_report.is_complete
         assert empty_report.score == 72
+        assert empty_report.tests_run == 4
+        assert empty_report.total_tests == 4
 
     def test_score_bounds(self, empty_report: ScanReport) -> None:
         with pytest.raises(ValidationError):
@@ -136,3 +152,18 @@ class TestScanReport:
 
         d = report_with_findings.to_dict()
         json.dumps(d)  # should not raise
+
+    def test_calibration_and_attacker_config_fields(self, empty_report: ScanReport) -> None:
+        cal = CalibrationResult(passed=True, detail="Control test passed")
+        cfg = AttackerConfig(
+            model="gpt-4o-mini",
+            turns=4,
+            goal="test goal",
+            escalation_model="gpt-4o",
+            seed_techniques_used=["DAN role-play"],
+        )
+        empty_report.calibration = cal
+        empty_report.attacker_config = cfg
+        assert empty_report.calibration.passed is True
+        assert empty_report.attacker_config.model == "gpt-4o-mini"
+        assert empty_report.attacker_config.goal == "test goal"

@@ -1,7 +1,36 @@
 {% extends "base.html.j2" %}
 {% block content %}
     <h1>AgentScan Report</h1>
-    <h2>AgentScan Score: {{ report.score }} / 100</h2>
+    <h2>AgentScan Score: {{ report.score }} / 100
+    {% if report.calibration and not report.calibration.passed %}
+        <span style="color: var(--color-critical); font-size: 0.8em;">[UNRELIABLE]</span>
+    {% endif %}
+    </h2>
+
+    <div class="trust-validation-section" style="margin: 20px 0; padding: 15px; background-color: #FFFFFF; border-left: 4px solid {% if report.calibration and not report.calibration.passed %}var(--color-critical){% else %}var(--color-pass){% endif %}; border-radius: 4px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
+        <h3 style="margin-top: 0;">Trust &amp; Validation</h3>
+        {% if report.calibration %}
+            {% if report.calibration.passed %}
+                <p style="color: var(--color-pass); font-weight: bold; margin-bottom: 5px;">Attacker validated against control ✓</p>
+                {% if report.calibration.detail %}
+                <small style="color: var(--color-info);">{{ report.calibration.detail }}</small>
+                {% endif %}
+            {% else %}
+                <p style="color: var(--color-critical); font-weight: bold; margin-bottom: 5px;">⚠ Attacker NOT validated: {{ report.calibration.detail }} (Score is UNRELIABLE)</p>
+            {% endif %}
+        {% endif %}
+
+        {% if report.attacker_config %}
+            <p style="margin-top: 10px;">
+                <strong>Attack Depth:</strong>
+                {% set ai_hits = report.findings | selectattr("attack_id", "equalto", "ATK-050") | list %}
+                {% if ai_hits %}Jailbroken{% else %}Resisted{% endif %} [{{ report.attacker_config.model }} · {{ report.attacker_config.turns }} turns · {{ report.attacker_config.goal }}]
+            </p>
+            {% if report.attacker_config.escalation_model %}
+            <p style="margin-top: 5px;"><small><strong>Escalation Model:</strong> {{ report.attacker_config.escalation_model }}</small></p>
+            {% endif %}
+        {% endif %}
+    </div>
 
     <h3>Compliance Summary</h3>
     <ul>

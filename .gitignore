@@ -3,7 +3,6 @@
 venv/
 agentscan.egg-info/
 .python-version
-uv.lock
 
 # --- Python Cache ---
 __pycache__/
@@ -33,13 +32,18 @@ Thumbs.db
 *.html
 *.sarif
 *report*.json
+*transcript*.txt
+captured*.txt
+*llm*log*.txt
+*llm*.txt
+
+# --- Local target profiles / init output (users force-add if they want to keep one) ---
+target.yaml
+bitinfusion.yaml
 gtk3-installer.exe
 pytest_collect.txt
 
 generate_sample.py
 
-AGENTSCAN_IDE_CONTEXT.md
-architectural_analysis.md
-PROJECT_STATUS.md
-LEARNING_SO_FAR.md
-implementation_strategy.md
+# --- Internal planning / working docs (not for the public repo) ---
+internal_docs/

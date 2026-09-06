@@ -31,6 +31,39 @@ _SECRET_RE = re.compile(
 
 _ENTROPY_THRESHOLD = 3.5  # bits; below this → likely human-typed, not a real secret
 
+# Skip tool/VCS directories. Dotfiles are skipped except .env / .env.* (common secret files).
+_SKIP_DIR_NAMES = frozenset(
+    {
+        "__pycache__",
+        "node_modules",
+        ".git",
+        ".venv",
+        "venv",
+        ".tox",
+        ".mypy_cache",
+        ".ruff_cache",
+        ".idea",
+        ".vscode",
+    }
+)
+
+
+def _should_scan_file(filepath: Path, root: Path) -> bool:
+    """True if this file should be searched for hardcoded secrets."""
+    try:
+        parts = filepath.relative_to(root).parts
+    except ValueError:
+        parts = filepath.parts
+    for part in parts[:-1]:
+        if part in _SKIP_DIR_NAMES or part.startswith("."):
+            return False
+    name = parts[-1] if parts else filepath.name
+    if name in _SKIP_DIR_NAMES:
+        return False
+    if name.startswith("."):
+        return name == ".env" or name.startswith(".env.")
+    return True
+
 
 # ── Shannon entropy ───────────────────────────────────────────────────────────
 
@@ -65,14 +98,7 @@ def scan_secrets(path: str) -> tuple[list[Finding], int]:
         (findings, checks_run) where checks_run = number of files scanned.
     """
     root = Path(path)
-    # Scan all files; skip __pycache__ and hidden dirs
-    all_files = [
-        f
-        for f in root.rglob("*")
-        if f.is_file()
-        and "__pycache__" not in f.parts
-        and not any(part.startswith(".") for part in f.parts[len(root.parts) :])
-    ]
+    all_files = [f for f in root.rglob("*") if f.is_file() and _should_scan_file(f, root)]
     checks_run = len(all_files)
 
     findings: list[Finding] = []

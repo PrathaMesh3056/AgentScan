@@ -75,15 +75,16 @@ AgentScan provides a rich CLI built with Typer and formatted with Rich.
 
 ### 3.1. Scanning a Live Agent (`scan`)
 
-The `scan` command is your primary tool for red-teaming an active endpoint.
+The `scan` command is your primary tool for red-teaming an active endpoint. The target URL is a
+**positional argument**, and the output format is inferred from the `--output` file extension.
 
 ```bash
-agentscan scan \
-  --target http://localhost:8000/chat \
+agentscan scan http://localhost:8000/chat \
   --framework auto \
-  --output report.[json|html|pdf|sarif] \
+  --output report.html \
   --fail-on HIGH \
   --exploit \
+  --deep \
   --system-prompt "You are a helpful assistant. Secret: RED-7"
 ```
 
@@ -94,7 +95,137 @@ agentscan scan \
 | `--system-prompt` | Provide the target's system prompt (used by EXPLOIT mode to test for exfiltration). |
 | `--deep` | Activates DEEP mode for open-weight neural probing. |
 | `--fail-on [SEV]` | Exits with code `1` if any finding meets or exceeds the threshold (e.g., `HIGH`). |
-| `--quiet` | Suppresses the terminal UI and outputs raw JSON to stdout. |
+| `--output [file]` | Writes a report; format inferred from the extension (`.json` / `.html` / `.pdf` / `.sarif`). |
+| `--verbose` / `-v` | Prints every payload sent and the agent's reply live, plus findings as they occur. |
+| `--transcript [file]` | Writes the **full transcript** — every payload + reply + findings — to a file. The `--output` report shows only findings; the transcript shows everything. |
+
+#### Zero setup: auto-discover with `init`
+
+Don't want to figure out the connector or selectors at all? Let AgentScan do it. `init` writes a
+ready-to-run profile for you:
+
+```bash
+agentscan init https://bitinfusiontechnology.com/backend/chatbot/chat.php -o bitinfusion.yaml
+agentscan scan -c bitinfusion.yaml
+```
+
+`init` works in two ways and **tries the no-browser path first**:
+
+1. **HTTP API (no browser).** It POSTs a harmless test message in several common shapes
+   (`{"message": …}`, `{"query": …}`, `{"messages": […]}`, …) and, on a valid reply, records which
+   request field carries the message and which response field holds the reply — including SSE
+   streams. Fast, no browser. Force it with `--http`.
+2. **Browser widget (fallback).** If the URL is a web page with a chat widget, it opens a headless
+   browser, finds the launcher / input / send button / reply bubbles, sends one test message to
+   locate the reply, and records the CSS selectors. Force it with `--browser`; add `--headed` to watch.
+
+It prints what it found so you can tweak the profile. Discovery is heuristic — it handles common
+targets; unusual ones may need a manual edit (see the reference below).
+
+#### Do I even need a browser? (usually not)
+
+If your agent has **any HTTP JSON endpoint** (most do — it's what the widget calls under the hood),
+you never need the browser. Options, simplest first:
+
+- **Just the URL:** `agentscan scan https://.../chat` — the default connector sends
+  `{"message": "<payload>"}` and reads common reply keys. If that works, you're done.
+- **`init --http <url>`** — probes the API and writes a profile (handles non-standard field names
+  and SSE streaming for you).
+- The **browser** connector is only for widgets with *no* usable API (rare).
+
+### Writing a target profile (YAML) by hand
+
+A profile is a small YAML file. It always has a `url`, optionally **one** connector block
+(`request_template` or `browser` — omit both for the default JSON connector), and any scan settings.
+CLI flags always override the file.
+
+**1) Plain JSON API** (the common case — no connector block needed):
+
+```yaml
+url: https://example.com/backend/chat        # POSTs {"message": "<payload>"}, reads common reply keys
+exploit: true                                 # also run EXPLOIT modules
+verbose: true                                 # live payload/reply output
+transcript: transcript.txt                    # full exchange (everything)
+output: report.html                           # report (findings only) — format from the extension
+```
+
+**2) Custom JSON API** (non-standard field names / nested reply) — use a `request_template`:
+
+```yaml
+url: https://example.com/api/agent
+request_template:
+  method: POST
+  url: https://example.com/api/agent
+  json_body: { "query": "", "conversation_id": "abc" }   # the request body; the payload is injected in
+  message_path: "query"           # dotted path to the message field ("messages.-1.content" works too)
+  response_path: "data.reply"     # dotted path to the reply text (optional; SSE handled automatically)
+  headers: { "Authorization": "Bearer …" }               # optional captured headers/cookies
+exploit: true
+```
+
+**3) Browser widget** (no usable API) — use a `browser` block:
+
+```yaml
+url: https://example.com/
+browser:
+  open_selector: "button.fixed.bottom-6.right-4"   # optional: launcher to open a closed widget
+  input_selector: "input[placeholder^='Ask me anything']"
+  response_selector: ".bot-message"                # bot reply bubbles; newest = last match
+  send_selector: "button[aria-label='Send message']"  # optional; omit to press Enter
+  headless: true
+exploit: true
+```
+
+**All fields**
+
+| Key | Where | Meaning |
+| :--- | :--- | :--- |
+| `url` | top level | Target URL (required). |
+| `framework` | top level | `langchain` / `llama_index` / `openai` / `auto`. |
+| `system_prompt` | top level | Known system prompt (for EXPLOIT exfiltration checks). |
+| `exploit` / `deep` | top level | Run EXPLOIT / DEEP modules. |
+| `output` / `transcript` | top level | Report file / full-transcript file. |
+| `fail_on` | top level | Exit 1 if any finding ≥ this severity. |
+| `verbose` | top level | Live payload/reply printing. |
+| `request_template.*` | connector | `method`, `url`, `json_body`, `message_path`, `response_path`, `headers`. |
+| `browser.*` | connector | `input_selector`, `response_selector`, `open_selector`, `send_selector`, `headless`. |
+
+#### Scanning an agent behind a website (captured request)
+
+Most website chat widgets don't expose a clean `/chat` endpoint — they call an undocumented
+internal API. You can still scan them by **capturing that call**: open the site, send the widget
+one message, then in your browser's DevTools → Network, right-click the request → **Copy → Copy as
+cURL**, and save it to a file. AgentScan replays it with attack payloads substituted in.
+
+```bash
+agentscan scan \
+  --curl captured_request.txt \
+  --message-path "query" \          # dotted path to the message field in the request body
+  --response-path "data.reply"      # dotted path to the reply text in the response
+```
+
+`--message-path` supports nested fields and list indices, e.g. `messages.-1.content`. The target
+URL is taken from the captured request, so the positional URL can be omitted. **Streamed
+(SSE) replies are reassembled automatically**, and multi-turn attacks work against single-message
+APIs (the payload history is inlined into the message field).
+
+#### Scanning a UI-only widget (real browser)
+
+If the agent has *no* capturable API — a pure UI widget — AgentScan can drive it in a real
+headless browser (Playwright). You supply CSS selectors for the input box and the reply bubbles.
+
+```bash
+agentscan scan \
+  --browser-url "https://site.example/#chat" \
+  --input-selector "#chat-input" \
+  --response-selector ".bot-message" \   # newest reply = last match
+  --send-selector "#send"                # optional; omit to press Enter
+```
+
+Requires `pip install playwright` and `playwright install chromium chromium-headless-shell`.
+
+> **Only scan agents you own or are explicitly authorized to test.** A captured request or a
+> browser session makes reach easier; it does not grant permission.
 
 ### 3.2. Auditing a Project Directory (`audit`)
 
@@ -115,6 +246,57 @@ agentscan audit ./my-project \
 To view all registered attack modules and their supported modes, run:
 ```bash
 agentscan list-attacks
+```
+
+---
+
+### 3.4. AI-Driven Red-Teaming (`--attacker-model`, `calibrate`, `benchmark`)
+
+Static payloads bounce off aligned agents. AgentScan can also run an **adaptive AI attacker**
+(`ATK-050`): an attacker LLM fires proven jailbreak techniques, an **LLM-as-a-Judge** scores each
+reply, and on failure it feeds the refusal back and tries a new technique — up to N turns.
+
+**1. Add your key.** Copy `.env.example` to `.env` and paste a key (it's gitignored):
+
+```
+OPENROUTER_API_KEY=sk-or-...      # OpenRouter hosts uncensored models (recommended)
+```
+
+**2. Run the attacker.** Point `--attacker-model` at any litellm model id (implies `--exploit`):
+
+```bash
+agentscan scan https://your-agent/chat \
+  --attacker-model openrouter/cognitivecomputations/dolphin-mistral-24b-venice-edition \
+  --attacker-turns 5 \
+  --calibrate \                 # verify the attacker/judge works first (see below)
+  --verbose \                   # watch each attack + verdict live
+  --llm-log llm_log.txt \       # every attacker/judge call: exact prompt in, raw output out
+  --output report.html
+```
+
+Backends (same flag): **OpenRouter** (`openrouter/…`, hosted, cheap), **Ollama** (`ollama/dolphin3`,
+local, free, no key), or **cloud** (`gpt-4o-mini`, `claude-3-5-haiku`). Local `ollama/` models skip
+the key check. `--llm-log` is the file that shows the model's inputs and raw outputs — full visibility.
+
+**3. Trust the result — `calibrate`.** A "resisted / SAFE" verdict is only meaningful if the
+attacker+judge actually work. `calibrate` proves they can *detect* a jailbreak (positive control)
+before you trust a scan:
+
+```bash
+agentscan calibrate --attacker-model openrouter/...
+# [PASS] attacker/judge validated — detection works, a 'resisted' verdict is trustworthy
+# [FAIL] ... — the model is too weak to trust; use a stronger attacker/judge
+```
+
+Add `--calibrate` to a scan to self-certify it. This is the difference between "trust me, it's safe"
+and "I proved I'd catch it if it weren't."
+
+**4. Prove the tool discriminates — `benchmark`.** Grades built-in reference agents at known
+vulnerability levels and checks the results rank them correctly (no key/network needed):
+
+```bash
+agentscan benchmark
+#  wide-open  -> 11 findings   partial -> 7   guarded -> 0 (SAFE)   [PASS]
 ```
 
 ---
@@ -181,8 +363,57 @@ Located in `agentscan/neural/` and `agentscan/attacks/deep/`, this subsystem ins
 
 - **Activation Capture Context Manager (`hooks.py`)**: `ActivationCapture` registers a PyTorch `forward_hook` that stores layer output tensors detached (`.detach()`) and guarantees handle teardown on context exit (`.remove()`) to prevent hook leakage.
 - **Pure Tensor Metrics (`activation_delta.py`)**: Pure tensor functions (`l2_distance` and `cosine_similarity`) for measuring hidden state representation geometry.
-- **Activation-Level Anomaly Detection (`activation_probe.py`, `ATK-023`)**: Captures middle-layer representations (layer 12 for Qwen2.5-0.5B-Instruct). Establishes a relative baseline noise floor between benign prompts (`baseline_noise = l2_distance(hidden_1, hidden_2)`), flagging a HIGH severity finding when `adversarial_delta > 2.0 * baseline_noise`.
+- **Activation-Level Anomaly Detection (`activation_probe.py`, `ATK-023`)**: A **payload-corroborating probe**. Rather than one hardcoded adversarial string, it replays the *same* prompt-injection payloads that `ATK-001` fires (loaded from `prompt_injection.yaml`) through the local model at layer 12, and flags the ones that most disturb its internals along two axes:
+>   - **Magnitude (L2):** the benign noise floor is the *mean pairwise* `l2_distance` across several benign prompts (a distribution, not an n=1 sample). A payload flags when its mean distance to the benign anchors exceeds `2.0 ×` that floor.
+>   - **Direction (cosine):** when a payload's mean `cosine_similarity` to the benign anchors also drops below the benign-to-benign coherence, the finding is escalated MEDIUM → HIGH.
+>
+>   Each finding records `metadata["yaml_variant_id"]` — the same id `ATK-001` uses — so the DEEP (internal) view can be joined to the SCAN (behavioural) view of the same payload. The blocking model load and forward passes run via `asyncio.to_thread`, keeping the runner's event loop free.
 
+### 4.6. AI-Driven Foundation (`AIClient` + Semantic Detection)
+
+Located in `agentscan/core/`, added in Module 5B to power adaptive, model-driven testing.
+
+- **Unified LLM Client (`ai_client.py`)**: `AIClient` wraps `litellm` so attacker LLMs (adaptive payload generation) and judge LLMs (LLM-as-a-Judge scoring) reach any provider — OpenAI, Anthropic, Gemini, Ollama — through one OpenAI-shaped interface (pass `model="gpt-4o"`, `"claude-3-5-sonnet-latest"`, `"ollama/llama3"`). It drops provider-unsupported params instead of erroring, normalises every provider failure to a single `AIClientError`, and reads API keys from the environment only (never stored or logged). `validate_environment()` lets the CLI skip AI modules cleanly when a key is missing. This is the foundation for the roadmap's iterative red-team attacker and LLM-as-a-Judge evaluator.
+- **Embedding-Based Semantic Detection (`semantic.py`)**: `embedding_similarity()` scores compliance by the cosine of two `all-MiniLM-L6-v2` sentence embeddings, replacing the v0.1 word-overlap heuristic in the prompt-injection detector (which now falls back to that lexical heuristic only if the embedding model can't load). Calibrated threshold: clear paraphrases score ~0.48–0.80, unrelated text ≤ 0.0, so the match fires at `0.4`.
+
+
+### 4.7. Transport Connectors
+
+Located in `agentscan/core/connectors.py`, this layer decides *how* AgentScan reaches a target.
+Every attack module talks through `AgentScanClient`, which selects a connector — so the same
+modules work over any transport unchanged.
+
+- **`HttpJsonConnector`** (default): POSTs `{"message": ...}` to the target URL, with auth-header
+  injection, exponential-backoff retries, framework-agnostic response parsing, and automatic Server-Sent Events (SSE) stream consumption.
+- **`RequestTemplateConnector`**: built from a captured cURL command (`RequestTemplate.from_curl`), it
+  replays that exact request — headers, cookies, CSRF tokens, custom headers, multipart/JSON body — substituting the attack payload into
+  the configured field (`--message-path`) and normalising the reply via JSONPath (`--response-path`). This lets
+  AgentScan test real production agents embedded in existing websites with zero code changes.
+- **`BrowserConnector`**: built with Playwright, drives UI-only chat widgets inside a headless browser (`--browser-url`).
+  Reuses a single persistent browser session per scan, selects elements via CSS selectors (`--input-selector`, `--response-selector`),
+  types payloads, and waits for dynamic DOM updates.
+- **`CallableConnector`**: an in-process async adapter used for testing and zero-network reference evaluation (such as `agentscan benchmark`).
+- **Auto-Discovery (`core/discovery.py`)**: `agentscan init <url> -o target.yaml` probes live endpoints, sniffing response bodies, SSE streams, and headers to auto-generate ready-to-use target profile YAMLs.
+
+### 4.8. Traffic Visibility & Audit Transcripts
+
+Located in `agentscan/core/trace.py`, this subsystem provides complete audit trail visibility during red-teaming:
+
+- **`TrafficRecorder`**: intercepts every request/response transaction sent through `AgentScanClient`, logging request payloads, HTTP methods, headers, status codes, raw response text, and latency.
+- **Live Streaming (`--verbose` / `-v`)**: prints real-time payload transmissions and agent responses directly to the terminal, along with finding alerts as they happen.
+- **Transcript File (`--transcript <file>`)**: writes the complete, chronological session transcript to an external file for offline review, keeping the primary security report (`--output`) cleanly focused on findings and remediation.
+
+### 4.9. Adaptive AI Red-Teaming & Verification
+
+Located across `agentscan/attacks/exploit/` and `agentscan/core/`:
+
+- **Adaptive AI Attacker (`ai_attacker.py`, ATK-050)**: PAIR-style (Prompt Automatic Iterative Refinement) multi-turn attacker LLM. Executes seed jailbreak strategies from `core/jailbreaks.py` (Base64, leetspeak, DAN, Dev Mode, prefix injection, refusal suppression, roleplay), evaluates agent responses, and iteratively refines payloads based on refusal feedback up to `--attacker-turns`.
+- **LLM-as-a-Judge Evaluator (`core/evaluator.py`)**: evaluates unstructured LLM replies against strict rubric criteria via an evaluation model, returning structured JSON verdicts (`jailbreak_detected`, `confidence`, `reasoning`).
+- **Positive-Control Calibration (`core/calibration.py` / `agentscan calibrate`)**: validates that the specified attacker and judge models are functioning and capable of detecting known jailbreak compromises before running a live scan.
+- **Reference Benchmarking (`core/benchmark.py` / `agentscan benchmark`)**: runs AgentScan against simulated in-process reference agents (`wide-open`, `partial`, `guarded`) to verify that the scoring engine accurately discriminates between vulnerable and secure agents without requiring external networks.
+- **Raw LLM Audit Logs (`--llm-log <file>`)**: records exact prompt inputs and raw model outputs for all attacker and judge LLM invocations.
+
+---
 
 ## 5. Extending AgentScan (Developer Guide)
 
@@ -254,9 +485,29 @@ All structured data is strongly validated using Pydantic v2 `BaseModel` classes,
 
 ## 7. Future Roadmap
 
-AgentScan is currently in Phase 0 / Phase 1. Upcoming features include:
+Modules **0–5E are complete and fully operational**:
+- Foundation & models (0)
+- Core attack engine & prompt injection (1)
+- AI supply chain scanner & secret detection (2A)
+- Identity & authorization audit (2B)
+- Active EXPLOIT mode modules (3A/3B)
+- Full reporting engine in HTML, PDF, SARIF & compliance mappings (4)
+- DEEP-mode neural activation probe (5A)
+- `AIClient` & MiniLM embedding similarity (5B)
+- Transport connectors: cURL replay, Playwright browser driver, SSE streaming, auto-discovery (5C)
+- Traffic visibility: real-time streaming & reproducible audit transcripts (5D)
+- Adaptive AI red-teaming: PAIR-style iterative attacker, LLM-as-a-Judge, calibration, reference benchmark (5E)
+
+The active roadmap for future versions includes:
 
 > [!NOTE]
-> 1. **DEEP Mode Expansion:** Local neural probing modules utilizing PyTorch/Transformers hooks to detect latent trojans and memory drift in open-weight models.
-> 2. **Advanced Exploitation:** `langgraph` based multi-turn automated exploitation chains (e.g., combining Prompt Injection with RAG poisoning to exfiltrate data).
-> 3. **AgentScan SaaS:** A centralized dashboard for continuous agent monitoring.
+> 1. **Broader SCAN Attack Modules:** adding dedicated modules for `jailbreak.py`, `dos.py`, `pii_exfiltration.py`, `indirect_injection.py`, `crescendo.py`, `rag_poisoning.py`, and `mcp_shadow.py` to cover all OWASP Top 10 LLM risks.
+> 2. **Universal LLM-as-a-Judge:** wiring `LLMEvaluator` directly into `ATK-001` so that static SCAN payloads also benefit from nuanced semantic judgment.
+> 3. **Static Scanner Payload Mutations:** introducing runtime encoding mutations (Base64, leetspeak, payload splitting) for static YAML attacks.
+> 4. **Live Vulnerability Intelligence:** replacing offline YAML tables with live OSV.dev API lookups and Semgrep rules for cross-file AST checks.
+> 5. **Graph-Based RBAC:** `networkx`-powered graph analysis of agent-tool-credential relationships to uncover multi-hop privilege escalation.
+> 6. **Agentic Trajectory Tracing & SSP Mapping:** continuous tool-call monitoring classifying agents as Servant, Stalker, or Predator.
+> 7. **DEEP Mode Expansion:** additional neural probes (attention analysis, latent-trojan / drift detection) on top of the existing activation infrastructure.
+> 8. **GitHub Action & CI Integration:** plug-and-play workflow actions for continuous security gatekeeping on PRs.
+> 9. **AgentScan SaaS:** a centralized cloud dashboard for continuous monitoring and reporting across agent fleets.
+

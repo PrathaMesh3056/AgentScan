@@ -48,7 +48,11 @@ class AttackModule(ABC):
         super().__init_subclass__(**kwargs)
 
         # Skip check for abstract intermediary classes
-        if getattr(cls, "__abstractmethods__", None):
+        if (
+            getattr(cls, "__abstractmethods__", None)
+            or any(getattr(v, "__isabstractmethod__", False) for v in cls.__dict__.values())
+            or getattr(cls, "is_abstract", False)
+        ):
             return
 
         required = ["attack_id", "attack_name", "owasp_id"]

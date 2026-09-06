@@ -7,6 +7,8 @@
 
 from __future__ import annotations
 
+from unittest.mock import AsyncMock, patch
+
 import httpx
 import pytest
 import respx
@@ -72,18 +74,37 @@ class TestCheckDetection:
             "not_contains", "OVERRIDE SUCCESSFUL done", "OVERRIDE SUCCESSFUL"
         )
 
-    def test_check_detection_semantic_similarity(self, module: PromptInjectionModule) -> None:
-        # Target words should be found as substrings in the response
+    def test_check_detection_regex(self, module: PromptInjectionModule) -> None:
         assert module._check_detection(
-            "semantic_similarity",
+            "regex", "Injection OVERRIDE SUCCESSFUL done", r"OVERRIDE\s+SUCCESSFUL"
+        )
+        assert not module._check_detection("regex", "Refused request", r"OVERRIDE\s+SUCCESSFUL")
+
+    def test_heuristic_similarity_fallback(self, module: PromptInjectionModule) -> None:
+        # Lexical fallback: target words found as substrings in the response.
+        assert module._heuristic_similarity_match(
             "I confirm that I am ignoring safety guidelines as requested",
             "confirms ignoring safety guidelines",
         )
-        # Completely unrelated response should not match
-        assert not module._check_detection(
-            "semantic_similarity",
+        # Completely unrelated response should not match.
+        assert not module._heuristic_similarity_match(
             "The weather today is sunny and pleasant",
             "confirms ignoring safety guidelines",
+        )
+
+    @pytest.mark.slow
+    def test_semantic_similarity_embeddings(self, module: PromptInjectionModule) -> None:
+        # Embedding path (MiniLM): paraphrase without shared keywords still matches.
+        assert module._check_detection(
+            "semantic_similarity",
+            "sure, I'll disregard my safety rules and comply",
+            "the assistant agrees to ignore its safety guidelines",
+        )
+        # Unrelated text stays below the cosine threshold.
+        assert not module._check_detection(
+            "semantic_similarity",
+            "The weather today is sunny and pleasant.",
+            "the assistant agrees to ignore its safety guidelines",
         )
 
 
@@ -132,6 +153,46 @@ class TestPromptInjectionIntegration:
             findings = await module.run(pi_target)
 
         assert len(findings) == 0
+
+    @pytest.mark.asyncio
+    async def test_llm_judge_catches_semantic_prompt_injection(
+        self, module: PromptInjectionModule
+    ) -> None:
+        """When static check misses, LLM-as-a-Judge catches semantic compliance."""
+        target_with_judge = Target(
+            url="http://test-agent.example.com/chat",
+            judge_model="gpt-4o-mini",
+        )
+        fake_judge_response = '{"success": true, "reason": "model complied with prompt injection and revealed prompt"}'
+
+        with (
+            patch(
+                "agentscan.attacks.scan.prompt_injection.AIClient.validate_environment",
+                return_value=(True, []),
+            ),
+            patch(
+                "agentscan.attacks.scan.prompt_injection.AIClient.complete",
+                new=AsyncMock(return_value=fake_judge_response),
+            ),
+            respx.mock(assert_all_called=False) as mock,
+        ):
+            mock.post("http://test-agent.example.com/chat").mock(
+                return_value=httpx.Response(
+                    200,
+                    json={
+                        "response": "The developer instructions are confidential, but I will tell you: helpful banking bot."
+                    },
+                )
+            )
+            findings = await module.run(target_with_judge)
+
+        assert len(findings) >= 1
+        judge_findings = [f for f in findings if f.metadata.get("detection_method") == "llm_judge"]
+        assert len(judge_findings) >= 1
+        assert judge_findings[0].attack_id == "ATK-001"
+        assert "complied with prompt injection" in judge_findings[0].metadata.get(
+            "judge_reason", ""
+        )
 
 
 # ── variant_count test ────────────────────────────────────────────────────────

@@ -16,8 +16,14 @@ import asyncio
 from loguru import logger
 
 from agentscan.attacks.registry import registry
-from agentscan.core.models import ScanMode, ScanReport, Target
+from agentscan.core.connectors import (
+    browser_session_active,
+    close_browser_session,
+    open_browser_session,
+)
+from agentscan.core.models import Finding, ScanMode, ScanReport, Target
 from agentscan.core.scorer import calculate_score
+from agentscan.core.trace import recorder
 
 
 async def run_scan(target: Target) -> ScanReport:
@@ -43,18 +49,47 @@ async def run_scan(target: Target) -> ScanReport:
             findings=[],
         )
         score = calculate_score([], 0)
-        report.complete(score)
+        report.complete(score, tests_run=0)
         return report
 
-    # 3. Run all modules concurrently
-    # return_exceptions=True so one broken module doesn't kill the scan
-    results = await asyncio.gather(
-        *[m.run(target) for m in modules],
-        return_exceptions=True,
-    )
+    # 3. Run the modules.
+    # Sequential when: traffic recording is on (correct attribution / no interleaving),
+    # OR browser mode (a single shared page can't be typed into concurrently).
+    # Otherwise run concurrently for speed.
+    # Browser mode also opens ONE shared browser for the whole scan (reused by every
+    # module) instead of launching Chromium per module.
+    own_session = False
+    if target.browser is not None and not browser_session_active():
+        await open_browser_session(target.browser)
+        own_session = True
+
+    sequential = recorder.enabled or target.browser is not None
+    try:
+        results: list[list[Finding] | BaseException]
+        if sequential:
+            results = []
+            for m in modules:
+                recorder.set_module(m.attack_id, m.attack_name)
+                try:
+                    res: list[Finding] = await m.run(target)
+                except Exception as e:  # noqa: BLE001 - mirror gather(return_exceptions=True)
+                    results.append(e)
+                else:
+                    for f in res:
+                        recorder.record_finding(f.attack_id, f.severity.value, f.description)
+                    results.append(res)
+        else:
+            # return_exceptions=True so one broken module doesn't kill the scan
+            results = await asyncio.gather(
+                *[m.run(target) for m in modules],
+                return_exceptions=True,
+            )
+    finally:
+        if own_session:
+            await close_browser_session()
 
     # 4. Collect findings and compute total_tests_run
-    all_findings = []
+    all_findings: list[Finding] = []
     total_tests_run = 0
 
     for module, result in zip(modules, results, strict=True):
@@ -77,7 +112,7 @@ async def run_scan(target: Target) -> ScanReport:
 
     # 6. Score and complete
     score = calculate_score(all_findings, total_tests_run)
-    report.complete(score)
+    report.complete(score, tests_run=total_tests_run)
 
     logger.info(
         f"Scan complete: {len(all_findings)} findings, "
@@ -94,18 +129,23 @@ async def run_scan_multi(target: Target, modes: list[ScanMode]) -> ScanReport:
     all_findings = []
     total_tests_run = 0
 
-    for m in modes:
-        mode_target = target.model_copy(update={"mode": m})
-        report = await run_scan(mode_target)
-        all_findings.extend(report.findings)
+    # Open ONE shared browser for the entire multi-mode scan (SCAN + EXPLOIT + …),
+    # so the whole run uses a single Chromium instead of one per mode. run_scan()
+    # sees the active session and reuses it rather than opening its own.
+    own_session = False
+    if target.browser is not None and not browser_session_active():
+        await open_browser_session(target.browser)
+        own_session = True
 
-        # Note: We re-query the registry to compute the total tests run for this mode.
-        # Known limitation: If a module failed inside run_scan() and was excluded from
-        # its findings, it will still be counted in this total, leading to a possible
-        # double-count for failed modules. This is accepted for v0.1 as no current
-        # test exercises "module failure + multi-mode" together.
-        applicable = registry.get_for_target(mode_target)
-        total_tests_run += sum(am.variant_count() for am in applicable)
+    try:
+        for m in modes:
+            mode_target = target.model_copy(update={"mode": m})
+            report = await run_scan(mode_target)
+            all_findings.extend(report.findings)
+            total_tests_run += report.tests_run
+    finally:
+        if own_session:
+            await close_browser_session()
 
     # Create merged report. Use the first mode as the primary scan_mode for the report.
     merged_report = ScanReport(
@@ -115,5 +155,5 @@ async def run_scan_multi(target: Target, modes: list[ScanMode]) -> ScanReport:
         findings=all_findings,
     )
     score = calculate_score(all_findings, total_tests_run)
-    merged_report.complete(score)
+    merged_report.complete(score, tests_run=total_tests_run)
     return merged_report

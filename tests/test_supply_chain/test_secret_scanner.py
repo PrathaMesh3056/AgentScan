@@ -73,3 +73,15 @@ class TestSecretScanner:
         findings, _ = scan_secrets(str(tmp_path))
         sc015 = [f for f in findings if f.attack_id == "SC-015"]
         assert len(sc015) == 0
+
+    def test_dotenv_high_entropy_key_detected(self, tmp_path: Path) -> None:
+        """`.env` must be scanned — hidden-file skip must not hide the usual secret file."""
+        (tmp_path / ".env").write_text(
+            'OPENAI_API_KEY = "sk-proj-aBcDeFgHiJkLmNoPqRsTuVwXyZ1234567890abcdefghij"\n',
+            encoding="utf-8",
+        )
+        findings, checks = scan_secrets(str(tmp_path))
+        sc015 = [f for f in findings if f.attack_id == "SC-015"]
+        assert checks >= 1
+        assert len(sc015) >= 1
+        assert sc015[0].severity.value == "CRITICAL"
