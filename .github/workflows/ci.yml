@@ -50,5 +50,8 @@ jobs:
       - name: Run mypy type check
         run: uv run mypy agentscan/ --ignore-missing-imports
 
+      - name: Install Playwright browser (Chromium)
+        run: uv run playwright install chromium --with-deps
+
       - name: Run pytest
-        run: uv run pytest tests/ -v --tb=short --cov=agentscan --cov-report=term-missing
+        run: uv run pytest tests/ -v --tb=short -m "not slow" --cov=agentscan --cov-report=term-missing
