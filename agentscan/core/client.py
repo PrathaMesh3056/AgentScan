@@ -20,6 +20,7 @@ from typing import Any
 from agentscan.core.connectors import Connector, select_connector
 from agentscan.core.models import Target
 from agentscan.core.trace import recorder
+from agentscan.core.trajectory import trajectory_recorder
 
 
 class AgentScanClient:
@@ -46,6 +47,7 @@ class AgentScanClient:
     ) -> dict[str, Any]:
         """Send a single message/payload to the target. Returns a response dict."""
         resp = await self._connector.send_message(message, extra_body)
+        trajectory_recorder.record(message, resp)
         if recorder.enabled:
             recorder.record("message", message, resp)
         return resp
@@ -53,6 +55,11 @@ class AgentScanClient:
     async def send_conversation(self, messages: list[dict[str, str]]) -> dict[str, Any]:
         """Send a multi-turn conversation history to the target."""
         resp = await self._connector.send_conversation(messages)
+        payload = next(
+            (m.get("content", "") for m in reversed(messages) if m.get("role") == "user"),
+            " || ".join(f"{m.get('role')}: {m.get('content', '')}" for m in messages),
+        )
+        trajectory_recorder.record(payload, resp)
         if recorder.enabled:
             rendered = " || ".join(f"{m.get('role')}: {m.get('content', '')}" for m in messages)
             recorder.record("conversation", rendered, resp)

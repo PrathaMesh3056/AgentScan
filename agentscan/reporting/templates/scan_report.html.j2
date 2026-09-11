@@ -6,6 +6,14 @@
         <span style="color: var(--color-critical); font-size: 0.8em;">[UNRELIABLE]</span>
     {% endif %}
     </h2>
+    {% if report.ssp_class %}
+    <p><strong>SSP class:</strong> {{ report.ssp_class.value.title() }}
+        {% if report.ssp_class.value == 'SERVANT' %}(explicit tool use only)
+        {% elif report.ssp_class.value == 'STALKER' %}(unsolicited read-only / probe actions)
+        {% elif report.ssp_class.value == 'PREDATOR' %}(autonomous side-effecting actions)
+        {% endif %}
+    </p>
+    {% endif %}
 
     <div class="trust-validation-section" style="margin: 20px 0; padding: 15px; background-color: #FFFFFF; border-left: 4px solid {% if report.calibration and not report.calibration.passed %}var(--color-critical){% else %}var(--color-pass){% endif %}; border-radius: 4px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
         <h3 style="margin-top: 0;">Trust &amp; Validation</h3>

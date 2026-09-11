@@ -23,6 +23,7 @@ from agentscan.identity.permission_mapper import (
     load_role_policies,
     map_permissions,
 )
+from agentscan.identity.rbac_graph import audit_rbac_graph
 
 
 def run_identity_audit(path: str) -> IdentityReport:
@@ -33,7 +34,8 @@ def run_identity_audit(path: str) -> IdentityReport:
     2. Load role policies + dangerous-keyword fallback list from roles.yaml
     3. Run permission_mapper against every agent (over-privileged / no-scope)
     4. Run credential_auditor across ALL agents at once (shared-credential)
-    5. Score the combined findings -> Identity Score (0-100)
+    5. Run rbac_graph auditor for multi-hop privilege escalation (ID-010)
+    6. Score the combined findings -> Identity Score (0-100)
 
     This is the single entry point cli.py will call for `--scan-identity`.
     """
@@ -48,6 +50,8 @@ def run_identity_audit(path: str) -> IdentityReport:
 
     # Shared-credential check runs once across ALL agents, not per-agent
     findings.extend(audit_credentials(agents))
+
+    findings.extend(audit_rbac_graph(agents, roles, dangerous_keywords))
 
     score = calculate_identity_score(findings, total_agents_audited=len(agents))
 

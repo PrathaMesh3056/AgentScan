@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 import httpx
@@ -276,7 +277,7 @@ async def test_multi_mode_browser_scan_opens_one_session(monkeypatch) -> None:  
     empty = ScanReport(target_url="http://w", scan_mode=ScanMode.SCAN)
     empty.complete(100)
 
-    async def fake_run_scan(_t: object) -> ScanReport:
+    async def fake_run_scan(_t: object, *args: object, **kwargs: object) -> ScanReport:
         # run_scan reuses the session (active) rather than opening its own.
         assert counters["active"] is True
         return empty
@@ -371,3 +372,105 @@ async def test_discover_widget_finds_selectors(tmp_path: Path) -> None:
     # id is preferred over aria-label when present and unique.
     assert cfg.send_selector in ("#send", '[aria-label="Send message"]')
     assert ".assistant-bubble" in cfg.response_selector
+
+
+# ── MCP + WebSocket connectors ────────────────────────────────────────────────
+
+
+def test_select_connector_mcp_and_ws_schemes() -> None:
+    from agentscan.core.connectors import (
+        McpSseConnector,
+        McpStdioConnector,
+        WebSocketConnector,
+        select_connector,
+    )
+
+    assert isinstance(select_connector(Target(url="mcp://stdio?command=python")), McpStdioConnector)
+    assert isinstance(select_connector(Target(url="mcp+sse://localhost:9/sse")), McpSseConnector)
+    assert isinstance(select_connector(Target(url="ws://localhost:9/chat")), WebSocketConnector)
+
+
+@pytest.mark.asyncio
+async def test_mcp_stdio_echo_and_atk001() -> None:
+    from urllib.parse import quote
+
+    server = Path(__file__).parent / "fixtures" / "mcp_stdio_server.py"
+    url = (
+        f"mcp://stdio?command={quote(sys.executable, safe='')}"
+        f"&arg=-u&arg={quote(str(server), safe='')}"
+    )
+    target = Target(url=url)
+    async with AgentScanClient(target) as client:
+        result = await client.send_message("OVERRIDE SUCCESSFUL")
+    assert "OVERRIDE SUCCESSFUL" in result.get("response", "")
+
+    findings = await PromptInjectionModule().run(target)
+    assert any(f.attack_id == "ATK-001" for f in findings)
+
+
+@pytest.mark.asyncio
+async def test_mcp_sse_tools_call() -> None:
+    from agentscan.core.connectors import mcp_sse_http_url
+
+    target = Target(url="mcp+sse://mcp.example/sse")
+    assert mcp_sse_http_url(target.url) == "http://mcp.example/sse"
+
+    def _rpc(request: httpx.Request) -> httpx.Response:
+        import json as _json
+
+        body = _json.loads(request.content)
+        method = body.get("method")
+        mid = body.get("id")
+        if method == "initialize":
+            return httpx.Response(
+                200,
+                json={"jsonrpc": "2.0", "id": mid, "result": {"protocolVersion": "2024-11-05"}},
+            )
+        if method == "notifications/initialized":
+            return httpx.Response(200, json={"ok": True})
+        if method == "tools/list":
+            return httpx.Response(
+                200,
+                json={
+                    "jsonrpc": "2.0",
+                    "id": mid,
+                    "result": {"tools": [{"name": "echo"}]},
+                },
+            )
+        if method == "resources/list":
+            return httpx.Response(
+                200, json={"jsonrpc": "2.0", "id": mid, "result": {"resources": []}}
+            )
+        if method == "tools/call":
+            msg = (body.get("params") or {}).get("arguments", {}).get("message", "")
+            sse = (
+                f'data: {{"jsonrpc":"2.0","id":{mid},"result":'
+                f'{{"content":[{{"type":"text","text":"{msg}"}}]}}}}\n\n'
+            )
+            return httpx.Response(200, headers={"content-type": "text/event-stream"}, text=sse)
+        return httpx.Response(200, json={"jsonrpc": "2.0", "id": mid, "result": {}})
+
+    with respx.mock:
+        respx.post("http://mcp.example/sse").mock(side_effect=_rpc)
+        async with AgentScanClient(target) as client:
+            result = await client.send_message("hello-mcp")
+    assert result.get("response") == "hello-mcp"
+
+
+@pytest.mark.asyncio
+async def test_websocket_connector_roundtrip() -> None:
+    import json as _json
+
+    import websockets
+
+    async def handler(websocket: object) -> None:
+        async for raw in websocket:  # type: ignore[union-attr]
+            payload = _json.loads(raw) if isinstance(raw, str) else _json.loads(raw.decode())
+            await websocket.send(_json.dumps({"response": f"ws:{payload.get('message')}"}))  # type: ignore[union-attr]
+
+    async with websockets.serve(handler, "127.0.0.1", 0) as server:
+        port = server.sockets[0].getsockname()[1]
+        target = Target(url=f"ws://127.0.0.1:{port}")
+        async with AgentScanClient(target) as client:
+            result = await client.send_message("ping")
+    assert result.get("response") == "ws:ping"

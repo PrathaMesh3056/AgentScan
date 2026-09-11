@@ -152,7 +152,11 @@ class ActivationProbeModule(AttackModule):
 
     def _probe(self) -> list[Finding]:
         """Synchronous probe body — safe to run inside asyncio.to_thread."""
-        model, tokenizer = _load_model_and_tokenizer()
+        try:
+            model, tokenizer = _load_model_and_tokenizer()
+        except Exception as e:  # noqa: BLE001 - skip cleanly when weights are missing
+            logger.warning(f"ATK-023 skipped: DEEP reference model unavailable: {e}")
+            return []
 
         # 1. Benign baseline: activations for a set of ordinary prompts, plus the
         #    magnitude (L2) and directional (cosine) coherence between them.

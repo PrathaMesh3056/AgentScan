@@ -19,10 +19,19 @@ dependencies = [
     "sentence-transformers>=5.7.0",
     "playwright>=1.62.0",
     "python-dotenv>=1.2.2",
+    "networkx>=3.2",
+    "websockets>=14.0",
 ]
 
 [project.scripts]
 agentscan = "agentscan.cli:app"
+
+[project.optional-dependencies]
+semgrep = ["semgrep>=1.80.0"]
+ui = ["fastapi>=0.115.0", "uvicorn[standard]>=0.32.0"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"rules/ai_rules.yaml" = "agentscan/rules/ai_rules.yaml"
 
 [dependency-groups]
 dev = [
@@ -34,6 +43,8 @@ dev = [
     "pre-commit>=3.7",
     "types-PyYAML>=6.0.0",
     "pytest-cov>=6.0",
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.32.0",
 ]
 
 [build-system]

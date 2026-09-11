@@ -1,0 +1,78 @@
+# Semgrep rules for AgentScan optional config/code auditing.
+# Invoked by agentscan audit --scan-semgrep (requires the `semgrep` extra).
+
+rules:
+  - id: agentscan.unsafe-pickle-loads
+    languages: [python]
+    severity: ERROR
+    message: >
+      pickle.loads() can execute arbitrary code from untrusted bytes.
+      Prefer a safe serializer (json) or hmac-authenticated payloads.
+    metadata:
+      agentscan_id: SC-015
+      owasp_id: LLM05
+      category: deserialization
+    pattern: pickle.loads(...)
+
+  - id: agentscan.unsafe-torch-load
+    languages: [python]
+    severity: ERROR
+    message: >
+      torch.load() without weights_only=True deserializes via pickle and can
+      execute attacker-controlled code from a model file.
+    metadata:
+      agentscan_id: SC-011
+      owasp_id: LLM05
+      category: deserialization
+    patterns:
+      - pattern: torch.load(...)
+      - pattern-not: torch.load(..., weights_only=True)
+
+  - id: agentscan.subprocess-popen-shell
+    languages: [python]
+    severity: ERROR
+    message: >
+      subprocess.Popen(..., shell=True) can execute injected shell metacharacters
+      if any argument is attacker-controlled.
+    metadata:
+      agentscan_id: SC-016
+      owasp_id: LLM05
+      category: command-injection
+    pattern: subprocess.Popen(..., shell=True)
+
+  - id: agentscan.os-system
+    languages: [python]
+    severity: ERROR
+    message: os.system() invokes a shell and is unsafe with untrusted input.
+    metadata:
+      agentscan_id: SC-016
+      owasp_id: LLM05
+      category: command-injection
+    pattern: os.system(...)
+
+  - id: agentscan.prompt-fstring-user-input
+    languages: [python]
+    severity: WARNING
+    message: >
+      f-string interpolates user_input into a prompt. Untrusted content in the
+      prompt channel enables injection.
+    metadata:
+      agentscan_id: SC-017
+      owasp_id: LLM01
+      category: prompt-injection
+    pattern: f"...{user_input}..."
+
+  - id: agentscan.prompt-format-user-input
+    languages: [python]
+    severity: WARNING
+    message: >
+      str.format interpolates user_input into a prompt string. Untrusted content
+      in the prompt channel enables injection.
+    metadata:
+      agentscan_id: SC-017
+      owasp_id: LLM01
+      category: prompt-injection
+    pattern-either:
+      - pattern: $X.format(user_input)
+      - pattern: $X.format(..., user_input, ...)
+      - pattern: $X.format(user_input=$Y)

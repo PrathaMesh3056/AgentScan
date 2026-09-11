@@ -84,6 +84,14 @@ class AgentIdentity(BaseModel):
         ),
     )
 
+    calls_agents: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Other agent IDs this agent is permitted to invoke. Used by "
+            "the RBAC graph auditor to detect multi-hop privilege escalation."
+        ),
+    )
+
     manifest_path: str = Field(
         ...,
         description="Filesystem path to the manifest this identity was parsed from.",

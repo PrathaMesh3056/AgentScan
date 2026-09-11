@@ -1,16 +1,113 @@
 # tests/test_supply_chain/test_dep_scanner.py
 #
 # Tests for agentscan/supply_chain/dep_scanner.py
-# 6 tests covering parsing and CVE matching.
+# Parsing tests plus live OSV (respx-mocked) and YAML fallback coverage.
 
 from __future__ import annotations
 
 import textwrap
 from pathlib import Path
 
+import httpx
 import pytest
+import respx
 
 from agentscan.supply_chain.dep_scanner import _parse_dependencies, scan_dependencies
+
+_OSV_BASE = "https://api.osv.dev"
+
+_LANGCHAIN_VULN = {
+    "id": "GHSA-xxxx-yyyy-zzzz",
+    "aliases": ["CVE-2023-34541"],
+    "summary": "Arbitrary code execution via eval() in LLMMathChain.",
+    "severity": [{"type": "CVSS_V3", "score": "9.8"}],
+    "affected": [
+        {
+            "package": {"name": "langchain", "ecosystem": "PyPI"},
+            "ranges": [
+                {
+                    "type": "ECOSYSTEM",
+                    "events": [{"introduced": "0"}, {"fixed": "0.0.155"}],
+                }
+            ],
+        }
+    ],
+    "database_specific": {"severity": "CRITICAL"},
+}
+
+_REQUESTS_VULN = {
+    "id": "OSV-2099-0001",
+    "aliases": ["CVE-2099-0001"],
+    "summary": "Hypothetical requests vulnerability for testing.",
+    "severity": [{"type": "CVSS_V3", "score": "7.5"}],
+    "affected": [
+        {
+            "package": {"name": "requests", "ecosystem": "PyPI"},
+            "ranges": [
+                {
+                    "type": "ECOSYSTEM",
+                    "events": [{"introduced": "0"}, {"fixed": "2.1.0"}],
+                }
+            ],
+        }
+    ],
+}
+
+
+def _mock_osv_empty(count: int = 1) -> None:
+    respx.post(f"{_OSV_BASE}/v1/querybatch").mock(
+        return_value=httpx.Response(
+            200,
+            json={"results": [{"vulns": []} for _ in range(count)]},
+        )
+    )
+
+
+def _mock_osv_langchain() -> None:
+    respx.post(f"{_OSV_BASE}/v1/querybatch").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "results": [
+                    {
+                        "vulns": [
+                            {
+                                "id": "GHSA-xxxx-yyyy-zzzz",
+                                "modified": "2023-06-01T00:00:00Z",
+                            }
+                        ]
+                    }
+                ]
+            },
+        )
+    )
+    respx.get(f"{_OSV_BASE}/v1/vulns/GHSA-xxxx-yyyy-zzzz").mock(
+        return_value=httpx.Response(200, json=_LANGCHAIN_VULN)
+    )
+
+
+def _mock_osv_requests() -> None:
+    respx.post(f"{_OSV_BASE}/v1/querybatch").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "results": [
+                    {
+                        "vulns": [
+                            {
+                                "id": "OSV-2099-0001",
+                                "modified": "2099-01-01T00:00:00Z",
+                            }
+                        ]
+                    }
+                ]
+            },
+        )
+    )
+    respx.get(f"{_OSV_BASE}/v1/vulns/OSV-2099-0001").mock(
+        return_value=httpx.Response(200, json=_REQUESTS_VULN)
+    )
+
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -66,29 +163,42 @@ class TestParseDependencies:
 
 
 class TestScanDependencies:
+    @respx.mock
     def test_known_vulnerable_exact_pin_flagged(self, tmp_path: Path) -> None:
         """langchain==0.0.154 (CVE-2023-34541) must produce a SC-001 finding."""
+        _mock_osv_langchain()
         path = _write_req(tmp_path, "langchain==0.0.154\n")
         findings, checks_run = scan_dependencies(path)
         assert checks_run == 1
         sc001 = [f for f in findings if f.attack_id == "SC-001"]
         assert len(sc001) == 1
         assert "CVE-2023-34541" in sc001[0].description
+        assert sc001[0].metadata.get("source") == "osv"
 
+    @respx.mock
     def test_safe_version_not_flagged(self, tmp_path: Path) -> None:
         """A non-vulnerable pin of langchain must produce no findings."""
+        respx.post(f"{_OSV_BASE}/v1/querybatch").mock(
+            return_value=httpx.Response(200, json={"results": [{"vulns": []}]})
+        )
         path = _write_req(tmp_path, "langchain==0.1.20\n")
         findings, _ = scan_dependencies(path)
         assert len(findings) == 0
 
+    @respx.mock
     def test_unknown_package_not_flagged(self, tmp_path: Path) -> None:
         """A package not in the CVE database must not produce findings."""
+        respx.post(f"{_OSV_BASE}/v1/querybatch").mock(
+            return_value=httpx.Response(200, json={"results": [{"vulns": []}]})
+        )
         path = _write_req(tmp_path, "requests==2.31.0\n")
         findings, _ = scan_dependencies(path)
         assert len(findings) == 0
 
+    @respx.mock
     def test_checks_run_matches_parsed_count(self, tmp_path: Path) -> None:
         """checks_run must equal the number of exact-pin dependencies parsed."""
+        _mock_osv_empty(3)
         path = _write_req(
             tmp_path,
             """\
@@ -99,3 +209,36 @@ class TestScanDependencies:
         )
         _, checks_run = scan_dependencies(path)
         assert checks_run == 3
+
+    @respx.mock
+    def test_connect_error_falls_back_to_yaml(self, tmp_path: Path) -> None:
+        """When OSV is unreachable, the offline YAML database is used."""
+        respx.post(f"{_OSV_BASE}/v1/querybatch").mock(
+            side_effect=httpx.ConnectError("connection refused")
+        )
+        path = _write_req(tmp_path, "langchain==0.0.154\n")
+        findings, _ = scan_dependencies(path)
+        assert len(findings) == 1
+        assert "CVE-2023-34541" in findings[0].description
+        assert findings[0].metadata.get("source") == "offline"
+
+    @respx.mock
+    def test_timeout_falls_back_to_yaml(self, tmp_path: Path) -> None:
+        """OSV timeout triggers YAML fallback for known vulnerable pins."""
+        respx.post(f"{_OSV_BASE}/v1/querybatch").mock(
+            side_effect=httpx.TimeoutException("timed out")
+        )
+        path = _write_req(tmp_path, "langchain==0.0.154\n")
+        findings, _ = scan_dependencies(path)
+        assert len(findings) == 1
+        assert findings[0].metadata.get("source") == "offline"
+
+    @respx.mock
+    def test_live_osv_cve_not_in_yaml(self, tmp_path: Path) -> None:
+        """A CVE returned by OSV but absent from YAML still produces SC-001."""
+        _mock_osv_requests()
+        path = _write_req(tmp_path, "requests==2.0.0\n")
+        findings, _ = scan_dependencies(path)
+        assert len(findings) == 1
+        assert "CVE-2099-0001" in findings[0].description
+        assert findings[0].metadata.get("source") == "osv"

@@ -1,0 +1,12 @@
+# Optional full image including DEEP-mode torch/transformers.
+# The GitHub Action only uses this path when inputs.deep == true (via pip, not this file).
+
+FROM python:3.12-slim-bookworm
+WORKDIR /src
+COPY pyproject.toml README.md ./
+COPY agentscan ./agentscan
+COPY rules ./rules
+RUN pip install --no-cache-dir .
+WORKDIR /work
+ENTRYPOINT ["agentscan"]
+CMD ["--help"]

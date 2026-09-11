@@ -27,9 +27,14 @@ class TestTarget:
         t = Target(url="http://localhost:8000/chat/")
         assert t.url == "http://localhost:8000/chat"
 
-    def test_rejects_non_http_url(self) -> None:
+    def test_accepts_websocket_and_mcp_urls(self) -> None:
+        assert Target(url="ws://localhost:8000/chat").url.startswith("ws://")
+        assert Target(url="mcp://stdio").url.startswith("mcp://")
+        assert Target(url="mcp+sse://localhost:8080/sse").url.startswith("mcp+sse://")
+
+    def test_rejects_unsupported_url_scheme(self) -> None:
         with pytest.raises(ValidationError) as exc:
-            Target(url="ws://localhost:8000/chat")
+            Target(url="ftp://localhost:8000/chat")
         assert "http" in str(exc.value).lower()
 
     def test_rejects_missing_url(self) -> None:
@@ -45,6 +50,10 @@ class TestTarget:
     def test_auth_header_optional(self) -> None:
         t = Target(url="http://x.com")
         assert t.auth_header is None
+
+    def test_mutate_defaults_false(self) -> None:
+        t = Target(url="http://x.com")
+        assert t.mutate is False
 
     def test_attacker_goal_and_escalation_fields(self) -> None:
         t = Target(

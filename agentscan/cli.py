@@ -4,8 +4,11 @@
 #
 # Commands:
 #   agentscan scan   <target> [--framework auto] [--output report.json] [--fail-on CRITICAL]
+#                             [--mutate]
 #   agentscan audit  <path>   [--scan-deps] [--scan-config] [--scan-secrets]
 #                             [--scan-typo] [--scan-mcp] [--scan-identity]
+#                             [--scan-semgrep] [--aibom]
+#   agentscan ui [--report report.json] [--identity manifests/]
 #   agentscan list-attacks
 #
 # Uses Typer for argument parsing and Rich for coloured terminal output.
@@ -13,6 +16,8 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import difflib
 import json
 from pathlib import Path
 from typing import Any
@@ -30,6 +35,7 @@ from agentscan.core.models import (
     RequestTemplate,
     ScanMode,
     ScanReport,
+    SspClass,
     Target,
 )
 from agentscan.core.runner import run_scan_multi
@@ -70,6 +76,20 @@ _SEVERITY_ORDER: dict[str, int] = {
     "INFO": 1,
     "PASS": 0,
 }
+
+_SSP_GLOSS: dict[SspClass, str] = {
+    SspClass.SERVANT: "explicit tool use only",
+    SspClass.STALKER: "unsolicited read-only / probe actions",
+    SspClass.PREDATOR: "autonomous side-effecting actions",
+}
+
+
+def _format_ssp_class(ssp: SspClass | None) -> str:
+    if ssp is None:
+        return "Unknown"
+    label = ssp.value.title()
+    gloss = _SSP_GLOSS.get(ssp, "")
+    return f"{label} ({gloss})" if gloss else label
 
 
 def _fail_on_should_exit(findings: list[Finding], fail_on: str) -> bool:
@@ -140,6 +160,12 @@ def scan(  # noqa: PLR0913
         help="The expected system prompt content for EXPLOIT mode exfiltration tests.",
     ),
     deep: bool = typer.Option(False, "--deep", help="Run DEEP mode neural activation probes."),
+    mutate: bool = typer.Option(
+        False,
+        "--mutate",
+        help="Expand SCAN YAML payloads with Base64, leetspeak, ZWSP, token-split, "
+        "homoglyph, and wrap variants.",
+    ),
     attacker_model: str | None = typer.Option(
         None,
         "--attacker-model",
@@ -191,7 +217,7 @@ def scan(  # noqa: PLR0913
     curl: Path | None = typer.Option(  # noqa: B008
         None,
         "--curl",
-        help="Path to a file with a captured cURL command (Chrome → Copy as cURL). "
+        help="Path to a file with a captured cURL command (Chrome -> Copy as cURL). "
         "Replays that exact request with attack payloads substituted — use this to scan "
         "an agent behind a website widget instead of a documented endpoint.",
     ),
@@ -254,6 +280,7 @@ def scan(  # noqa: PLR0913
 
     exploit = exploit or bool(cfg.get("exploit"))
     deep = deep or bool(cfg.get("deep"))
+    mutate = mutate or bool(cfg.get("mutate"))
     verbose = verbose or bool(cfg.get("verbose"))
     if output is None and cfg.get("output"):
         output = Path(cfg["output"])
@@ -354,6 +381,7 @@ def scan(  # noqa: PLR0913
         judge_model=judge_model,
         escalation_model=escalation_model,
         escalation_turns=escalation_turns,
+        mutate=mutate,
     )
 
     # Determine modes
@@ -424,6 +452,7 @@ def scan(  # noqa: PLR0913
     band = score_band(report.score) if report.score is not None else "UNKNOWN"
     score_val = report.score if report.score is not None else 0
     console.print(f"\nAgentScan Score: {score_val}/100  [{band}]")
+    console.print(f"SSP class: {_format_ssp_class(report.ssp_class)}")
 
     # Write JSON output
     if output is not None:
@@ -458,6 +487,17 @@ def audit(  # noqa: PLR0912, PLR0913
     scan_identity: bool = typer.Option(
         False, "--scan-identity", help="Run identity & authorization audit."
     ),
+    scan_semgrep: bool = typer.Option(
+        False,
+        "--scan-semgrep",
+        help="Run optional Semgrep AI rules (pickle/torch.load, shell=True, prompt interpolation). "
+        "Requires the semgrep extra; skipped with a warning if the binary is missing.",
+    ),
+    aibom: bool = typer.Option(
+        False,
+        "--aibom",
+        help="Write a CycloneDX 1.6 AIBOM JSON (pinned packages + model/MCP stubs).",
+    ),
     fail_on: str | None = typer.Option(
         None,
         "--fail-on",
@@ -466,8 +506,19 @@ def audit(  # noqa: PLR0912, PLR0913
     output: Path | None = typer.Option(None, help="Write JSON findings to this file."),  # noqa: B008
 ) -> None:
     """Audit a project directory for AI supply-chain and identity risks."""
-    # If no flag is given, run all six categories (sensible default)
-    run_all = not any([scan_deps, scan_config, scan_secrets, scan_typo, scan_mcp, scan_identity])
+    # If no flag is given, run the built-in categories (Semgrep stays opt-in).
+    run_all = not any(
+        [
+            scan_deps,
+            scan_config,
+            scan_secrets,
+            scan_typo,
+            scan_mcp,
+            scan_identity,
+            scan_semgrep,
+            aibom,
+        ]
+    )
 
     all_findings: list[Finding] = []
     total_checks = 0
@@ -515,6 +566,33 @@ def audit(  # noqa: PLR0912, PLR0913
         all_findings.extend(report.findings)
         total_checks += max(len(report.agents_found), 1)
 
+    if scan_semgrep:
+        from agentscan.supply_chain.semgrep_auditor import scan_semgrep as _scan_sg
+
+        f, c = _scan_sg(path)
+        all_findings.extend(f)
+        total_checks += c
+
+    aibom_path: Path | None = None
+    if aibom:
+        from agentscan.supply_chain.aibom import write_aibom
+
+        scanners_on = any(
+            [
+                scan_deps,
+                scan_config,
+                scan_secrets,
+                scan_typo,
+                scan_mcp,
+                scan_identity,
+                scan_semgrep,
+                run_all,
+            ]
+        )
+        aibom_path = Path("aibom.cdx.json") if scanners_on or output is None else output
+        write_aibom(path, aibom_path)
+        console.print(f"AIBOM written to {aibom_path}")
+
     # ── Render findings table ──────────────────────────────────────────────────
     if all_findings:
         table = Table(title="AgentScan Audit Findings", show_lines=True)
@@ -548,7 +626,7 @@ def audit(  # noqa: PLR0912, PLR0913
     console.print(f"\nAgentScan Audit Score: {score}/100  [{band}]")
 
     # ── JSON output ────────────────────────────────────────────────────────────
-    if output is not None:
+    if output is not None and output != aibom_path:
         import uuid
 
         from agentscan.identity.models import IdentityReport
@@ -710,6 +788,137 @@ def benchmark() -> None:
     else:
         console.print("[bold red][FAIL] scores do NOT rank the agents correctly.[/bold red]")
         raise typer.Exit(1)
+
+
+@app.command()
+def ui(
+    report: Path | None = typer.Option(  # noqa: B008
+        None, "--report", help="Scan JSON report (ScanReport) to display."
+    ),
+    identity: Path | None = typer.Option(  # noqa: B008
+        None,
+        "--identity",
+        help="Directory of *.agent.json manifests for the RBAC graph view.",
+    ),
+    host: str = typer.Option("127.0.0.1", "--host", help="Bind address."),
+    port: int = typer.Option(8765, "--port", help="Bind port."),
+) -> None:
+    """Serve a local dashboard for graphs, trajectory/SSP, and traffic (no SaaS)."""
+    from agentscan.ui.app import create_app, serve_app
+
+    try:
+        dashboard = create_app(report, identity)
+    except RuntimeError as e:
+        console.print(f"[red]{e}[/red]")
+        raise typer.Exit(1) from None
+
+    console.print(f"AgentScan UI: [cyan]http://{host}:{port}[/cyan]")
+    try:
+        serve_app(dashboard, host=host, port=port)
+    except RuntimeError as e:
+        console.print(f"[red]{e}[/red]")
+        raise typer.Exit(1) from None
+
+
+@app.command()
+def fix(
+    target: Path = typer.Argument(  # noqa: B008
+        ...,
+        help="Path to a scan report JSON, or project directory to audit & fix.",
+    ),
+    apply: bool = typer.Option(
+        False,
+        "--apply",
+        help="Apply the proposed remediation changes to disk (default is dry-run).",
+    ),
+    kind: str | None = typer.Option(
+        None,
+        "--kind",
+        help="Comma-separated fix kinds to run: pin_bump, ast_patch, identity_shrink, guardrails.",
+    ),
+    output: Path | None = typer.Option(  # noqa: B008
+        None,
+        "--output",
+        help="Write planned/applied FixPlan to a JSON file.",
+    ),
+) -> None:
+    """Plan and apply safe remediations for AgentScan findings."""
+    from rich.syntax import Syntax
+
+    from agentscan.remediation.engine import RemediationEngine
+
+    findings: list[Finding] = []
+    root_path = target
+    if target.is_file() and target.suffix == ".json":
+        try:
+            data = json.loads(target.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                raw_findings = data.get("findings", [])
+                for rf in raw_findings:
+                    with contextlib.suppress(Exception):
+                        findings.append(Finding.model_validate(rf))
+            root_path = target.parent
+        except Exception as e:
+            console.print(f"[red]Failed to load report from {target}: {e}[/red]")
+            raise typer.Exit(1) from None
+    else:
+        from agentscan.identity.orchestrator import run_identity_audit
+        from agentscan.supply_chain.config_auditor import scan_config as _scan_cfg
+        from agentscan.supply_chain.dep_scanner import scan_dependencies
+        from agentscan.supply_chain.mcp_auditor import scan_mcp_configs
+        from agentscan.supply_chain.secret_scanner import scan_secrets as _scan_sec
+
+        f_deps, _ = scan_dependencies(target)
+        f_cfg, _ = _scan_cfg(target)
+        f_sec, _ = _scan_sec(target)
+        f_mcp, _ = scan_mcp_configs(target)
+        id_rep = run_identity_audit(str(target))
+
+        findings.extend(f_deps + f_cfg + f_sec + f_mcp + id_rep.findings)
+        root_path = target
+
+    kinds_list = [k.strip() for k in kind.split(",") if k.strip()] if kind else None
+    engine = RemediationEngine(root_path)
+    plan = engine.plan(findings, kinds=kinds_list)
+
+    if not plan.actions:
+        console.print("[green]No remediations needed or applicable.[/green]")
+        return
+
+    console.print(f"Planned [bold cyan]{len(plan.actions)}[/bold cyan] remediation action(s):\n")
+
+    for i, action in enumerate(plan.actions, 1):
+        console.print(
+            f"[bold]{i}. [{action.kind.upper()}][/bold] Finding [cyan]{action.finding_id}[/cyan] -> [dim]{action.path}[/dim]"
+        )
+        diff_lines = list(
+            difflib.unified_diff(
+                action.before.splitlines(keepends=True),
+                action.after.splitlines(keepends=True),
+                fromfile=f"a/{Path(action.path).name}",
+                tofile=f"b/{Path(action.path).name}",
+            )
+        )
+        if diff_lines:
+            diff_text = "".join(diff_lines)
+            console.print(Syntax(diff_text, "diff", theme="monokai", line_numbers=False))
+        else:
+            console.print("  [dim](New file to be created)[/dim]")
+        console.print()
+
+    if apply:
+        applied_count = plan.apply()
+        console.print(
+            f"[bold green]Successfully applied {applied_count} remediation(s) to disk.[/bold green]"
+        )
+    else:
+        console.print(
+            "[yellow]Dry-run mode: no files modified. Pass --apply to write changes to disk.[/yellow]"
+        )
+
+    if output:
+        output.write_text(plan.model_dump_json(indent=2), encoding="utf-8")
+        console.print(f"FixPlan written to [cyan]{output}[/cyan]")
 
 
 @app.command("list-attacks")

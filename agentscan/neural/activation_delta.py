@@ -24,3 +24,11 @@ def cosine_similarity(a: torch.Tensor, b: torch.Tensor) -> float:
     a_flat = a.flatten()
     b_flat = b.flatten()
     return float(torch.nn.functional.cosine_similarity(a_flat, b_flat, dim=0).item())
+
+
+def kl_divergence(p_logits: torch.Tensor, q_logits: torch.Tensor) -> float:
+    """KL(softmax(p) || softmax(q)) between two logit vectors."""
+    log_p = torch.nn.functional.log_softmax(p_logits.flatten().float(), dim=0)
+    log_q = torch.nn.functional.log_softmax(q_logits.flatten().float(), dim=0)
+    p = log_p.exp()
+    return float((p * (log_p - log_q)).sum().item())

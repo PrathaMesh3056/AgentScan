@@ -308,3 +308,39 @@ class TestModuleCheckpoint:
         assert "ID-002" in output
         assert "AgentScan Identity Score" in output
         assert str(report.identity_score) in output
+
+
+# ═══════════════════════════════════════════════════════════════
+# ID-010 — multi-hop privilege escalation (orchestrator e2e)
+# ═══════════════════════════════════════════════════════════════
+
+
+class TestMultiHopEscalation:
+    def test_run_identity_audit_detects_id_010_via_calls_agents(self, tmp_path: Path) -> None:
+        triage_manifest = tmp_path / "triage.agent.json"
+        triage_manifest.write_text(
+            """{
+  "agent_id": "triage",
+  "tools": [{"tool_name": "web_search", "capability_scopes": ["web_search"]}],
+  "calls_agents": ["dba"]
+}""",
+            encoding="utf-8",
+        )
+
+        dba_manifest = tmp_path / "dba.agent.json"
+        dba_manifest.write_text(
+            """{
+  "agent_id": "dba",
+  "declared_role": "coding_agent",
+  "tools": [{"tool_name": "sql_runner", "capability_scopes": ["exec_sql"]}]
+}""",
+            encoding="utf-8",
+        )
+
+        report = run_identity_audit(str(tmp_path))
+
+        id_010 = [f for f in report.findings if f.attack_id == "ID-010"]
+        assert len(id_010) == 1
+        assert id_010[0].severity == Severity.CRITICAL
+        assert "triage" in id_010[0].description
+        assert id_010[0].metadata["scope"] == "exec_sql"

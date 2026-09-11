@@ -54,6 +54,18 @@ class ScanMode(StrEnum):
     DEEP = "DEEP"
 
 
+class SspClass(StrEnum):
+    """
+    Servant / Stalker / Predator classification from live scan trajectory.
+    Servant = explicit tool use only; Stalker = unsolicited probes;
+    Predator = autonomous side-effecting actions.
+    """
+
+    SERVANT = "SERVANT"
+    STALKER = "STALKER"
+    PREDATOR = "PREDATOR"
+
+
 class Framework(StrEnum):
     """Known agent frameworks. AUTO means AgentScan will try to detect it."""
 
@@ -240,8 +252,17 @@ class Target(BaseModel):
 
     url: str = Field(
         ...,
-        description="The HTTP endpoint to scan. Must be reachable.",
-        examples=["http://localhost:8000/chat", "https://myagent.example.com/api/chat"],
+        description=(
+            "Target endpoint. HTTP(S) for JSON APIs, ws(s):// for WebSocket, "
+            "mcp://stdio for MCP stdio JSON-RPC, mcp+sse:// for MCP SSE."
+        ),
+        examples=[
+            "http://localhost:8000/chat",
+            "https://myagent.example.com/api/chat",
+            "ws://localhost:8765/chat",
+            "mcp://stdio?command=python",
+            "mcp+sse://localhost:8080/sse",
+        ],
     )
 
     framework: Framework = Field(
@@ -264,6 +285,12 @@ class Target(BaseModel):
         ge=1,
         le=300,
         description="HTTP timeout in seconds.",
+    )
+
+    mutate: bool = Field(
+        default=False,
+        description="When True, SCAN YAML payloads are expanded with encoding and "
+        "obfuscation mutators (Base64, leetspeak, ZWSP, token-split, homoglyphs, wraps).",
     )
 
     mode: ScanMode = Field(
@@ -328,9 +355,14 @@ class Target(BaseModel):
 
     @field_validator("url")
     @classmethod
-    def url_must_be_http(cls, v: str) -> str:
-        if not v.startswith(("http://", "https://")):
-            raise ValueError(f"URL must start with http:// or https://. Got: {v!r}")
+    def url_must_be_supported_scheme(cls, v: str) -> str:
+        allowed = ("http://", "https://", "ws://", "wss://", "mcp://", "mcp+sse://", "mcp+stdio://")
+        lower = v.lower()
+        if not lower.startswith(allowed):
+            raise ValueError(
+                "URL must start with http://, https://, ws://, wss://, mcp://, "
+                f"mcp+sse://, or mcp+stdio://. Got: {v!r}"
+            )
         return v.rstrip("/")  # normalise — remove trailing slash
 
     model_config = {"frozen": False}  # allow mutation after creation
@@ -421,6 +453,23 @@ class Finding(BaseModel):
         return v
 
     model_config = {"frozen": True}  # findings are immutable
+
+
+# ── Trajectory ────────────────────────────────────────────────────────────────
+
+
+class TurnRecord(BaseModel):
+    """One agent interaction turn captured during a live scan."""
+
+    turn: int = Field(..., ge=1, description="1-based turn index within the scan.")
+    payload: str = Field(..., description="User/attack payload sent to the agent.")
+    response: str = Field(..., description="Extracted reply text from the agent.")
+    tool_calls: list[str] = Field(
+        default_factory=list,
+        description="Normalized tool/function names invoked in this turn.",
+    )
+
+    model_config = {"frozen": True}
 
 
 # ── Calibration & Attacker Configuration ──────────────────────────────────────
@@ -540,6 +589,16 @@ class ScanReport(BaseModel):
     attacker_config: AttackerConfig | None = Field(
         default=None,
         description="AI attacker configuration details if AI attacker was enabled.",
+    )
+
+    trajectory: list[TurnRecord] = Field(
+        default_factory=list,
+        description="Per-turn payloads, replies, and tool calls from the live scan.",
+    )
+
+    ssp_class: SspClass | None = Field(
+        default=None,
+        description="Servant/Stalker/Predator classification from scan trajectory.",
     )
 
     # ── Computed properties ───────────────────────────────────────────────────

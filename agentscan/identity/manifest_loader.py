@@ -92,5 +92,6 @@ def _parse_manifest_file(manifest_file: Path) -> AgentIdentity:
         declared_role=data.get("declared_role"),  # None if absent — never guessed
         tools=tools,
         credential_ref=data.get("credential_ref"),  # None if absent — never guessed
+        calls_agents=data.get("calls_agents") or [],
         manifest_path=str(manifest_file),
     )

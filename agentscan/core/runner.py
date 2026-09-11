@@ -23,16 +23,26 @@ from agentscan.core.connectors import (
 )
 from agentscan.core.models import Finding, ScanMode, ScanReport, Target
 from agentscan.core.scorer import calculate_score
+from agentscan.core.ssp_mapper import classify_ssp
 from agentscan.core.trace import recorder
+from agentscan.core.trajectory import trajectory_recorder
 
 
-async def run_scan(target: Target) -> ScanReport:
+def _attach_trajectory(report: ScanReport) -> None:
+    report.trajectory = trajectory_recorder.turns()
+    report.ssp_class = classify_ssp(report.trajectory)
+
+
+async def run_scan(target: Target, *, reset_trajectory: bool = True) -> ScanReport:
     """
     Run a full security scan against the target.
 
     Discovers all applicable attack modules, runs them concurrently,
     scores the results, and returns a completed ScanReport.
     """
+    if reset_trajectory:
+        trajectory_recorder.reset()
+
     # 1. Load all attack modules (idempotent — safe to call every time)
     registry.load_all()
 
@@ -50,6 +60,7 @@ async def run_scan(target: Target) -> ScanReport:
         )
         score = calculate_score([], 0)
         report.complete(score, tests_run=0)
+        _attach_trajectory(report)
         return report
 
     # 3. Run the modules.
@@ -114,6 +125,8 @@ async def run_scan(target: Target) -> ScanReport:
     score = calculate_score(all_findings, total_tests_run)
     report.complete(score, tests_run=total_tests_run)
 
+    _attach_trajectory(report)
+
     logger.info(
         f"Scan complete: {len(all_findings)} findings, "
         f"score {score}/100, {total_tests_run} tests run"
@@ -126,6 +139,8 @@ async def run_scan_multi(target: Target, modes: list[ScanMode]) -> ScanReport:
     """
     Run scans across multiple modes sequentially and merge the results.
     """
+    trajectory_recorder.reset()
+
     all_findings = []
     total_tests_run = 0
 
@@ -140,7 +155,7 @@ async def run_scan_multi(target: Target, modes: list[ScanMode]) -> ScanReport:
     try:
         for m in modes:
             mode_target = target.model_copy(update={"mode": m})
-            report = await run_scan(mode_target)
+            report = await run_scan(mode_target, reset_trajectory=False)
             all_findings.extend(report.findings)
             total_tests_run += report.tests_run
     finally:
@@ -156,4 +171,5 @@ async def run_scan_multi(target: Target, modes: list[ScanMode]) -> ScanReport:
     )
     score = calculate_score(all_findings, total_tests_run)
     merged_report.complete(score, tests_run=total_tests_run)
+    _attach_trajectory(merged_report)
     return merged_report

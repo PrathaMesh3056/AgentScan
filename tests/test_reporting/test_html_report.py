@@ -1,4 +1,4 @@
-from agentscan.core.models import Finding, Framework, ScanMode, ScanReport, Severity
+from agentscan.core.models import Finding, Framework, ScanMode, ScanReport, Severity, SspClass
 from agentscan.identity.models import AgentIdentity, IdentityReport
 from agentscan.reporting.html_report import render_html_report
 
@@ -72,6 +72,16 @@ def test_html_report_empty_findings():
     html = render_html_report(report)
     assert "<!DOCTYPE html>" in html
     assert "No findings to report" in html
+
+
+def test_html_report_ssp_class():
+    report = _make_report([])
+    report.ssp_class = SspClass.PREDATOR
+    report.complete(50)
+    html = render_html_report(report)
+    assert "SSP class:" in html
+    assert "Predator" in html
+    assert "autonomous side-effecting" in html
 
 
 def test_html_report_trust_and_validation_passed():

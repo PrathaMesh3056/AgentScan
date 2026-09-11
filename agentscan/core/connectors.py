@@ -18,9 +18,12 @@ import asyncio
 import contextlib
 import copy
 import json
+import os
+import sys
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from typing import Any
+from urllib.parse import parse_qs, unquote, urlparse, urlunparse
 
 import httpx
 from loguru import logger
@@ -505,6 +508,388 @@ class CallableConnector(Connector):
         return await self.send_message(flatten_conversation(messages))
 
 
+# ── MCP JSON-RPC helpers ──────────────────────────────────────────────────────
+
+
+def _jsonrpc_request(
+    req_id: int, method: str, params: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    msg: dict[str, Any] = {"jsonrpc": "2.0", "id": req_id, "method": method}
+    if params is not None:
+        msg["params"] = params
+    return msg
+
+
+def _mcp_text_from_result(result: Any) -> str:
+    """Lift MCP tools/call or resources/read payloads into a single string."""
+    if result is None:
+        return ""
+    if isinstance(result, str):
+        return result
+    if not isinstance(result, dict):
+        return json.dumps(result)
+    content = result.get("content")
+    if isinstance(content, list):
+        parts: list[str] = []
+        for item in content:
+            if isinstance(item, dict) and item.get("text"):
+                parts.append(str(item["text"]))
+            elif isinstance(item, str):
+                parts.append(item)
+        if parts:
+            return "\n".join(parts)
+    contents = result.get("contents")
+    if isinstance(contents, list):
+        parts = []
+        for item in contents:
+            if isinstance(item, dict) and item.get("text"):
+                parts.append(str(item["text"]))
+        if parts:
+            return "\n".join(parts)
+    if "message" in result:
+        return str(result["message"])
+    return json.dumps(result)
+
+
+def _parse_mcp_stdio_command(url: str) -> list[str]:
+    """
+    mcp://stdio?command=python&arg=-u&arg=server.py
+    mcp+stdio://stdio?command=npx
+    """
+    parsed = urlparse(url)
+    qs = parse_qs(parsed.query)
+    command = (qs.get("command") or qs.get("cmd") or [sys.executable])[0]
+    args = [unquote(a) for a in qs.get("arg", [])]
+    return [command, *args]
+
+
+def mcp_sse_http_url(url: str) -> str:
+    """mcp+sse://host/path → http://host/path (https when scheme is mcp+sses)."""
+    parsed = urlparse(url)
+    scheme = "https" if parsed.scheme.lower() == "mcp+sses" else "http"
+    return urlunparse((scheme, parsed.netloc, parsed.path or "/", parsed.params, parsed.query, ""))
+
+
+class _McpClientMixin:
+    """Shared initialize / tools.list / tools.call sequence for MCP transports."""
+
+    _rpc_id: int
+    _tools: list[dict[str, Any]]
+    _resources: list[dict[str, Any]]
+
+    async def _rpc(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        raise NotImplementedError
+
+    async def _notify(self, method: str, params: dict[str, Any] | None = None) -> None:
+        raise NotImplementedError
+
+    async def _handshake(self) -> None:
+        self._rpc_id = 0
+        self._tools = []
+        self._resources = []
+        await self._rpc(
+            "initialize",
+            {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {},
+                "clientInfo": {"name": "agentscan", "version": "0.1.0"},
+            },
+        )
+        await self._notify("notifications/initialized")
+        listed = await self._rpc("tools/list")
+        result = listed.get("result") if isinstance(listed.get("result"), dict) else listed
+        tools = result.get("tools") if isinstance(result, dict) else None
+        if isinstance(tools, list):
+            self._tools = [t for t in tools if isinstance(t, dict)]
+        try:
+            res = await self._rpc("resources/list")
+            r = res.get("result") if isinstance(res.get("result"), dict) else res
+            resources = r.get("resources") if isinstance(r, dict) else None
+            if isinstance(resources, list):
+                self._resources = [x for x in resources if isinstance(x, dict)]
+        except Exception:  # noqa: BLE001
+            self._resources = []
+
+    async def _probe_message(
+        self, message: str, extra_body: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        extra = dict(extra_body or {})
+        method = extra.pop("method", None)
+        if method == "resources/read" or (
+            not self._tools and message.startswith(("mcp:", "resource:"))
+        ):
+            uri = extra.pop("uri", message)
+            raw = await self._rpc("resources/read", {"uri": uri})
+            result = raw.get("result", raw)
+            text = _mcp_text_from_result(result)
+            return {"response": text, "raw": raw, "mcp_method": "resources/read"}
+
+        tool_name = extra.pop("name", None) or extra.pop("tool", None)
+        if tool_name is None and self._tools:
+            tool_name = str(self._tools[0].get("name") or "")
+        if not tool_name:
+            listing = json.dumps({"tools": [t.get("name") for t in self._tools]})
+            return {"response": listing, "tools": self._tools, "raw": listing}
+
+        arguments: dict[str, Any] = {"message": message}
+        arguments.update(extra)
+        raw = await self._rpc("tools/call", {"name": tool_name, "arguments": arguments})
+        result = raw.get("result", raw)
+        text = _mcp_text_from_result(result)
+        if not text:
+            text = json.dumps(result)
+        return {"response": text, "raw": raw, "tool": tool_name}
+
+
+class McpStdioConnector(_McpClientMixin, Connector):
+    """MCP server over stdio JSON-RPC (Content-Length framed)."""
+
+    def __init__(self, target: Target) -> None:
+        self.target = target
+        self._proc: asyncio.subprocess.Process | None = None
+        self._lock = asyncio.Lock()
+        self._rpc_id = 0
+        self._tools = []
+        self._resources = []
+
+    async def __aenter__(self) -> McpStdioConnector:
+        argv = _parse_mcp_stdio_command(self.target.url)
+        self._proc = await asyncio.create_subprocess_exec(
+            *argv,
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            env=os.environ.copy(),
+        )
+        try:
+            await asyncio.wait_for(self._handshake(), timeout=self.target.timeout)
+        except Exception as e:  # noqa: BLE001
+            logger.error(f"MCP stdio handshake failed: {e}")
+        return self
+
+    async def __aexit__(self, *exc: Any) -> None:
+        if self._proc is None:
+            return
+        if self._proc.returncode is None:
+            self._proc.terminate()
+            with contextlib.suppress(ProcessLookupError, asyncio.TimeoutError):
+                await asyncio.wait_for(self._proc.wait(), timeout=5)
+        self._proc = None
+
+    async def _write_frame(self, payload: dict[str, Any]) -> None:
+        assert self._proc is not None and self._proc.stdin is not None
+        raw = json.dumps(payload).encode("utf-8")
+        header = f"Content-Length: {len(raw)}\r\n\r\n".encode("ascii")
+        self._proc.stdin.write(header + raw)
+        await self._proc.stdin.drain()
+
+    async def _read_frame(self) -> dict[str, Any]:
+        assert self._proc is not None and self._proc.stdout is not None
+        headers: dict[str, str] = {}
+        while True:
+            line = await asyncio.wait_for(self._proc.stdout.readline(), timeout=self.target.timeout)
+            if not line:
+                raise ConnectionError("MCP stdio process closed stdout")
+            if line in (b"\r\n", b"\n"):
+                break
+            decoded = line.decode("utf-8", errors="replace")
+            key, _, val = decoded.partition(":")
+            headers[key.strip().lower()] = val.strip()
+        n = int(headers.get("content-length", "0"))
+        body = await asyncio.wait_for(self._proc.stdout.readexactly(n), timeout=self.target.timeout)
+        return json.loads(body.decode("utf-8"))
+
+    async def _rpc(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        async with self._lock:
+            self._rpc_id += 1
+            req_id = self._rpc_id
+            await self._write_frame(_jsonrpc_request(req_id, method, params))
+            while True:
+                msg = await self._read_frame()
+                if msg.get("id") == req_id:
+                    return msg
+
+    async def _notify(self, method: str, params: dict[str, Any] | None = None) -> None:
+        async with self._lock:
+            payload: dict[str, Any] = {"jsonrpc": "2.0", "method": method}
+            if params is not None:
+                payload["params"] = params
+            await self._write_frame(payload)
+
+    async def send_message(
+        self, message: str, extra_body: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        if self._proc is None:
+            raise RuntimeError("MCP stdio connector not initialised.")
+        try:
+            return await self._probe_message(message, extra_body)
+        except Exception as e:  # noqa: BLE001
+            logger.error(f"MCP stdio call failed: {e}")
+            return {"error": str(e), "status_code": 0}
+
+    async def send_conversation(self, messages: list[dict[str, str]]) -> dict[str, Any]:
+        return await self.send_message(flatten_conversation(messages))
+
+
+class McpSseConnector(_McpClientMixin, Connector):
+    """MCP JSON-RPC over HTTP, accepting JSON or SSE responses."""
+
+    def __init__(self, target: Target) -> None:
+        self.target = target
+        self.http_url = mcp_sse_http_url(target.url)
+        self._client: httpx.AsyncClient | None = None
+        self._rpc_id = 0
+        self._tools = []
+        self._resources = []
+        self._lock = asyncio.Lock()
+
+    async def __aenter__(self) -> McpSseConnector:
+        headers = {
+            "Content-Type": "application/json",
+            "Accept": "application/json, text/event-stream",
+        }
+        if self.target.auth_header:
+            if ":" in self.target.auth_header:
+                key, _, value = self.target.auth_header.partition(":")
+                headers[key.strip()] = value.strip()
+            else:
+                headers["Authorization"] = self.target.auth_header
+        headers.update(self.target.extra_headers)
+        self._client = httpx.AsyncClient(
+            timeout=httpx.Timeout(self.target.timeout),
+            headers=headers,
+            follow_redirects=True,
+        )
+        try:
+            await self._handshake()
+        except Exception as e:  # noqa: BLE001
+            logger.error(f"MCP SSE handshake failed: {e}")
+        return self
+
+    async def __aexit__(self, *exc: Any) -> None:
+        if self._client:
+            await self._client.aclose()
+            self._client = None
+
+    async def _post_rpc(self, payload: dict[str, Any]) -> dict[str, Any]:
+        assert self._client is not None
+        response = await self._client.post(self.http_url, json=payload)
+        ctype = response.headers.get("content-type", "")
+        text = response.text
+        if "text/event-stream" in ctype or text.lstrip().startswith("data:"):
+            for raw_line in text.splitlines():
+                line = raw_line.strip()
+                if not line.startswith("data:"):
+                    continue
+                data = line[len("data:") :].strip()
+                if not data or data == "[DONE]":
+                    continue
+                try:
+                    obj = json.loads(data)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(obj, dict) and (
+                    "jsonrpc" in obj or "result" in obj or "error" in obj
+                ):
+                    return obj
+            assembled = parse_sse(text)
+            return {"result": {"content": [{"type": "text", "text": assembled}]}}
+        try:
+            return response.json()
+        except Exception:
+            return {"result": {"content": [{"type": "text", "text": text}]}}
+
+    async def _rpc(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        async with self._lock:
+            self._rpc_id += 1
+            return await self._post_rpc(_jsonrpc_request(self._rpc_id, method, params))
+
+    async def _notify(self, method: str, params: dict[str, Any] | None = None) -> None:
+        payload: dict[str, Any] = {"jsonrpc": "2.0", "method": method}
+        if params is not None:
+            payload["params"] = params
+        async with self._lock:
+            await self._post_rpc(payload)
+
+    async def send_message(
+        self, message: str, extra_body: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        if self._client is None:
+            raise RuntimeError("MCP SSE connector not initialised.")
+        try:
+            return await self._probe_message(message, extra_body)
+        except Exception as e:  # noqa: BLE001
+            logger.error(f"MCP SSE call failed: {e}")
+            return {"error": str(e), "status_code": 0}
+
+    async def send_conversation(self, messages: list[dict[str, str]]) -> dict[str, Any]:
+        return await self.send_message(flatten_conversation(messages))
+
+
+class WebSocketConnector(Connector):
+    """Persistent WebSocket send/recv mapped to {response: ...}."""
+
+    def __init__(self, target: Target) -> None:
+        self.target = target
+        self._ws: Any = None
+
+    async def __aenter__(self) -> WebSocketConnector:
+        try:
+            import websockets
+        except ImportError as e:
+            raise RuntimeError("WebSocket connector requires the 'websockets' package.") from e
+        extra: dict[str, Any] = {}
+        if self.target.extra_headers:
+            extra["additional_headers"] = self.target.extra_headers
+        self._ws = await websockets.connect(
+            self.target.url, open_timeout=self.target.timeout, **extra
+        )
+        return self
+
+    async def __aexit__(self, *exc: Any) -> None:
+        if self._ws is not None:
+            await self._ws.close()
+            self._ws = None
+
+    async def send_message(
+        self, message: str, extra_body: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        if self._ws is None:
+            raise RuntimeError("WebSocket connector not initialised.")
+        body: dict[str, Any] = {"message": message}
+        if extra_body:
+            body.update(extra_body)
+        try:
+            await self._ws.send(json.dumps(body))
+            raw = await asyncio.wait_for(self._ws.recv(), timeout=self.target.timeout)
+        except Exception as e:  # noqa: BLE001
+            logger.error(f"WebSocket send/recv failed: {e}")
+            return {"error": str(e), "status_code": 0}
+        return _normalise_ws_frame(raw)
+
+    async def send_conversation(self, messages: list[dict[str, str]]) -> dict[str, Any]:
+        return await self.send_message(flatten_conversation(messages))
+
+
+def _normalise_ws_frame(raw: Any) -> dict[str, Any]:
+    if isinstance(raw, bytes):
+        raw = raw.decode("utf-8", errors="replace")
+    if isinstance(raw, str):
+        try:
+            obj = json.loads(raw)
+        except json.JSONDecodeError:
+            return {"response": raw, "raw": raw}
+        if isinstance(obj, dict):
+            if "response" in obj:
+                return obj
+            for key in ("text", "message", "content", "reply"):
+                if isinstance(obj.get(key), str):
+                    return {"response": obj[key], "raw": obj}
+            return {"response": json.dumps(obj), "raw": obj}
+        return {"response": str(obj), "raw": obj}
+    return {"response": str(raw), "raw": raw}
+
+
 # A scoped override so a whole scan can be routed to an in-process agent (used by
 # the benchmark). Set via use_connector(); select_connector() honours it.
 _forced_connector: Connector | None = None
@@ -525,7 +910,7 @@ def use_connector(connector: Connector) -> Any:
 def select_connector(target: Target) -> Connector:
     """
     Pick the transport for a target:
-    forced override → browser widget → captured request → default HTTP JSON.
+    forced override → browser widget → captured request → ws/mcp schemes → HTTP JSON.
     """
     if _forced_connector is not None:
         return _forced_connector
@@ -533,4 +918,11 @@ def select_connector(target: Target) -> Connector:
         return BrowserConnector(target)
     if target.request_template is not None:
         return RequestTemplateConnector(target)
+    scheme = urlparse(target.url).scheme.lower()
+    if scheme in ("ws", "wss"):
+        return WebSocketConnector(target)
+    if scheme in ("mcp", "mcp+stdio"):
+        return McpStdioConnector(target)
+    if scheme in ("mcp+sse", "mcp+sses"):
+        return McpSseConnector(target)
     return HttpJsonConnector(target)

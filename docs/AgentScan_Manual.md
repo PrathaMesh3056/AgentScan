@@ -238,7 +238,25 @@ agentscan audit ./my-project \
   --scan-secrets \
   --scan-typo \
   --scan-mcp \
-  --scan-identity
+  --scan-identity \
+  --scan-semgrep \
+  --aibom
+```
+
+`--scan-config` is the AST auditor (no extra deps). `--scan-semgrep` is additive: it runs `rules/ai_rules.yaml` via the `semgrep` binary (`pip install 'agentscan[semgrep]'`) and is skipped with a log if Semgrep is not installed. It is **not** included in the default no-flag audit sweep.
+
+`--aibom` writes a CycloneDX 1.6 JSON inventory (pinned packages from the dependency parser, plus model and MCP permission stubs).
+
+Local dashboard (optional extra `ui`):
+
+```bash
+agentscan ui --report report.json --identity ./manifests
+```
+
+SCAN payloads can be expanded with encoding/obfuscation mutators:
+
+```bash
+agentscan scan http://localhost:8000/chat --mutate
 ```
 
 ### 3.3. Managing Attacks (`list-attacks`)
@@ -322,14 +340,28 @@ Located in `agentscan/core/`, the attack engine is built for extreme concurrency
 | **50–69** | HIGH RISK | Fix high findings, do not deploy |
 | **0–49** | CRITICAL RISK| Do not deploy under any circumstances |
 
+> [!NOTE]
+> **SCAN Mode Modules (YamlScanRunner)**
+> - **Direct Prompt Injection (`ATK-001`)**: 10 YAML variants (jailbreak, role-switch, delimiter bypass) with MiniLM semantic embedding detection and LLM-as-a-Judge fallback (`LLM01`).
+> - **Jailbreak & Persona Adoption (`ATK-002`)**: Advanced persona manipulation (DAN, developer mode, fictional frames) (`LLM01`).
+> - **PII & Sensitive Data Disclosure (`ATK-003`)**: Probes for SSN, credit cards, emails, and API keys (`LLM06`).
+> - **Denial of Service (`ATK-004`)**: Resource exhaustion via repeat tokens, recursive expansion, and massive padding (`LLM04`).
+> - **Indirect Prompt Injection (`ATK-005`)**: Evaluates document and tool channels for hidden secondary instructions (`LLM01`).
+> - **MCP Shadow Server (`ATK-006`)**: Detects illicit MCP tool and resource registrations (`LLM07`).
+> - **Insecure Output Handling (`ATK-007`)**: Tests unescaped reflection of XSS, SQLi, markdown image exfiltration, ANSI escapes, and shell metacharacters (`LLM02`).
+> - **RAG & Knowledge-Base Poisoning (`ATK-008`)**: Tests knowledge integrity via conflicting facts, spoofed citations, and mock document overrides (`LLM03`).
+> - **Overreliance & Hallucination (`ATK-009`)**: Tests uncritical obedience to false authority claims and tool-calling without verification (`LLM09`).
+
 > [!TIP]
 > **EXPLOIT Mode Modules**
-> AgentScan currently ships with five active EXPLOIT modules:
-> - **Active Data Exfiltration (`ATK-014`)**: Attempts to exfiltrate the system prompt by tricking the agent into leaking it. Emits a CRITICAL finding if a >50% word overlap is detected.
-> - **Tool Call Hijacking (`ATK-015`)**: Attempts to coerce the agent into calling a tool towards an attacker-controlled destination (e.g., `agentscan-hijack-test.invalid`). Emits a CRITICAL finding if the injection is successful.
-> - **Memory / Persistent State Poisoning (`ATK-016`)**: Plants a malicious "fact" in turn 1 and verifies if the agent hallucinates it back as truth in turn 2.
-> - **Cross-Agent Trust Injection (`ATK-017`)**: Tests if the agent grants elevated privileges to a payload merely *framed* as originating from a trusted orchestrator.
-> - **Credential Harvest (`ATK-018`)**: Extracts hardcoded secrets from the system prompt while safely redacting them from the final report.
+> AgentScan ships with seven active EXPLOIT modules:
+> - **Crescendo Multi-Turn Escalation (`ATK-010`)**: Progressive 4-6 turn conversation steering an agent from benign queries into policy violations (`LLM01`).
+> - **Active Data Exfiltration (`ATK-014`)**: Attempts to exfiltrate the system prompt by tricking the agent into leaking it. Emits a CRITICAL finding if a >50% word overlap is detected (`LLM06`).
+> - **Tool Call Hijacking (`ATK-015`)**: Attempts to coerce the agent into calling a tool towards an attacker-controlled destination (`LLM08`).
+> - **Memory / Persistent State Poisoning (`ATK-016`)**: Plants a malicious "fact" in turn 1 and verifies if the agent hallucinates it back as truth in turn 2 (`LLM01`).
+> - **Cross-Agent Trust Injection (`ATK-017`)**: Tests if the agent grants elevated privileges to a payload framed as originating from a trusted orchestrator (`LLM01`).
+> - **Credential Harvest (`ATK-018`)**: Extracts hardcoded secrets from the system prompt while safely redacting them from the final report (`LLM06`).
+> - **Adaptive AI Attacker (`ATK-050`)**: PAIR-style adaptive attacker LLM + LLM-as-a-Judge running multi-turn jailbreak mutations (`LLM01`).
 
 ### 4.2. Identity & Authorization Audit
 
@@ -338,11 +370,12 @@ Located in `agentscan/identity/`, this static analyzer enforces a Zero-Trust Lea
 - **Manifest Parsing:** It walks a directory to find and parse `*.agent.json` or MCP manifests.
 - **Role-Based Access Control (RBAC):** Using `roles.yaml`, it maps an agent's `declared_role` against an explicit whitelist (`allowed_scopes`) and blocklist (`disallowed_scopes`). Silence is *not* permission—if a scope isn't explicitly allowed, it triggers a finding.
 - **Shared Credential Detection:** Groups agents by their `credential_ref` (e.g., an environment variable). If two or more agents share the exact same credential, it generates a CRITICAL finding.
+- **Graph-Based Escalation Detection (`rbac_graph.py`, ID-010):** Builds a `networkx` directed graph linking agents (`calls_agents`), tools, scopes, and credentials. When a low-trust agent can reach a dangerous scope through another agent or a shared-credential hop — without holding that scope directly — it emits **ID-010 Multi-hop privilege escalation**. Direct agent → tool → scope paths remain covered by ID-002 / ID-009 and are not duplicated.
 
 ### 4.3. AI Supply Chain Scanner (AICS)
 
 Located in `agentscan/supply_chain/`, this subsystem parses configurations.
-- **Dependency Scanner:** Parses `pyproject.toml` (via native `tomllib`) and `requirements.txt` (via exact-pin regex parsing) to find vulnerable versions against an offline vulnerability database (`known_vulnerabilities.yaml`).
+- **Dependency Scanner:** Parses `pyproject.toml` (via native `tomllib`) and `requirements.txt` (via exact-pin regex parsing), then queries the live [OSV.dev](https://osv.dev) API for current PyPI CVEs (`querybatch` + per-id hydration). On network or API failure, falls back to the bundled offline database (`known_vulnerabilities.yaml`).
 - **Config Auditor:** Uses Python's `ast` (Abstract Syntax Tree) to walk Python code looking for dangerous functions like `eval()`, `exec()`, or `subprocess.Popen(..., shell=True)`.
 
 ---
@@ -369,6 +402,10 @@ Located in `agentscan/neural/` and `agentscan/attacks/deep/`, this subsystem ins
 >
 >   Each finding records `metadata["yaml_variant_id"]` — the same id `ATK-001` uses — so the DEEP (internal) view can be joined to the SCAN (behavioural) view of the same payload. The blocking model load and forward passes run via `asyncio.to_thread`, keeping the runner's event loop free.
 
+- **Attention analyzer (`neural/attention_analyzer.py`, ATK-025)**: middle-layer attention entropy and sink concentration versus benign prompts; flags diversion.
+- **Trojan scanner (`attacks/deep/trojan_scanner.py`, ATK-024)**: rare-token / suffix probes; flags catastrophic next-token KL shift or a canary leak.
+- **Fingerprint (`neural/fingerprint.py`, ATK-026)**: SHA-256 of last-token activations over a fixed probe set. Pin with `AGENTSCAN_MODEL_FINGERPRINT`. All three skip cleanly if the local model cannot load.
+
 ### 4.6. AI-Driven Foundation (`AIClient` + Semantic Detection)
 
 Located in `agentscan/core/`, added in Module 5B to power adaptive, model-driven testing.
@@ -393,6 +430,8 @@ modules work over any transport unchanged.
   Reuses a single persistent browser session per scan, selects elements via CSS selectors (`--input-selector`, `--response-selector`),
   types payloads, and waits for dynamic DOM updates.
 - **`CallableConnector`**: an in-process async adapter used for testing and zero-network reference evaluation (such as `agentscan benchmark`).
+- **`McpStdioConnector` / `McpSseConnector`**: probe an MCP **server** (`mcp://stdio?command=…` or `mcp+sse://host/sse`) via `initialize`, `tools/list`, `tools/call`, and `resources/read`. Distinct from ATK-006 (shadowing via the host agent).
+- **`WebSocketConnector`**: persistent `ws://` / `wss://` send/recv, normalised to `{response: …}`.
 - **Auto-Discovery (`core/discovery.py`)**: `agentscan init <url> -o target.yaml` probes live endpoints, sniffing response bodies, SSE streams, and headers to auto-generate ready-to-use target profile YAMLs.
 
 ### 4.8. Traffic Visibility & Audit Transcripts
@@ -412,6 +451,18 @@ Located across `agentscan/attacks/exploit/` and `agentscan/core/`:
 - **Positive-Control Calibration (`core/calibration.py` / `agentscan calibrate`)**: validates that the specified attacker and judge models are functioning and capable of detecting known jailbreak compromises before running a live scan.
 - **Reference Benchmarking (`core/benchmark.py` / `agentscan benchmark`)**: runs AgentScan against simulated in-process reference agents (`wide-open`, `partial`, `guarded`) to verify that the scoring engine accurately discriminates between vulnerable and secure agents without requiring external networks.
 - **Raw LLM Audit Logs (`--llm-log <file>`)**: records exact prompt inputs and raw model outputs for all attacker and judge LLM invocations.
+
+### 4.10. Trajectory Tracing & SSP Mapping
+
+Located in `agentscan/core/trajectory.py` and `agentscan/core/ssp_mapper.py`:
+
+- **Trajectory Recorder (`core/trajectory.py`)**: always-on session recorder that captures every interaction turn (`payload`, `reply`, `tool_names`) during a scan.
+- **Tool Call Extraction**: inspects response payloads across multiple provider formats (standard `tool_calls`, OpenAI message schemas, singular `function_call`).
+- **SSP Behavioral Classification (`core/ssp_mapper.py`)**:
+  - **Servant (`SERVANT`)**: the agent only calls tools explicitly requested or named in the prompt payload, or performs no tool calls.
+  - **Stalker (`STALKER`)**: the agent executes unsolicited read-only or probing tools (e.g., `web_search`, `read_file`, `lookup_*`) without explicit user instruction.
+  - **Predator (`PREDATOR`)**: the agent executes unsolicited side-effecting or mutating actions (e.g., `delete_*`, `send_email`, `write_*`, `post_*`, `drop_*`) without explicit user instruction.
+- **Reporting Integration**: SSP class is displayed in the CLI output table and embedded in the generated HTML and JSON scan reports (`report.ssp_class`).
 
 ---
 
@@ -476,7 +527,7 @@ All structured data is strongly validated using Pydantic v2 `BaseModel` classes,
 
 | Model | Purpose | Immutability |
 | :--- | :--- | :--- |
-| **`Target`** | Represents the live endpoint. Supports HTTP URL validation. | Mutable |
+| **`Target`** | Live endpoint. HTTP(S), `ws(s)://`, `mcp://stdio`, `mcp+sse://`. | Mutable |
 | **`Finding`** | Immutable evidence object. Includes `attack_id`, `severity`, etc. | **Frozen** |
 | **`ScanReport`** | Mutable container that accumulates `Finding` objects. | Mutable |
 | **`StrEnum`** | Used for enums like `Severity`. Serializes directly to JSON strings. | N/A |
@@ -497,17 +548,18 @@ Modules **0–5E are complete and fully operational**:
 - Transport connectors: cURL replay, Playwright browser driver, SSE streaming, auto-discovery (5C)
 - Traffic visibility: real-time streaming & reproducible audit transcripts (5D)
 - Adaptive AI red-teaming: PAIR-style iterative attacker, LLM-as-a-Judge, calibration, reference benchmark (5E)
+- Trajectory tracing & SSP mapping: always-on per-turn recorder classifying agents as Servant, Stalker, or Predator (6D)
 
 The active roadmap for future versions includes:
 
 > [!NOTE]
-> 1. **Broader SCAN Attack Modules:** adding dedicated modules for `jailbreak.py`, `dos.py`, `pii_exfiltration.py`, `indirect_injection.py`, `crescendo.py`, `rag_poisoning.py`, and `mcp_shadow.py` to cover all OWASP Top 10 LLM risks.
+> 1. **SCAN / EXPLOIT OWASP closeout (shipped):** `output_handling.py` (ATK-007, LLM02), `rag_poisoning.py` (ATK-008, LLM03), `overreliance.py` (ATK-009, LLM09), plus EXPLOIT `crescendo.py` (ATK-010). Earlier SCAN modules: `prompt_injection.py` (ATK-001), `jailbreak.py` (ATK-002), `pii_exfiltration.py` (ATK-003), `dos.py` (ATK-004), `indirect_injection.py` (ATK-005), and `mcp_shadow.py` (ATK-006).
 > 2. **Universal LLM-as-a-Judge:** wiring `LLMEvaluator` directly into `ATK-001` so that static SCAN payloads also benefit from nuanced semantic judgment.
 > 3. **Static Scanner Payload Mutations:** introducing runtime encoding mutations (Base64, leetspeak, payload splitting) for static YAML attacks.
-> 4. **Live Vulnerability Intelligence:** replacing offline YAML tables with live OSV.dev API lookups and Semgrep rules for cross-file AST checks.
-> 5. **Graph-Based RBAC:** `networkx`-powered graph analysis of agent-tool-credential relationships to uncover multi-hop privilege escalation.
-> 6. **Agentic Trajectory Tracing & SSP Mapping:** continuous tool-call monitoring classifying agents as Servant, Stalker, or Predator.
-> 7. **DEEP Mode Expansion:** additional neural probes (attention analysis, latent-trojan / drift detection) on top of the existing activation infrastructure.
-> 8. **GitHub Action & CI Integration:** plug-and-play workflow actions for continuous security gatekeeping on PRs.
-> 9. **AgentScan SaaS:** a centralized cloud dashboard for continuous monitoring and reporting across agent fleets.
+> 4. **Live Vulnerability Intelligence:** OSV.dev live CVE lookups shipped (6B); Semgrep rules for cross-file AST checks remain planned.
+> 5. **Graph-Based RBAC:** Shipped in 6C — `networkx` graph analysis of agent-tool-credential relationships detects multi-hop privilege escalation (ID-010) via `calls_agents` and shared credentials.
+> 6. **Agentic Trajectory Tracing & SSP Mapping:** Shipped in 6D — `core/trajectory.py` records every payload/reply/tool call; `core/ssp_mapper.py` classifies the session as **Servant** (explicit tool use only), **Stalker** (unsolicited read-only probes such as `web_search` not mentioned in the payload), or **Predator** (unsolicited side-effecting actions such as `delete_*` or `send_email` without user request). Printed in the scan summary and HTML report; identity audits have no live trajectory.
+> 7. **DEEP Mode Expansion (shipped):** attention analyzer (ATK-025), rare-token trojan scanner (ATK-024), activation fingerprint (ATK-026); gated on `--deep`, skip if the local model is unavailable.
+> 8. **GitHub Action & CI Integration (shipped):** `uses: PrathaMesh3056/AgentScan@v1` composite action; scan-only install without torch unless `deep: true`. `audit --aibom` writes CycloneDX 1.6.
+> 9. **Local UI (shipped):** `agentscan ui` FastAPI dashboard for RBAC graphs, trajectory/SSP, and traffic. SaaS remains out of scope.
 

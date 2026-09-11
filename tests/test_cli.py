@@ -5,10 +5,13 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
+import httpx
 import pytest
+import respx
 from typer.testing import CliRunner
 
 from agentscan.cli import app
@@ -19,6 +22,7 @@ from agentscan.core.models import (
     ScanMode,
     ScanReport,
     Severity,
+    SspClass,
 )
 
 runner = CliRunner()
@@ -59,6 +63,18 @@ class TestScanCommand:
         assert result.exit_code == 0
         assert "AgentScan Score" in result.output
         assert "80/100" in result.output
+        assert "SSP class" in result.output
+
+    def test_scan_shows_ssp_class_from_report(self) -> None:
+        """scan summary includes SSP class line from the report."""
+        report = _make_report(findings=[], score=100)
+        report.ssp_class = SspClass.STALKER
+        with patch("agentscan.cli.run_scan_multi", new_callable=AsyncMock, return_value=report):
+            result = runner.invoke(app, ["scan", "http://test-agent.example.com/chat"])
+
+        assert result.exit_code == 0
+        assert "SSP class: Stalker" in result.output
+        assert "unsolicited read-only" in result.output
 
     def test_fail_on_critical_exits_1(self) -> None:
         """--fail-on CRITICAL with a critical finding exits with code 1."""
@@ -115,6 +131,19 @@ class TestScanCommand:
         assert result.exit_code == 0
         target_obj, _ = mock_run.call_args[0]
         assert target_obj.auth_header == "Bearer sk-test"
+
+    def test_scan_passes_mutate_to_target(self) -> None:
+        report = _make_report(findings=[], score=100)
+        with patch(
+            "agentscan.cli.run_scan_multi", new_callable=AsyncMock, return_value=report
+        ) as mock_run:
+            result = runner.invoke(
+                app,
+                ["scan", "http://test-agent.example.com/chat", "--mutate"],
+            )
+        assert result.exit_code == 0
+        target_obj, _ = mock_run.call_args[0]
+        assert target_obj.mutate is True
 
     def test_scan_no_exploit_flag_does_not_output_atk014(self) -> None:
         """scan without --exploit outputs only SCAN-mode findings."""
@@ -363,16 +392,99 @@ class TestListAttacks:
         assert "Direct Prompt Injection" in result.output
         assert "LLM01" in result.output
 
+    def test_list_attacks_shows_scan_expansion_modules(self) -> None:
+        """list-attacks output contains ATK-004, ATK-005, and ATK-006."""
+        result = runner.invoke(app, ["list-attacks"])
+        assert result.exit_code == 0
+        assert "ATK-004" in result.output
+        assert "ATK-005" in result.output
+        assert "ATK-006" in result.output
+        assert "Denial of Service" in result.output
+        assert "Indirect Prompt Injection" in result.output
+        assert "MCP Shadow Server" in result.output
+
+    def test_list_attacks_shows_owasp_closeout_modules(self) -> None:
+        """list-attacks output contains ATK-007 through ATK-010."""
+        result = runner.invoke(app, ["list-attacks"])
+        assert result.exit_code == 0
+        assert "ATK-007" in result.output
+        assert "ATK-008" in result.output
+        assert "ATK-009" in result.output
+        assert "ATK-010" in result.output
+        assert "Insecure Output Handling" in result.output
+        assert "RAG / Knowledge-Base Poisoning" in result.output
+        assert "Overreliance / Hallucination" in result.output
+        assert "Crescendo Multi-Turn Escalation" in result.output
+
+    def test_list_attacks_shows_deep_trojan_scanner(self) -> None:
+        result = runner.invoke(app, ["list-attacks"])
+        assert result.exit_code == 0
+        assert "ATK-024" in result.output
+        assert "Rare-Token Trojan Scanner" in result.output
+        assert "ATK-025" in result.output
+        assert "ATK-026" in result.output
+
+
+_OSV_BASE = "https://api.osv.dev"
+_LANGCHAIN_VULN = {
+    "id": "GHSA-xxxx-yyyy-zzzz",
+    "aliases": ["CVE-2023-34541"],
+    "summary": "Arbitrary code execution via eval() in LLMMathChain.",
+    "severity": [{"type": "CVSS_V3", "score": "9.8"}],
+    "affected": [
+        {
+            "package": {"name": "langchain", "ecosystem": "PyPI"},
+            "ranges": [
+                {
+                    "type": "ECOSYSTEM",
+                    "events": [{"introduced": "0"}, {"fixed": "0.0.155"}],
+                }
+            ],
+        }
+    ],
+    "database_specific": {"severity": "CRITICAL"},
+}
+
+
+def _mock_osv_langchain_batch() -> None:
+    respx.post(f"{_OSV_BASE}/v1/querybatch").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "results": [
+                    {
+                        "vulns": [
+                            {
+                                "id": "GHSA-xxxx-yyyy-zzzz",
+                                "modified": "2023-06-01T00:00:00Z",
+                            }
+                        ]
+                    },
+                    {"vulns": []},
+                    {"vulns": []},
+                    {"vulns": []},
+                ]
+            },
+        )
+    )
+    respx.get(f"{_OSV_BASE}/v1/vulns/GHSA-xxxx-yyyy-zzzz").mock(
+        return_value=httpx.Response(200, json=_LANGCHAIN_VULN)
+    )
+
 
 class TestAuditCommand:
+    @respx.mock
     def test_audit_scan_deps_vulnerable_fixture(self) -> None:
         """audit --scan-deps against vulnerable_requirements.txt fixture produces SC-001 in output."""
+        _mock_osv_langchain_batch()
         fixture_dir = "tests/fixtures/supply_chain"
         result = runner.invoke(app, ["audit", fixture_dir, "--scan-deps"])
         assert result.exit_code == 0
         assert "SC-001" in result.output
 
+    @respx.mock
     def test_audit_fail_on_high_exits_1_when_cve_found(self) -> None:
+        _mock_osv_langchain_batch()
         fixture_dir = "tests/fixtures/supply_chain"
         result = runner.invoke(app, ["audit", fixture_dir, "--scan-deps", "--fail-on", "HIGH"])
         assert result.exit_code == 1
@@ -385,9 +497,49 @@ class TestAuditCommand:
         # The demo-agents fixture produces ID-005 (shared credential) and others
         assert "ID-" in result.output
 
+    @respx.mock
     def test_audit_no_flags_runs_all_categories(self) -> None:
         """audit with no flags runs all six scanners and shows a score."""
+        _mock_osv_langchain_batch()
         fixture_dir = "tests/fixtures/supply_chain"
         result = runner.invoke(app, ["audit", fixture_dir])
         assert result.exit_code == 0
         assert "Audit Score" in result.output
+
+    def test_audit_scan_semgrep_uses_mocked_binary(self) -> None:
+        fake = [
+            Finding(
+                attack_id="SC-015",
+                attack_name="Unsafe pickle deserialisation",
+                severity=Severity.CRITICAL,
+                owasp_id="LLM05",
+                description="pickle.loads() can execute arbitrary code from untrusted bytes.",
+            )
+        ]
+        with patch(
+            "agentscan.supply_chain.semgrep_auditor.scan_semgrep",
+            return_value=(fake, 1),
+        ):
+            result = runner.invoke(app, ["audit", "tests/fixtures/supply_chain", "--scan-semgrep"])
+        assert result.exit_code == 0
+        assert "SC-015" in result.output
+
+    def test_audit_aibom_writes_cyclonedx(self, tmp_path: Path) -> None:
+        result = runner.invoke(
+            app,
+            [
+                "audit",
+                "tests/fixtures/supply_chain",
+                "--aibom",
+                "--output",
+                str(tmp_path / "aibom.cdx.json"),
+            ],
+        )
+        assert result.exit_code == 0
+        assert "AIBOM written" in result.output
+        out = tmp_path / "aibom.cdx.json"
+        # When only --aibom and --output, AIBOM is written to output
+        assert out.exists()
+        data = json.loads(out.read_text(encoding="utf-8"))
+        assert data["bomFormat"] == "CycloneDX"
+        assert data["specVersion"] == "1.6"
