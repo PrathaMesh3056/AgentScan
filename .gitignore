@@ -30,6 +30,7 @@ Thumbs.db
 # --- AgentScan Reports & Temp Files ---
 *.pdf
 *.html
+!agentscan/ui/static/*.html
 *.sarif
 *report*.json
 *transcript*.txt

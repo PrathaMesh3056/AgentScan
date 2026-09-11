@@ -1,0 +1,490 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>AgentScan</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f7f6f3;
+      --paper: #fffcf8;
+      --line: rgba(0, 0, 0, 0.08);
+      --fg: #1a1a18;
+      --muted: #6b6860;
+      --accent: #c96442;
+      --ok: #3d6b4f;
+      --bad: #b42318;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--fg);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+      font-size: 15px;
+      line-height: 1.5;
+      -webkit-font-smoothing: antialiased;
+    }
+    .wrap {
+      max-width: 800px;
+      margin: 0 auto;
+      padding: 0 1.5rem 2.5rem;
+    }
+    header {
+      padding: 2.25rem 0 1.15rem;
+      border-bottom: 1px solid var(--line);
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 0.85rem;
+    }
+    .mark {
+      flex: 0 0 auto;
+      width: 28px;
+      height: 28px;
+      color: var(--accent);
+    }
+    .brand-text h1 {
+      margin: 0;
+      font-size: 22px;
+      font-weight: 600;
+      letter-spacing: -0.03em;
+      line-height: 1.15;
+    }
+    .brand-text p {
+      margin: 0.12rem 0 0;
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 400;
+      letter-spacing: -0.01em;
+    }
+    main { padding-top: 1.75rem; }
+    section { margin: 0 0 2.25rem; }
+    h2 {
+      margin: 0 0 0.65rem;
+      font-size: 13px;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+    .panel {
+      background: var(--paper);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 1rem 1.15rem;
+    }
+    .meta-strip {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 0.85rem 1.25rem;
+      padding-bottom: 1.05rem;
+      margin-bottom: 0.35rem;
+      border-bottom: 1px solid var(--line);
+    }
+    @media (min-width: 640px) {
+      .meta-strip { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    }
+    .meta-item dt {
+      margin: 0;
+      font-size: 11px;
+      font-weight: 500;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+    .meta-item dd {
+      margin: 0.15rem 0 0;
+      font-size: 14px;
+      font-weight: 500;
+      letter-spacing: -0.02em;
+      word-break: break-word;
+    }
+    .meta-item dd.counts { font-weight: 400; font-size: 13px; line-height: 1.45; }
+    .findings { display: flex; flex-direction: column; gap: 0.85rem; padding-top: 0.75rem; }
+    .finding {
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 1rem 1.05rem 0.9rem;
+      background: rgba(255, 255, 255, 0.45);
+    }
+    .finding-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 0.75rem;
+      margin-bottom: 0.35rem;
+    }
+    .finding-id {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 12px;
+      color: var(--muted);
+      letter-spacing: 0.01em;
+    }
+    .finding-name {
+      margin: 0.1rem 0 0;
+      font-size: 16px;
+      font-weight: 600;
+      letter-spacing: -0.03em;
+      line-height: 1.3;
+    }
+    .badges { display: flex; flex-wrap: wrap; gap: 0.35rem; justify-content: flex-end; flex: 0 0 auto; }
+    .badge {
+      display: inline-block;
+      padding: 0.12rem 0.5rem;
+      border-radius: 999px;
+      background: rgba(0, 0, 0, 0.05);
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+    }
+    .sev-CRITICAL, .sev-HIGH { color: var(--bad); font-weight: 500; }
+    .sev-PASS, .sev-INFO { color: var(--ok); }
+    .badge.sev-CRITICAL, .badge.sev-HIGH { background: rgba(180, 35, 24, 0.08); }
+    .badge.sev-PASS, .badge.sev-INFO { background: rgba(61, 107, 79, 0.1); }
+    .finding-body { margin-top: 0.7rem; display: flex; flex-direction: column; gap: 0.7rem; }
+    .field-label {
+      display: block;
+      font-size: 11px;
+      font-weight: 500;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 0.2rem;
+    }
+    .field p { margin: 0; font-size: 14px; }
+    table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+    th {
+      text-align: left;
+      font-weight: 500;
+      color: var(--muted);
+      font-size: 12px;
+      padding: 0.35rem 0.4rem 0.5rem;
+      border-bottom: 1px solid var(--line);
+    }
+    td {
+      text-align: left;
+      padding: 0.55rem 0.4rem;
+      border-bottom: 1px solid var(--line);
+      vertical-align: top;
+    }
+    tr:last-child td { border-bottom: none; }
+    .muted { color: var(--muted); }
+    code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 0.9em;
+    }
+    #graph {
+      width: 100%;
+      height: 280px;
+      background: transparent;
+      border-radius: 8px;
+    }
+    .pill {
+      display: inline-block;
+      padding: 0.12rem 0.55rem;
+      border-radius: 999px;
+      background: rgba(0, 0, 0, 0.05);
+      font-size: 12px;
+      font-weight: 500;
+      margin-bottom: 0.65rem;
+    }
+    pre {
+      white-space: pre-wrap;
+      word-break: break-word;
+      margin: 0;
+      font-size: 12.5px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      color: #3a3934;
+    }
+    .kv-list {
+      display: grid;
+      grid-template-columns: minmax(7.5rem, 32%) 1fr;
+      gap: 0.28rem 0.85rem;
+      margin: 0;
+      font-size: 13px;
+    }
+    .kv-list dt { margin: 0; color: var(--muted); font-weight: 500; }
+    .kv-list dd { margin: 0; word-break: break-word; }
+    footer {
+      margin-top: 0.5rem;
+      padding: 1.35rem 0 0.35rem;
+      border-top: 1px solid var(--line);
+    }
+    .foot-brand {
+      display: flex;
+      align-items: center;
+      gap: 0.55rem;
+      margin-bottom: 0.7rem;
+    }
+    .mark.sm {
+      width: 18px;
+      height: 18px;
+    }
+    .foot-wordmark {
+      font-size: 14px;
+      font-weight: 600;
+      letter-spacing: -0.03em;
+    }
+    footer h2 {
+      margin-top: 0.85rem;
+    }
+    footer p, footer .foot-links, footer .foot-times {
+      margin: 0;
+      font-size: 13px;
+      color: var(--muted);
+    }
+    footer .foot-links { margin-top: 0.55rem; line-height: 1.55; }
+    footer .foot-times { margin-top: 0.7rem; }
+    footer .foot-times div { margin: 0.1rem 0 0; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <div class="brand">
+        <svg class="mark" viewBox="0 0 32 32" aria-hidden="true" focusable="false">
+          <rect x="2.25" y="2.25" width="27.5" height="27.5" rx="8" fill="none" stroke="currentColor" stroke-width="1.4"/>
+          <circle cx="16" cy="16" r="5.25" fill="none" stroke="currentColor" stroke-width="1.4"/>
+          <path d="M20.1 20.1 24.4 24.4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+        </svg>
+        <div class="brand-text">
+          <h1>AgentScan</h1>
+          <p>Security scanner for AI agents</p>
+        </div>
+      </div>
+    </header>
+    <main>
+      <section>
+        <h2>Report</h2>
+        <div class="panel">
+          <div id="report-meta" class="muted">Loading…</div>
+          <div id="findings" class="findings" hidden></div>
+        </div>
+      </section>
+      <section>
+        <h2>Trajectory / SSP</h2>
+        <div class="panel">
+          <div id="ssp" class="pill">—</div>
+          <table id="turns"><thead><tr><th>#</th><th>Payload</th><th>Response</th><th>Tools</th></tr></thead><tbody></tbody></table>
+        </div>
+      </section>
+      <section>
+        <h2>RBAC graph</h2>
+        <div class="panel">
+          <p id="rbac-meta" class="muted">Pass --identity to <code>agentscan ui</code> or <code>?path=</code> on /api/rbac.</p>
+          <svg id="graph" viewBox="0 0 800 320"></svg>
+        </div>
+      </section>
+      <section>
+        <h2>Traffic inspector</h2>
+        <div class="panel">
+          <table id="traffic"><thead><tr><th>Seq</th><th>Module</th><th>Request</th><th>Response</th></tr></thead><tbody></tbody></table>
+        </div>
+      </section>
+    </main>
+    <footer>
+      <div class="foot-brand">
+        <svg class="mark sm" viewBox="0 0 32 32" aria-hidden="true" focusable="false">
+          <rect x="2.25" y="2.25" width="27.5" height="27.5" rx="8" fill="none" stroke="currentColor" stroke-width="1.4"/>
+          <circle cx="16" cy="16" r="5.25" fill="none" stroke="currentColor" stroke-width="1.4"/>
+          <path d="M20.1 20.1 24.4 24.4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+        </svg>
+        <span class="foot-wordmark">AgentScan</span>
+      </div>
+      <h2>About</h2>
+      <p>Open-source security scanner for AI agents. Runs locally — no remote backend.</p>
+      <p class="foot-links">
+        Docs: <code>docs/AgentScan_Manual.md</code><br>
+        Commands: <code>agentscan scan</code> · <code>agentscan audit</code> · <code>agentscan ui</code>
+      </p>
+      <div class="foot-times" id="foot-times"></div>
+    </footer>
+  </div>
+  <script>
+    const trunc = (s, n=180) => (!s ? "" : s.length > n ? s.slice(0, n) + "…" : s);
+    const META_KEYS = ["file", "line", "yaml_variant_id", "detection_method"];
+
+    async function load() {
+      const report = await (await fetch("/api/report")).json();
+      const traj = await (await fetch("/api/trajectory")).json();
+      const traffic = await (await fetch("/api/traffic")).json();
+      const rbac = await (await fetch("/api/rbac")).json();
+
+      const meta = document.getElementById("report-meta");
+      const findingsEl = document.getElementById("findings");
+      if (!report || report.error) {
+        meta.className = "muted";
+        meta.textContent = "No report loaded. Start with: agentscan ui --report report.json";
+        findingsEl.hidden = true;
+        findingsEl.innerHTML = "";
+      } else {
+        meta.className = "meta-strip";
+        const findings = report.findings || [];
+        const ssp = report.ssp_class || traj.ssp_class || "—";
+        meta.innerHTML = [
+          metaItem("Target", report.target_url || "—"),
+          metaItem("Score", report.score == null ? "—" : `${report.score}/100`),
+          metaItem("Mode", report.scan_mode || "—"),
+          metaItem("SSP", ssp),
+          metaItem("Tests run", report.tests_run == null ? "—" : String(report.tests_run)),
+          `<div class="meta-item"><dt>Findings</dt><dd class="counts">${escapeHtml(severitySummary(findings))}</dd></div>`,
+        ].join("");
+        findingsEl.hidden = false;
+        findingsEl.innerHTML = findings.length
+          ? findings.map(renderFinding).join("")
+          : `<p class="muted">No findings</p>`;
+      }
+
+      document.getElementById("ssp").textContent = traj.ssp_class || "Unknown";
+      document.querySelector("#turns tbody").innerHTML = (traj.turns || []).map(t =>
+        `<tr><td>${t.turn}</td><td><pre>${escapeHtml(trunc(t.payload))}</pre></td><td><pre>${escapeHtml(trunc(t.response))}</pre></td><td>${escapeHtml((t.tool_calls||[]).join(", "))}</td></tr>`
+      ).join("") || `<tr><td colspan="4" class="muted">No trajectory turns</td></tr>`;
+
+      document.getElementById("rbac-meta").textContent = rbac.path
+        ? `${rbac.agent_count || 0} agents from ${rbac.path}`
+        : "No identity path configured.";
+      drawGraph(rbac.nodes || [], rbac.edges || []);
+
+      document.querySelector("#traffic tbody").innerHTML = (traffic.entries || []).map(e =>
+        `<tr><td>${e.seq}</td><td>${escapeHtml(e.module_id)}</td><td><pre>${escapeHtml(trunc(e.request))}</pre></td><td><pre>${escapeHtml(trunc(e.response))}</pre></td></tr>`
+      ).join("") || `<tr><td colspan="4" class="muted">${traffic.enabled ? "No traffic yet" : "Recorder off — run a verbose scan in this process, or inspect the JSON report"}</td></tr>`;
+
+      fillFooterTimes(report);
+    }
+
+    function formatLocal(isoOrDate) {
+      const d = isoOrDate instanceof Date ? isoOrDate : new Date(isoOrDate);
+      if (Number.isNaN(d.getTime())) return "";
+      return d.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "medium" });
+    }
+
+    function fillFooterTimes(report) {
+      const el = document.getElementById("foot-times");
+      const lines = [`Page loaded ${formatLocal(new Date())}`];
+      const hasReport = report && !report.error;
+      if (hasReport && report.completed_at) {
+        const t = formatLocal(report.completed_at);
+        if (t) lines.push(`Scan completed ${t}`);
+      } else if (hasReport && report.started_at) {
+        const t = formatLocal(report.started_at);
+        if (t) lines.push(`Scan started ${t}`);
+      }
+      el.innerHTML = lines.map(s => `<div>${escapeHtml(s)}</div>`).join("");
+    }
+
+    function metaItem(label, value) {
+      return `<div class="meta-item"><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value)}</dd></div>`;
+    }
+
+    function severitySummary(findings) {
+      const order = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO", "PASS"];
+      const counts = {};
+      for (const f of findings) {
+        const sev = f.severity || "INFO";
+        counts[sev] = (counts[sev] || 0) + 1;
+      }
+      const parts = order.filter(s => counts[s]).map(s => `${counts[s]} ${s}`);
+      const total = findings.length;
+      return parts.length ? `${total} total · ${parts.join(" · ")}` : "0";
+    }
+
+    function field(label, value, asPre) {
+      if (value == null || value === "") return "";
+      const body = asPre
+        ? `<pre>${escapeHtml(String(value))}</pre>`
+        : `<p>${escapeHtml(String(value))}</p>`;
+      return `<div class="field"><span class="field-label">${escapeHtml(label)}</span>${body}</div>`;
+    }
+
+    function formatMetaValue(v) {
+      if (v == null) return "";
+      if (typeof v === "object") return JSON.stringify(v);
+      return String(v);
+    }
+
+    function renderMetadata(meta) {
+      if (!meta || typeof meta !== "object") return "";
+      const extra = Object.keys(meta).filter(k => !META_KEYS.includes(k));
+      const keys = [...META_KEYS, ...extra].filter(k => {
+        const v = meta[k];
+        return v != null && v !== "";
+      });
+      if (!keys.length) return "";
+      const rows = keys.map(k =>
+        `<dt>${escapeHtml(k)}</dt><dd>${escapeHtml(formatMetaValue(meta[k]))}</dd>`
+      ).join("");
+      return `<div class="field"><span class="field-label">Metadata</span><dl class="kv-list">${rows}</dl></div>`;
+    }
+
+    function renderFinding(f) {
+      const sev = f.severity || "";
+      return `<article class="finding">
+        <div class="finding-head">
+          <div>
+            <div class="finding-id">${escapeHtml(f.attack_id || "")}</div>
+            <h3 class="finding-name">${escapeHtml(f.attack_name || "")}</h3>
+          </div>
+          <div class="badges">
+            <span class="badge sev-${escapeHtml(sev)}">${escapeHtml(sev)}</span>
+            <span class="badge">${escapeHtml(f.owasp_id || "")}</span>
+          </div>
+        </div>
+        <div class="finding-body">
+          ${field("Description", f.description)}
+          ${field("Evidence", f.evidence, true)}
+          ${field("Payload", f.payload_used, true)}
+          ${field("Turn", f.turn_number == null ? "" : String(f.turn_number))}
+          ${field("Remediation", f.remediation)}
+          ${renderMetadata(f.metadata)}
+        </div>
+      </article>`;
+    }
+
+    function escapeHtml(s) {
+      return String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+    }
+
+    function drawGraph(nodes, edges) {
+      const svg = document.getElementById("graph");
+      svg.innerHTML = "";
+      if (!nodes.length) return;
+      const w = 800, h = 320;
+      const placed = nodes.map((n, i) => {
+        const angle = (2 * Math.PI * i) / nodes.length;
+        return { ...n, x: w/2 + Math.cos(angle) * 220, y: h/2 + Math.sin(angle) * 110 };
+      });
+      const byId = Object.fromEntries(placed.map(n => [n.id, n]));
+      for (const e of edges) {
+        const a = byId[e.source], b = byId[e.target];
+        if (!a || !b) continue;
+        const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+        line.setAttribute("x1", a.x); line.setAttribute("y1", a.y);
+        line.setAttribute("x2", b.x); line.setAttribute("y2", b.y);
+        line.setAttribute("stroke", "rgba(0,0,0,0.12)");
+        svg.appendChild(line);
+      }
+      for (const n of placed) {
+        const c = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+        c.setAttribute("cx", n.x); c.setAttribute("cy", n.y); c.setAttribute("r", 7);
+        c.setAttribute("fill", n.node_type === "agent" ? "#c96442" : n.node_type === "scope" ? "#b42318" : "#3d6b4f");
+        svg.appendChild(c);
+        const t = document.createElementNS("http://www.w3.org/2000/svg", "text");
+        t.setAttribute("x", n.x + 10); t.setAttribute("y", n.y + 4);
+        t.setAttribute("fill", "#6b6860"); t.setAttribute("font-size", "11");
+        t.setAttribute("font-family", "-apple-system, BlinkMacSystemFont, Segoe UI, system-ui, sans-serif");
+        t.textContent = n.id;
+        svg.appendChild(t);
+      }
+    }
+
+    fillFooterTimes(null);
+    load().catch(err => {
+      document.getElementById("report-meta").textContent = String(err);
+      fillFooterTimes(null);
+    });
+  </script>
+</body>
+</html>
