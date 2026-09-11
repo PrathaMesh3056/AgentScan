@@ -868,10 +868,10 @@ def fix(
         from agentscan.supply_chain.mcp_auditor import scan_mcp_configs
         from agentscan.supply_chain.secret_scanner import scan_secrets as _scan_sec
 
-        f_deps, _ = scan_dependencies(target)
-        f_cfg, _ = _scan_cfg(target)
-        f_sec, _ = _scan_sec(target)
-        f_mcp, _ = scan_mcp_configs(target)
+        f_deps, _ = scan_dependencies(str(target))
+        f_cfg, _ = _scan_cfg(str(target))
+        f_sec, _ = _scan_sec(str(target))
+        f_mcp, _ = scan_mcp_configs(str(target))
         id_rep = run_identity_audit(str(target))
 
         findings.extend(f_deps + f_cfg + f_sec + f_mcp + id_rep.findings)
