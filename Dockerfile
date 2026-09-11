@@ -1,31 +1,47 @@
-# Scan-only image: no PyTorch / transformers / sentence-transformers.
-# Use Dockerfile.deep (or `pip install .`) when inputs.deep is true.
+# ── Production Multi-Stage Dockerfile for AgentScan ───────────────────────────
+FROM python:3.12-slim AS builder
 
-FROM python:3.12-slim-bookworm
+WORKDIR /build
 
-WORKDIR /src
+# Install uv for fast wheel compilation
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /bin/uv
 
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates \
+# Copy project specification and sources
+COPY pyproject.toml README.md ./
+COPY agentscan/ ./agentscan/
+COPY rules/ ./rules/
+
+# Build standalone wheel
+RUN uv build --wheel --out-dir /dist
+
+# ── Final Runtime Image ───────────────────────────────────────────────────────
+FROM python:3.12-slim AS runner
+
+LABEL maintainer="AgentScan Team <author@agentscan.dev>"
+LABEL org.opencontainers.image.title="AgentScan"
+LABEL org.opencontainers.image.description="Open-source security scanner and red-teaming tool for AI agents"
+
+# Install system runtime dependencies for report generation (WeasyPrint / Pango)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libpango-1.0-0 \
+    libharfbuzz0b \
+    libpangoft2-1.0-0 \
+    libffi-dev \
+    shared-mime-info \
+    ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-COPY pyproject.toml README.md ./
-COPY agentscan ./agentscan
-COPY rules ./rules
+# Create secure non-root user
+RUN groupadd -g 10001 agentscan && \
+    useradd -u 10001 -g agentscan -m -s /bin/bash agentscan
 
-RUN pip install --no-cache-dir \
-        "pydantic>=2.0" \
-        "httpx>=0.27" \
-        "typer[all]>=0.12" \
-        "rich>=13.0" \
-        "pyyaml>=6.0" \
-        "loguru>=0.7" \
-        "jinja2>=3.1.6" \
-        "python-dotenv>=1.2.2" \
-        "networkx>=3.2" \
-        "websockets>=14.0" \
-    && pip install --no-cache-dir --no-deps .
+WORKDIR /workspace
 
-WORKDIR /work
+# Install wheel from builder stage
+COPY --from=builder /dist/*.whl /tmp/
+RUN pip install --no-cache-dir /tmp/*.whl[ui] && rm -rf /tmp/*.whl
+
+USER agentscan
+
 ENTRYPOINT ["agentscan"]
 CMD ["--help"]

@@ -1,57 +1,47 @@
-# .github/workflows/ci.yml
-#
-# Runs on every push to main and every pull request.
-# Blocks merge if tests fail or linting fails.
-#
-# This is what hiring managers see when they visit your repo.
-# A green CI badge = professional project.
-
 name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [ main ]
   pull_request:
-    branches: [main]
+    branches: [ main ]
 
 jobs:
   test:
-    name: Tests + Lint
     runs-on: ubuntu-latest
-
     strategy:
       matrix:
         python-version: ["3.12"]
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Install uv
+      - name: Set up uv
         uses: astral-sh/setup-uv@v3
         with:
+          enable-cache: true
           version: "latest"
 
       - name: Set up Python ${{ matrix.python-version }}
         run: uv python install ${{ matrix.python-version }}
 
       - name: Install dependencies
-        run: uv sync --all-extras --dev
+        run: |
+          uv sync --extra semgrep --extra ui
 
-      - name: Install project in editable mode
-        run: uv pip install -e .
+      - name: Run Ruff Linter & Formatting
+        run: |
+          uv run ruff check .
+          uv run ruff format --check .
 
-      - name: Run ruff lint
-        run: uv run ruff check agentscan/ tests/
+      - name: Run Mypy Type Checking
+        run: |
+          uv run mypy agentscan
 
-      - name: Run ruff format check
-        run: uv run ruff format --check agentscan/ tests/
+      - name: Run Pytest Suite
+        run: |
+          uv run pytest -m "not slow" --cov=agentscan --cov-report=xml
 
-      - name: Run mypy type check
-        run: uv run mypy agentscan/ --ignore-missing-imports
-
-      - name: Install Playwright browser (Chromium)
-        run: uv run playwright install chromium --with-deps
-
-      - name: Run pytest
-        run: uv run pytest tests/ -v --tb=short -m "not slow" --cov=agentscan --cov-report=term-missing
+      - name: Verify Package Build
+        run: |
+          uv build

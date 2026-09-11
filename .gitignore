@@ -1,7 +1,10 @@
-# --- Project Specific ---
+# --- Project Specific & Packaging ---
 .venv/
 venv/
-agentscan.egg-info/
+dist/
+build/
+*.egg-info/
+*.egg
 .python-version
 
 # --- Python Cache ---
@@ -14,14 +17,20 @@ __pycache__/
 .ruff_cache/
 .mypy_cache/
 .coverage
+.coverage.*
+coverage.xml
 htmlcov/
 
 # --- IDEs & OS ---
 .vscode/
+.cursor/
 .obsidian/
 .idea/
 .DS_Store
 Thumbs.db
+Desktop.ini
+*.swp
+*~
 
 # --- Environment Secrets ---
 .env

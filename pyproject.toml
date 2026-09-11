@@ -4,6 +4,29 @@ version = "0.1.0"
 description = "Open-source security scanner for AI agents — red-teaming, exploit engine, AI dependency scanner"
 readme = "README.md"
 requires-python = ">=3.12"
+license = { text = "Apache-2.0" }
+authors = [
+    { name = "Prathamesh", email = "author@agentscan.dev" }
+]
+keywords = [
+    "security",
+    "ai-agents",
+    "llm-security",
+    "red-teaming",
+    "prompt-injection",
+    "owasp-llm-top-10",
+    "supply-chain",
+    "vulnerability-scanner",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Information Technology",
+    "Topic :: Security",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+]
 dependencies = [
     "pydantic>=2.0",
     "httpx>=0.27",
@@ -25,6 +48,12 @@ dependencies = [
 
 [project.scripts]
 agentscan = "agentscan.cli:app"
+
+[project.urls]
+Homepage = "https://github.com/PrathaMesh3056/AgentScan"
+Repository = "https://github.com/PrathaMesh3056/AgentScan"
+Documentation = "https://github.com/PrathaMesh3056/AgentScan#readme"
+Issues = "https://github.com/PrathaMesh3056/AgentScan/issues"
 
 [project.optional-dependencies]
 semgrep = ["semgrep>=1.80.0"]

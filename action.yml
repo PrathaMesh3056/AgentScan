@@ -1,61 +1,80 @@
-name: AgentScan
-description: Scan an AI agent endpoint (scan-only by default; no torch unless deep=true)
-author: AgentScan
+name: 'AgentScan Security Scanner'
+description: 'Automated AI agent security scanning, red-teaming, supply chain auditing, and SARIF reporting.'
+author: 'AgentScan'
+branding:
+  icon: 'shield'
+  color: 'blue'
 
 inputs:
-  target:
-    description: Target URL (http/https, ws/wss, mcp://stdio, mcp+sse://)
-    required: true
+  command:
+    description: 'Command to run: "audit" or "scan"'
+    required: false
+    default: 'audit'
+  path:
+    description: 'Path or directory to audit (for audit command)'
+    required: false
+    default: '.'
+  target-url:
+    description: 'Target endpoint URL (for scan command)'
+    required: false
+    default: ''
   fail-on:
-    description: Exit 1 if any finding is at or above this severity
+    description: 'Exit with code 1 if findings meet or exceed severity (CRITICAL, HIGH, MEDIUM, LOW)'
     required: false
-    default: HIGH
-  exploit:
-    description: Also run EXPLOIT modules (true/false)
+    default: 'CRITICAL'
+  sarif-output:
+    description: 'Path to output SARIF 2.1.0 report for GitHub Security Code Scanning tab'
     required: false
-    default: "false"
-  deep:
-    description: Install torch/transformers and run DEEP neural probes (true/false)
+    default: 'agentscan-results.sarif'
+  json-output:
+    description: 'Path to output JSON findings'
     required: false
-    default: "false"
-  output:
-    description: Report path (extension selects json/html/pdf/sarif)
-    required: false
-    default: agentscan-report.json
+    default: ''
 
 runs:
-  using: composite
+  using: 'composite'
   steps:
     - name: Set up Python
       uses: actions/setup-python@v5
       with:
-        python-version: "3.12"
+        python-version: '3.12'
 
-    - name: Install AgentScan (scan-only, no torch)
-      if: ${{ inputs.deep != 'true' }}
+    - name: Install uv
+      uses: astral-sh/setup-uv@v3
+      with:
+        enable-cache: true
+
+    - name: Install AgentScan
       shell: bash
       run: |
-        python -m pip install --upgrade pip
-        python -m pip install \
-          "pydantic>=2.0" "httpx>=0.27" "typer[all]>=0.12" "rich>=13.0" \
-          "pyyaml>=6.0" "loguru>=0.7" "jinja2>=3.1.6" "python-dotenv>=1.2.2" \
-          "networkx>=3.2" "websockets>=14.0"
-        python -m pip install --no-deps "${{ github.action_path }}"
+        uv pip install --system "${{ github.action_path }}"
 
-    - name: Install AgentScan (full DEEP stack)
-      if: ${{ inputs.deep == 'true' }}
+    - name: Execute AgentScan Audit
+      if: ${{ inputs.command == 'audit' }}
       shell: bash
       run: |
-        python -m pip install --upgrade pip
-        python -m pip install "${{ github.action_path }}"
+        CMD_ARGS="${{ inputs.path }}"
+        if [ -n "${{ inputs.fail-on }}" ]; then
+          CMD_ARGS="$CMD_ARGS --fail-on ${{ inputs.fail-on }}"
+        fi
+        if [ -n "${{ inputs.sarif-output }}" ]; then
+          CMD_ARGS="$CMD_ARGS --output ${{ inputs.sarif-output }}"
+        elif [ -n "${{ inputs.json-output }}" ]; then
+          CMD_ARGS="$CMD_ARGS --output ${{ inputs.json-output }}"
+        fi
+        agentscan audit $CMD_ARGS
 
-    - name: Run AgentScan
+    - name: Execute AgentScan Scan
+      if: ${{ inputs.command == 'scan' }}
       shell: bash
       run: |
-        EXTRA=()
-        if [ "${{ inputs.exploit }}" = "true" ]; then EXTRA+=(--exploit); fi
-        if [ "${{ inputs.deep }}" = "true" ]; then EXTRA+=(--deep); fi
-        agentscan scan "${{ inputs.target }}" \
-          "${EXTRA[@]}" \
-          --fail-on "${{ inputs.fail-on }}" \
-          --output "${{ inputs.output }}"
+        CMD_ARGS="${{ inputs.target-url }}"
+        if [ -n "${{ inputs.fail-on }}" ]; then
+          CMD_ARGS="$CMD_ARGS --fail-on ${{ inputs.fail-on }}"
+        fi
+        if [ -n "${{ inputs.sarif-output }}" ]; then
+          CMD_ARGS="$CMD_ARGS --output ${{ inputs.sarif-output }}"
+        elif [ -n "${{ inputs.json-output }}" ]; then
+          CMD_ARGS="$CMD_ARGS --output ${{ inputs.json-output }}"
+        fi
+        agentscan scan $CMD_ARGS

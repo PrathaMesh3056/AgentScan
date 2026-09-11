@@ -487,6 +487,11 @@ def audit(  # noqa: PLR0912, PLR0913
     scan_identity: bool = typer.Option(
         False, "--scan-identity", help="Run identity & authorization audit."
     ),
+    scan_frameworks: bool = typer.Option(
+        False,
+        "--scan-frameworks",
+        help="Audit agent frameworks (CrewAI, LangGraph, AutoGen) for insecure patterns.",
+    ),
     scan_semgrep: bool = typer.Option(
         False,
         "--scan-semgrep",
@@ -504,6 +509,11 @@ def audit(  # noqa: PLR0912, PLR0913
         help="Exit with code 1 if any finding has severity >= this threshold.",
     ),
     output: Path | None = typer.Option(None, help="Write JSON findings to this file."),  # noqa: B008
+    offline: bool = typer.Option(
+        False,
+        "--offline",
+        help="Disable live network lookups (e.g. OSV.dev); audit using offline database only.",
+    ),
 ) -> None:
     """Audit a project directory for AI supply-chain and identity risks."""
     # If no flag is given, run the built-in categories (Semgrep stays opt-in).
@@ -515,6 +525,7 @@ def audit(  # noqa: PLR0912, PLR0913
             scan_typo,
             scan_mcp,
             scan_identity,
+            scan_frameworks,
             scan_semgrep,
             aibom,
         ]
@@ -527,7 +538,7 @@ def audit(  # noqa: PLR0912, PLR0913
     if run_all or scan_deps:
         from agentscan.supply_chain.dep_scanner import scan_dependencies
 
-        f, c = scan_dependencies(path)
+        f, c = scan_dependencies(path, offline=offline)
         all_findings.extend(f)
         total_checks += c
 
@@ -566,6 +577,13 @@ def audit(  # noqa: PLR0912, PLR0913
         all_findings.extend(report.findings)
         total_checks += max(len(report.agents_found), 1)
 
+    if run_all or scan_frameworks:
+        from agentscan.supply_chain.framework_auditor import scan_frameworks as _scan_fw
+
+        f, c = _scan_fw(path)
+        all_findings.extend(f)
+        total_checks += c
+
     if scan_semgrep:
         from agentscan.supply_chain.semgrep_auditor import scan_semgrep as _scan_sg
 
@@ -585,6 +603,7 @@ def audit(  # noqa: PLR0912, PLR0913
                 scan_typo,
                 scan_mcp,
                 scan_identity,
+                scan_frameworks,
                 scan_semgrep,
                 run_all,
             ]
@@ -944,6 +963,96 @@ def list_attacks() -> None:
         )
 
     console.print(table)
+
+
+@app.command()
+def watch(
+    url: str = typer.Argument(..., help="Target agent URL to monitor."),
+    interval: int = typer.Option(60, "--interval", "-i", help="Polling interval in seconds."),
+    iterations: int = typer.Option(
+        1, "--iterations", "-n", help="Number of check cycles (default: 1)."
+    ),
+    webhook: str | None = typer.Option(
+        None, "--webhook", "-w", help="Webhook URL for alert dispatch (Slack/Discord)."
+    ),
+    canary: str | None = typer.Option(
+        None, "--canary", "-c", help="Custom canary token string to verify."
+    ),
+) -> None:
+    """Run continuous monitoring sentinel against an agent endpoint."""
+    import asyncio
+
+    from agentscan.core.connectors import HttpJsonConnector
+    from agentscan.core.models import Target
+    from agentscan.sentinel.watcher import ContinuousWatcher
+
+    target = Target(url=url)
+    watcher = ContinuousWatcher(
+        target=target,
+        interval_seconds=interval,
+        max_iterations=iterations,
+        webhook_url=webhook,
+        canary_token=canary,
+    )
+
+    console.print(f"[bold cyan]AgentScan Sentinel[/bold cyan] monitoring [green]{url}[/green]")
+    console.print(f"Canary Token: [yellow]{watcher.canary_sentinel.canary_token}[/yellow]")
+    if webhook:
+        console.print(f"Alert Webhook: [dim]{webhook}[/dim]")
+
+    connector = HttpJsonConnector(target)
+
+    def _on_iter(num: int, findings: list[Finding]) -> None:
+        if findings:
+            console.print(
+                f"Cycle {num}: [bold red]ALERT[/bold red] - {len(findings)} finding(s) detected!"
+            )
+        else:
+            console.print(
+                f"Cycle {num}: [bold green]PASS[/bold green] - Canary secure, 0 findings."
+            )
+
+    findings = asyncio.run(watcher.run_loop(connector, callback=_on_iter))
+    if findings:
+        console.print(
+            f"\n[bold red]Sentinel detected {len(findings)} vulnerability/leakage event(s).[/bold red]"
+        )
+    else:
+        console.print("\n[bold green]Sentinel completed cleanly with 0 regressions.[/bold green]")
+
+
+@app.command(name="export-guardrails")
+def export_guardrails(
+    target_format: str = typer.Option(
+        "litellm", "--format", "-f", help="Gateway format: 'litellm', 'cloudflare', or 'bedrock'."
+    ),
+    output: Path = typer.Option(  # noqa: B008
+        ..., "--output", "-o", help="File to write exported guardrail configuration."
+    ),
+) -> None:
+    """Export AgentScan threat defenses to LiteLLM, Cloudflare AI Gateway, or AWS Bedrock."""
+    from agentscan.reporting.gateway_exporter import (
+        export_bedrock_guardrails,
+        export_cloudflare_guardrails,
+        export_litellm_guardrails,
+    )
+
+    fmt = target_format.lower()
+    if fmt == "litellm":
+        export_litellm_guardrails(output_path=output)
+    elif fmt == "cloudflare":
+        export_cloudflare_guardrails(output_path=output)
+    elif fmt == "bedrock":
+        export_bedrock_guardrails(output_path=output)
+    else:
+        console.print(
+            f"[red]Unknown format '{target_format}'. Supported: 'litellm', 'cloudflare', 'bedrock'.[/red]"
+        )
+        raise typer.Exit(1)
+
+    console.print(
+        f"[bold green]Exported {fmt.upper()} guardrails to [cyan]{output}[/cyan][/bold green]"
+    )
 
 
 if __name__ == "__main__":

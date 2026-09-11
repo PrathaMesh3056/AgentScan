@@ -1,10 +1,13 @@
 # agentscan/remediation/ast_patch.py
 #
-# AST / code patching for insecure Python configurations:
+# AST / code patching for insecure Python configurations & agent frameworks:
 #   SC-011: torch.load(...) -> add weights_only=True
 #   SC-011: allow_dangerous_deserialization=True -> False
 #   SC-013: shell=True -> False
 #   SC-014: DEBUG = True -> DEBUG = False
+#   SC-FW-CREW-001: allow_code_execution=True -> False
+#   SC-FW-AUTO-001: 'use_docker': False -> True
+#   SC-FW-AUTO-003: human_input_mode='NEVER' -> 'ALWAYS'
 
 from __future__ import annotations
 
@@ -59,9 +62,45 @@ def _patch_debug_true(content: str) -> str:
     )
 
 
+def _patch_crew_code_execution(content: str) -> str:
+    """Flip allow_code_execution=True to allow_code_execution=False."""
+    return re.sub(
+        r"\ballow_code_execution\s*=\s*True\b",
+        "allow_code_execution=False",
+        content,
+    )
+
+
+def _patch_autogen_use_docker(content: str) -> str:
+    """Flip 'use_docker': False to 'use_docker': True."""
+    return re.sub(
+        r"(['\"]use_docker['\"]\s*:\s*)False",
+        r"\g<1>True",
+        content,
+    )
+
+
+def _patch_autogen_human_input_mode(content: str) -> str:
+    """Flip human_input_mode='NEVER' to 'ALWAYS'."""
+    return re.sub(
+        r"\bhuman_input_mode\s*=\s*['\"]NEVER['\"]",
+        'human_input_mode="ALWAYS"',
+        content,
+    )
+
+
 def plan_ast_patches(findings: list[Finding], root_path: Path) -> list[FixAction]:
-    """Inspect AST / config findings and generate ast_patch FixActions."""
-    ast_findings = [f for f in findings if f.attack_id in ("SC-011", "SC-012", "SC-013", "SC-014")]
+    """Inspect AST / config / framework findings and generate ast_patch FixActions."""
+    supported_ids = (
+        "SC-011",
+        "SC-012",
+        "SC-013",
+        "SC-014",
+        "SC-FW-CREW-001",
+        "SC-FW-AUTO-001",
+        "SC-FW-AUTO-003",
+    )
+    ast_findings = [f for f in findings if f.attack_id in supported_ids]
     if not ast_findings or not root_path.exists():
         return []
 
@@ -98,6 +137,12 @@ def plan_ast_patches(findings: list[Finding], root_path: Path) -> list[FixAction
                 updated = _patch_allow_dangerous_deserialization(updated)
             elif attack_id == "SC-014":
                 updated = _patch_debug_true(updated)
+            elif attack_id == "SC-FW-CREW-001":
+                updated = _patch_crew_code_execution(updated)
+            elif attack_id == "SC-FW-AUTO-001":
+                updated = _patch_autogen_use_docker(updated)
+            elif attack_id == "SC-FW-AUTO-003":
+                updated = _patch_autogen_human_input_mode(updated)
 
         if updated != content:
             # Associate with the primary finding that triggered the change

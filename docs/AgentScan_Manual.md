@@ -235,13 +235,34 @@ The `audit` command statically analyzes an AI project. By default, running `agen
 agentscan audit ./my-project \
   --scan-deps \
   --scan-config \
+  --scan-frameworks \
   --scan-secrets \
   --scan-typo \
   --scan-mcp \
   --scan-identity \
   --scan-semgrep \
+  --offline \
   --aibom
 ```
+
+#### Dependency & Lockfile Auditing
+- **Deterministic Lockfile Inspection**: AgentScan automatically inspects `uv.lock` and `poetry.lock` files to audit 100% of concrete resolved transitive packages with zero runtime network latency.
+- **PEP 508 Range Constraints**: For open version ranges in `pyproject.toml` or `requirements.txt` (e.g. `langchain>=0.0.150,<0.0.160`), AgentScan evaluates `packaging.specifiers.SpecifierSet` to detect whether your constraints permit known vulnerable releases.
+- **Air-Gapped & Offline Auditing (`--offline`)**: Bypasses network calls to OSV.dev and matches dependencies purely against the bundled offline vulnerability database (`known_vulnerabilities.yaml`).
+
+`--scan-frameworks` performs zero-dependency AST security auditing tailored to agentic frameworks (**CrewAI**, **LangGraph**, **AutoGen / AG2**). It is enabled by default in the standard `agentscan audit <path>` sweep.
+
+| Finding ID | Framework | Severity | Vulnerability Description & Risk |
+| :--- | :--- | :--- | :--- |
+| `SC-FW-CREW-001` | CrewAI | **CRITICAL** | `allow_code_execution=True` on Agent/Crew without isolated container/sandbox containment (Host RCE). |
+| `SC-FW-CREW-002` | CrewAI | **HIGH** | `allow_delegation=True` combined with privileged tools (`bash`, `sql`, `write`), enabling lateral escalation. |
+| `SC-FW-CREW-003` | CrewAI | **HIGH** | `memory=True` without cryptographic tenant isolation (cross-session vector store memory poisoning). |
+| `SC-FW-LG-001` | LangGraph | **CRITICAL** | `compile()` without `interrupt_before` approval gates on tool nodes (unattended side-effect execution). |
+| `SC-FW-LG-002` | LangGraph | **HIGH** | Unbounded cyclic state graph loops (`add_edge` cycles) without explicit recursion limits (infinite loop DoS). |
+| `SC-FW-LG-004` | LangGraph | **MEDIUM** | In-memory `MemorySaver` used for multi-tenant state persistence without encryption or tenant scoping. |
+| `SC-FW-AUTO-001` | AutoGen | **CRITICAL** | `UserProxyAgent` / `ConversableAgent` with `use_docker=False` in `code_execution_config` (Host OS code execution). |
+| `SC-FW-AUTO-002` | AutoGen | **HIGH** | `GroupChat` / `GroupChatManager` missing `max_round` or > 50 (runaway token consumption DoS). |
+| `SC-FW-AUTO-003` | AutoGen | **HIGH** | `human_input_mode="NEVER"` coupled with code execution or destructive tool calls (unattended execution). |
 
 `--scan-config` is the AST auditor (no extra deps). `--scan-semgrep` is additive: it runs `rules/ai_rules.yaml` via the `semgrep` binary (`pip install 'agentscan[semgrep]'`) and is skipped with a log if Semgrep is not installed. It is **not** included in the default no-flag audit sweep.
 
@@ -319,6 +340,38 @@ agentscan benchmark
 
 ---
 
+### 3.5. Continuous Sentinel Monitoring (`watch`)
+
+The `watch` command monitors an autonomous agent endpoint on a continuous interval, injecting synthetic canary tokens to detect latent prompt injection, vector memory leakage, and safety regressions:
+
+```bash
+agentscan watch http://localhost:8000/chat \
+  --interval 60 \
+  --iterations 5 \
+  --webhook https://hooks.slack.com/services/YOUR/WEBHOOK \
+  --canary CANARY-PROD-9988
+```
+
+- **Canary Leak Detection (`SC-CANARY-001`)**: Probes the agent with varied pretexts to verify that the confidential canary token is never disclosed or reflected.
+- **Webhook Alerts**: Dispatches rich, cross-platform security alert cards directly to Slack, Discord, or generic JSON receivers when vulnerabilities or regressions occur.
+
+### 3.6. Exporting Threat Defenses to AI Gateways (`export-guardrails`)
+
+Translate AgentScan findings and attack signatures directly into enterprise gateway rules:
+
+```bash
+# Export LiteLLM Proxy guardrails
+agentscan export-guardrails --format litellm --output litellm_guardrails.yaml
+
+# Export Cloudflare AI Gateway guardrail JSON rules
+agentscan export-guardrails --format cloudflare --output cloudflare_rules.json
+
+# Export AWS Bedrock Guardrail JSON configuration
+agentscan export-guardrails --format bedrock --output bedrock_guardrail.json
+```
+
+---
+
 ## 4. Subsystems Reference
 
 AgentScan is highly modular. Here is a breakdown of how the major subsystems operate under the hood.
@@ -351,6 +404,7 @@ Located in `agentscan/core/`, the attack engine is built for extreme concurrency
 > - **Insecure Output Handling (`ATK-007`)**: Tests unescaped reflection of XSS, SQLi, markdown image exfiltration, ANSI escapes, and shell metacharacters (`LLM02`).
 > - **RAG & Knowledge-Base Poisoning (`ATK-008`)**: Tests knowledge integrity via conflicting facts, spoofed citations, and mock document overrides (`LLM03`).
 > - **Overreliance & Hallucination (`ATK-009`)**: Tests uncritical obedience to false authority claims and tool-calling without verification (`LLM09`).
+> - **Multilingual Alignment Bypass (`ATK-011`)**: Tests cross-lingual prompt injection and safety boundary drift across Chinese, Russian, Arabic, Hindi, and Spanish (`LLM01`).
 
 > [!TIP]
 > **EXPLOIT Mode Modules**
@@ -534,7 +588,62 @@ All structured data is strongly validated using Pydantic v2 `BaseModel` classes,
 
 ---
 
-## 7. Future Roadmap
+## 5. CI/CD Integration & Docker Deployment Guide
+
+### 5.1. GitHub Actions Integration (`action.yml`)
+
+Run AgentScan on every Pull Request or commit in your repository using the official composite GitHub Action:
+
+```yaml
+name: AgentScan Security Audit
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  security-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run AgentScan Audit
+        uses: PrathaMesh3056/AgentScan@v1
+        with:
+          path: '.'
+          fail-on: 'HIGH'
+          sarif-output: 'agentscan-results.sarif'
+
+      - name: Upload SARIF to GitHub Security Tab
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: 'agentscan-results.sarif'
+```
+
+### 5.2. Docker Container Execution
+
+Run AgentScan in isolated environments without installing Python or configuring dependencies:
+
+```bash
+# Build the production image
+docker build -t agentscan .
+
+# Run static audit against your workspace (read-only mount)
+docker run --rm -v $(pwd):/workspace:ro agentscan audit .
+
+# Run live endpoint security scan
+docker run --rm agentscan scan http://host.docker.internal:8000/chat
+
+# Run the visual dashboard via Docker Compose
+docker compose up -d
+```
+
+---
+
+## 6. Future Roadmap
 
 Modules **0–5E are complete and fully operational**:
 - Foundation & models (0)

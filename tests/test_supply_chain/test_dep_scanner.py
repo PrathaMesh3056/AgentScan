@@ -1,7 +1,6 @@
 # tests/test_supply_chain/test_dep_scanner.py
 #
-# Tests for agentscan/supply_chain/dep_scanner.py
-# Parsing tests plus live OSV (respx-mocked) and YAML fallback coverage.
+# Tests for Dependency Vulnerability Scanner (dep_scanner.py).
 
 from __future__ import annotations
 
@@ -19,7 +18,7 @@ _OSV_BASE = "https://api.osv.dev"
 _LANGCHAIN_VULN = {
     "id": "GHSA-xxxx-yyyy-zzzz",
     "aliases": ["CVE-2023-34541"],
-    "summary": "Arbitrary code execution via eval() in LLMMathChain.",
+    "summary": "Arbitrary code execution in langchain.",
     "severity": [{"type": "CVSS_V3", "score": "9.8"}],
     "affected": [
         {
@@ -109,7 +108,7 @@ def _mock_osv_requests() -> None:
     )
 
 
-# ── Helpers ────────────────────────────────────────────────────────────────────
+# ─── Helpers ─────────────────────────────────────────────────────────────────
 
 
 @pytest.fixture
@@ -119,7 +118,7 @@ def tmp_req(tmp_path: Path) -> Path:
 
 
 def _write_req(tmp_path: Path, content: str) -> str:
-    (tmp_path / "requirements.txt").write_text(textwrap.dedent(content))
+    (tmp_path / "requirements.txt").write_text(textwrap.dedent(content), encoding="utf-8")
     return str(tmp_path)
 
 
@@ -133,11 +132,11 @@ dependencies = [
 {deps_toml}
 ]
 """
-    (tmp_path / "pyproject.toml").write_text(toml)
+    (tmp_path / "pyproject.toml").write_text(toml, encoding="utf-8")
     return str(tmp_path)
 
 
-# ── Tests ─────────────────────────────────────────────────────────────────────
+# ─── Tests ───────────────────────────────────────────────────────────────────
 
 
 class TestParseDependencies:
@@ -160,6 +159,56 @@ class TestParseDependencies:
         deps = _parse_dependencies(path)
         assert ("langchain", "0.1.0") in deps
         assert ("pydantic", "2.7.0") in deps
+
+    def test_parse_uv_lock(self, tmp_path: Path) -> None:
+        """_parse_dependencies reads exact resolved packages from uv.lock."""
+        uv_content = """\
+version = 1
+revision = 1
+requires-python = ">=3.12"
+
+[[package]]
+name = "langchain"
+version = "0.0.154"
+
+[[package]]
+name = "pydantic"
+version = "2.7.0"
+"""
+        (tmp_path / "uv.lock").write_text(uv_content, encoding="utf-8")
+        deps = _parse_dependencies(str(tmp_path))
+        assert ("langchain", "0.0.154") in deps
+        assert ("pydantic", "2.7.0") in deps
+
+    def test_parse_poetry_lock(self, tmp_path: Path) -> None:
+        """_parse_dependencies reads exact resolved packages from poetry.lock."""
+        poetry_content = """\
+[[package]]
+name = "transformers"
+version = "4.29.0"
+
+[[package]]
+name = "fastapi"
+version = "0.110.0"
+"""
+        (tmp_path / "poetry.lock").write_text(poetry_content, encoding="utf-8")
+        deps = _parse_dependencies(str(tmp_path))
+        assert ("transformers", "4.29.0") in deps
+        assert ("fastapi", "0.110.0") in deps
+
+    def test_parse_version_ranges(self, tmp_path: Path) -> None:
+        """_parse_dependencies extracts PEP 508 specifiers when not exact pins."""
+        path = _write_req(
+            tmp_path,
+            """\
+            langchain>=0.0.150,<0.0.160
+            requests>=2.28.0
+        """,
+        )
+        deps = _parse_dependencies(path)
+        names = [d[0] for d in deps]
+        assert "langchain" in names
+        assert "requests" in names
 
 
 class TestScanDependencies:
@@ -242,3 +291,28 @@ class TestScanDependencies:
         assert len(findings) == 1
         assert "CVE-2099-0001" in findings[0].description
         assert findings[0].metadata.get("source") == "osv"
+
+    def test_range_constraint_vulnerable_flagged(self, tmp_path: Path) -> None:
+        """A range constraint permitting vulnerable version (CVE-2023-34541) is flagged."""
+        path = _write_req(tmp_path, "langchain<0.0.155\n")
+        findings, checks_run = scan_dependencies(path, offline=True)
+        assert checks_run == 1
+        sc001 = [f for f in findings if f.attack_id == "SC-001"]
+        assert len(sc001) == 1
+        assert "CVE-2023-34541" in sc001[0].description
+        assert sc001[0].metadata.get("source") == "offline_range"
+
+    def test_range_constraint_safe_not_flagged(self, tmp_path: Path) -> None:
+        """A range constraint excluding vulnerable versions is not flagged."""
+        path = _write_req(tmp_path, "langchain>=0.1.0\n")
+        findings, checks_run = scan_dependencies(path, offline=True)
+        assert checks_run == 1
+        assert len(findings) == 0
+
+    def test_scan_offline_flag(self, tmp_path: Path) -> None:
+        """offline=True bypasses network and flags against offline YAML."""
+        path = _write_req(tmp_path, "langchain==0.0.154\n")
+        findings, checks_run = scan_dependencies(path, offline=True)
+        assert checks_run == 1
+        assert len(findings) == 1
+        assert findings[0].metadata.get("source") == "offline"
