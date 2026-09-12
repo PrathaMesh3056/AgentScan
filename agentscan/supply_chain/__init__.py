@@ -9,5 +9,7 @@
 # (`audit --scan-semgrep`) and is skipped when the binary is missing.
 
 from agentscan.supply_chain.framework_auditor import scan_frameworks
+from agentscan.supply_chain.native_semgrep import scan_native_rules
+from agentscan.supply_chain.semgrep_auditor import scan_semgrep
 
-__all__ = ["scan_frameworks"]
+__all__ = ["scan_frameworks", "scan_semgrep", "scan_native_rules"]

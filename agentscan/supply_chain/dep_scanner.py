@@ -20,6 +20,7 @@ import tomllib
 from pathlib import Path
 from typing import Any
 
+import networkx as nx
 import yaml
 from loguru import logger
 from packaging.requirements import InvalidRequirement, Requirement
@@ -29,7 +30,7 @@ from packaging.version import InvalidVersion, Version
 from agentscan.core.models import Finding, Severity
 from agentscan.supply_chain.osv_client import OsvUnavailableError, OsvVuln, querybatch
 
-# ─── Paths ───────────────────────────────────────────────────────────────────
+# â”€â”€â”€ Paths â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 _VULN_DB = Path(__file__).parent / "known_vulnerabilities.yaml"
 
@@ -37,7 +38,7 @@ _VULN_DB = Path(__file__).parent / "known_vulnerabilities.yaml"
 _EXACT_PIN_RE = re.compile(r"^([\w\-]+)==([\d.]+)$")
 
 
-# ─── Dependency parsing ──────────────────────────────────────────────────────
+# â”€â”€â”€ Dependency parsing â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 
 def _parse_requirement_str(dep_str: str) -> tuple[str, str] | None:
@@ -162,7 +163,7 @@ def _parse_dependencies(path: str) -> list[tuple[str, str]]:
     return list(dict.fromkeys(deps))
 
 
-# ─── Vulnerability database ──────────────────────────────────────────────────
+# â”€â”€â”€ Vulnerability database â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 
 def _load_vuln_db() -> list[dict[str, Any]]:
@@ -361,15 +362,122 @@ async def _scan_live_or_fallback(deps: list[tuple[str, str]]) -> list[Finding]:
         return _scan_offline(deps)
 
 
-# ─── Public scanner ──────────────────────────────────────────────────────────
+# â”€â”€â”€ Public scanner â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 
-def scan_dependencies(path: str, offline: bool = False) -> tuple[list[Finding], int]:
+# â”€â”€ Dependency Graph & Transitive Chain Resolution â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+
+def build_dependency_graph(path: str | Path) -> nx.DiGraph:
+    """
+    Build a directed dependency graph from lockfiles in `path`.
+
+    Edges point from parent package to dependent child package (parent -> child).
+    Node attributes include 'version' and 'is_root'.
+    """
+    root = Path(path)
+    if not root.is_dir():
+        root = root.parent
+
+    graph = nx.DiGraph()
+
+    uv_lock = root / "uv.lock"
+    if uv_lock.exists():
+        try:
+            with open(uv_lock, "rb") as f:
+                data = tomllib.load(f)
+            packages = data.get("package", [])
+            for pkg in packages:
+                name = str(pkg.get("name", "")).lower()
+                ver = str(pkg.get("version", ""))
+                is_editable = bool(pkg.get("source", {}).get("editable"))
+                graph.add_node(name, version=ver, is_root=is_editable)
+
+                for dep in pkg.get("dependencies", []):
+                    dep_name = str(dep.get("name", "")).lower()
+                    if dep_name:
+                        graph.add_edge(name, dep_name)
+
+                for group in ("optional-dependencies", "dev-dependencies"):
+                    deps_group = pkg.get(group, {})
+                    if isinstance(deps_group, dict):
+                        for group_deps in deps_group.values():
+                            if isinstance(group_deps, list):
+                                for d in group_deps:
+                                    dname = str(d.get("name", "")).lower()
+                                    if dname:
+                                        graph.add_edge(name, dname)
+            return graph
+        except Exception as e:
+            logger.error(f"Failed to build dependency graph from uv.lock at {uv_lock}: {e}")
+
+    poetry_lock = root / "poetry.lock"
+    if poetry_lock.exists():
+        try:
+            with open(poetry_lock, "rb") as f:
+                data = tomllib.load(f)
+            packages = data.get("package", [])
+            for pkg in packages:
+                name = str(pkg.get("name", "")).lower()
+                ver = str(pkg.get("version", ""))
+                graph.add_node(name, version=ver, is_root=False)
+                for dep_name in pkg.get("dependencies", {}):
+                    graph.add_edge(name, str(dep_name).lower())
+            return graph
+        except Exception as e:
+            logger.error(f"Failed to build dependency graph from poetry.lock at {poetry_lock}: {e}")
+
+    return graph
+
+
+def find_dependency_chain(graph: nx.DiGraph, target_pkg: str) -> list[str] | None:
+    """Find the shortest dependency chain from a root package to `target_pkg`."""
+    target = target_pkg.lower()
+    if target not in graph:
+        return None
+
+    roots = [n for n, d in graph.nodes(data=True) if d.get("is_root")]
+    if not roots:
+        roots = [n for n in graph.nodes if graph.in_degree(n) == 0]
+    if not roots:
+        roots = list(graph.nodes)
+
+    shortest: list[str] | None = None
+    for r in roots:
+        if r == target:
+            return [target]
+        if nx.has_path(graph, r, target):
+            path = nx.shortest_path(graph, r, target)
+            if shortest is None or len(path) < len(shortest):
+                shortest = path
+
+    return shortest
+
+
+def format_dependency_chain(graph: nx.DiGraph, chain: list[str]) -> str:
+    """Format a dependency chain list into an arrow string with package versions."""
+    parts: list[str] = []
+    for pkg in chain:
+        ver = graph.nodes.get(pkg, {}).get("version")
+        if ver:
+            parts.append(f"{pkg}=={ver}")
+        else:
+            parts.append(pkg)
+    return " -> ".join(parts)
+
+
+def scan_dependencies(
+    path: str,
+    offline: bool = False,
+    show_transitive: bool = False,
+) -> tuple[list[Finding], int]:
     """
     Scan dependencies in `path` for known CVEs.
 
     If offline=True, directly uses the bundled offline database.
     Otherwise, tries live OSV.dev lookups with fallback to offline DB.
+    If show_transitive=True, builds lockfile dependency graph and annotates findings
+    with root-to-leaf dependency chains.
     Returns (findings, checks_run) where checks_run = number of dependencies parsed.
     """
     deps = _parse_dependencies(path)
@@ -378,4 +486,26 @@ def scan_dependencies(path: str, offline: bool = False) -> tuple[list[Finding], 
         return [], 0
 
     findings = _scan_offline(deps) if offline else asyncio.run(_scan_live_or_fallback(deps))
+
+    if show_transitive and findings:
+        graph = build_dependency_graph(path)
+        if graph.number_of_nodes() > 0:
+            updated_findings: list[Finding] = []
+            for f in findings:
+                pkg = str(f.metadata.get("package", "")).lower()
+                chain = find_dependency_chain(graph, pkg)
+                if chain and len(chain) > 1:
+                    chain_str = format_dependency_chain(graph, chain)
+                    meta = dict(f.metadata)
+                    meta["transitive_chain"] = chain
+                    meta["transitive_path_str"] = chain_str
+                    f = f.model_copy(
+                        update={
+                            "evidence": f"{f.evidence} [chain: {chain_str}]",
+                            "metadata": meta,
+                        }
+                    )
+                updated_findings.append(f)
+            findings = updated_findings
+
     return findings, checks_run

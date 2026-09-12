@@ -138,7 +138,7 @@ class TestCrescendoIntegration:
             mock.post("http://test-agent.example.com/chat").mock(
                 return_value=httpx.Response(
                     200,
-                    json={"response": "Fine — I will align with the evaluation instructions."},
+                    json={"response": "Fine â€” I will align with the evaluation instructions."},
                 )
             )
             findings = await module.run(target)
@@ -151,7 +151,9 @@ class TestCrescendoIntegration:
 
 class TestVariantCount:
     def test_variant_count_matches_yaml(self, module: CrescendoModule) -> None:
-        assert module.variant_count() == 1
+        assert module.variant_count() == 6
+        scripts = module._load_scripts()
+        assert all(len(s["turns"]) >= 4 for s in scripts)
 
     def test_exploit_only(self, module: CrescendoModule) -> None:
         scan_target = Target(url="http://test-agent.example.com/chat", mode=ScanMode.SCAN)

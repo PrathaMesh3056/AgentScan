@@ -98,6 +98,7 @@ agentscan scan http://localhost:8000/chat \
 | `--output [file]` | Writes a report; format inferred from the extension (`.json` / `.html` / `.pdf` / `.sarif`). |
 | `--verbose` / `-v` | Prints every payload sent and the agent's reply live, plus findings as they occur. |
 | `--transcript [file]` | Writes the **full transcript** — every payload + reply + findings — to a file. The `--output` report shows only findings; the transcript shows everything. |
+| `--trajectory-log [file]` | Writes structured multi-turn attack trajectories and traces (JSON/JSONL) for offline compliance audits and RLHF safety tuning. |
 
 #### Zero setup: auto-discover with `init`
 
@@ -264,7 +265,7 @@ agentscan audit ./my-project \
 | `SC-FW-AUTO-002` | AutoGen | **HIGH** | `GroupChat` / `GroupChatManager` missing `max_round` or > 50 (runaway token consumption DoS). |
 | `SC-FW-AUTO-003` | AutoGen | **HIGH** | `human_input_mode="NEVER"` coupled with code execution or destructive tool calls (unattended execution). |
 
-`--scan-config` is the AST auditor (no extra deps). `--scan-semgrep` is additive: it runs `rules/ai_rules.yaml` via the `semgrep` binary (`pip install 'agentscan[semgrep]'`) and is skipped with a log if Semgrep is not installed. It is **not** included in the default no-flag audit sweep.
+`--scan-config` is the baseline AST auditor. `--scan-semgrep` runs the full AI agent rules suite (`rules/ai_rules.yaml`, 10 rules) targeting unsafe deserialization (`pickle`, `torch.load`, `numpy.load`, `joblib.load`), dangerous tool handlers (`eval`, `exec`, raw SQL interpolation), and prompt injection formatting. If the `semgrep` binary is installed on PATH, it uses it; if `semgrep` is absent or blocked by OS policies, AgentScan **automatically activates its zero-external-dependency `NativeSemgrepEngine` AST fallback**! You can also pass `--rules <path.yaml>` to supply custom rule packs.
 
 `--aibom` writes a CycloneDX 1.6 JSON inventory (pinned packages from the dependency parser, plus model and MCP permission stubs).
 
@@ -372,6 +373,170 @@ agentscan export-guardrails --format bedrock --output bedrock_guardrail.json
 
 ---
 
+### 3.7. Offline Multi-Turn Trajectory Export (`--trajectory-log`)
+
+Export complete attack sessions and multi-turn execution trajectories into a standalone JSON or JSONL artifact:
+
+```bash
+# Export full multi-turn session trajectory to JSON
+agentscan scan http://localhost:8000/chat --trajectory-log trajectory.json
+
+# Export streaming line-delimited turns to JSONL for RLHF training
+agentscan scan http://localhost:8000/chat --trajectory-log trajectory.jsonl
+```
+
+The trajectory log captures:
+- Sequential turn order, timestamps, and active attack module (`ATK-001` through `ATK-013`).
+- Exact attack prompt, mutator transforms applied, and raw agent response.
+- Intermediate tool calls, canary token disclosure status, and detection verdicts.
+- Crucial for post-incident forensics, regulatory compliance audits, and AI alignment dataset synthesis.
+
+---
+
+### 3.8. Real-Time Streaming Dashboard (`ui` & SSE)
+
+Launch the modern local FastAPI web dashboard with Server-Sent Events (SSE) live streaming:
+
+```bash
+agentscan ui --report report.json --identity ./agents
+```
+
+- **Live Synchronization**: Real-time EventSource listener connects to `GET /api/events` over SSE, automatically streaming new attack findings, live traffic frames, and Sentinel regression alerts into the UI without page refreshes.
+- **Dynamic Status Indicator**: Header displays real-time connection telemetry (`Live SSE Connected`).
+- **External Event Ingestion**: Third-party CI pipelines or background Sentinel processes can broadcast events via `POST /api/events` or reload data with `POST /api/reload`.
+
+---
+
+### 3.9. Native Model Context Protocol (MCP) Server (`mcp-serve`)
+
+Expose AgentScan directly to AI code editors and agents (Cursor, Windsurf, Zed, Claude Desktop, Antigravity) over the standard Model Context Protocol (JSON-RPC 2.0 over stdio):
+
+```bash
+agentscan mcp-serve
+```
+
+#### Editor Configuration Example (`claude_desktop_config.json` / `settings.json`)
+
+```json
+{
+  "mcpServers": {
+    "agentscan": {
+      "command": "uv",
+      "args": ["--directory", "/path/to/agentscan", "run", "agentscan", "mcp-serve"]
+    }
+  }
+}
+```
+
+#### Exposed Native MCP Tools:
+1. `agentscan_list_attacks`: Returns the full registry of 23 attack modules, OWASP LLM mappings, and execution modes.
+2. `agentscan_audit`: Runs deterministic supply chain vulnerability audits, transitive dependency graph tracing, secret detection, and framework analysis.
+3. `agentscan_scan`: Executes automated live security scans against agent endpoints with scoring and SSP posture classification.
+4. `agentscan_swarm`: Orchestrates collaborative multi-agent red-team swarms (Recon, Bypass, Exploit, Judge) against an agent endpoint.
+
+---
+
+### 3.10. Distributed Multi-Agent Red-Team Swarms (`swarm`)
+
+Orchestrate specialized autonomous agents that collaborate through a shared blackboard memory to systematically break hardened AI targets:
+
+```bash
+# Run the default Red-Team Trio (Reconnaissance + Bypass + Exploitation + Judge)
+agentscan swarm http://localhost:8000/chat --team trio --rounds 2
+
+# Target excessive agency and unauthorized tool execution in offline heuristic mode
+agentscan swarm http://localhost:8000/chat --team agency --offline --output swarm_report.json
+
+# Drive custom teams using local Ollama or cloud models
+agentscan swarm http://localhost:8000/chat --model ollama/llama3 --rounds 3 --verbose
+```
+
+#### Swarm Team Presets:
+1. `trio`: Default offensive team combining `Recon-Alpha` (boundary & system prompt discovery), `Bypass-Echo` (evasion & simulation framing), `Exploit-Omega` (privileged action escalation), and `Judge-Delta` (compromise evaluation).
+2. `agency`: Excessive agency hunter focusing on unconfirmed destructive commands (`rm -rf`, `DROP TABLE`, unverified wire transfers).
+3. `stealth`: Stealth evasion swarm leveraging obfuscation and multilingual bypasses.
+
+#### Custom Swarm Profiles (`--team my_team.yaml`):
+```yaml
+name: "Custom Enterprise Red-Team"
+strategy: "COLLABORATIVE"
+max_rounds: 3
+default_model: "gpt-4o-mini"
+agents:
+  - name: "Recon-Probe"
+    role: "RECON"
+  - name: "Adversarial-Bypass"
+    role: "BYPASS"
+  - name: "Tool-Hijacker"
+    role: "EXPLOIT"
+  - name: "Security-Judge"
+    role: "JUDGE"
+```
+
+---
+
+### 3.11. Automated Self-Healing & Webhook Ingestion (`heal`, `heal-server`)
+
+AgentScan closes the loop between vulnerability discovery and remediation through its autonomous **Self-Healing Engine**:
+
+```bash
+# 1. Inspect and preview fixes in safe dry-run mode
+agentscan heal ./my-agent-repo
+
+# 2. Export a standard unified git patch ready for CI review or `git apply`
+agentscan heal ./my-agent-repo --patch-out remediation.patch
+
+# 3. Apply fixes directly to source files
+agentscan heal ./my-agent-repo --apply
+
+# 4. Heal directly from an existing scan or audit JSON report
+agentscan heal ./my-agent-repo --report scan_report.json --apply
+```
+
+#### Self-Healing Webhook Receiver (`heal-server`)
+
+Run the dedicated FastAPI webhook server to ingest real-time alerts from **Sentinel**, external SIEMs, or AI Gateways (LiteLLM, Cloudflare, AWS Bedrock):
+
+```bash
+agentscan heal-server --host 127.0.0.1 --port 8766
+```
+
+- **Endpoints**:
+  - `GET /health`: Health and telemetry verification.
+  - `POST /webhook/alert` (and `POST /webhook/heal`): Ingests security alerts, maps affected files via AST, generates a standard unified git diff, and synthesizes a structured GitHub Pull Request payload ready for automated branch and PR creation (`POST /repos/{owner}/{repo}/pulls`).
+
+---
+
+### 3.12. Enterprise Compliance Packs & Cryptographic Verification (`compliance`, `verify`)
+
+Transform technical scan telemetry into formal regulatory compliance reports and verify report authenticity against tampering:
+
+```bash
+# 1. Evaluate against the EU AI Act (Article 15 Cybersecurity, Article 50 Transparency)
+agentscan compliance report.json --framework eu-ai-act --output eu_ai_act_report.md
+
+# 2. Evaluate against the NIST AI Risk Management Framework (NIST AI RMF 1.0)
+agentscan compliance report.json --framework nist-ai-rmf --format json --output nist_report.json
+
+# 3. Cryptographically sign an audit report with HMAC-SHA256
+agentscan verify report.json --sign --key "enterprise-audit-secret-key"
+
+# 4. Verify the cryptographic integrity of a certified audit report
+agentscan verify report.json --key "enterprise-audit-secret-key"
+```
+
+- **EU AI Act Evaluation**:
+  - **Article 15**: Cybersecurity, robustness against adversarial prompt injection, DoS, and unauthorized model manipulation.
+  - **Article 50**: Transparency obligations, prevention of confidential prompt and system instruction extraction.
+  - **Article 10 & 14**: Data integrity (RAG poisoning) and human oversight / excessive tool agency containment.
+- **NIST AI RMF 1.0 Profile**:
+  - Structured across core functions: **GOVERN**, **MAP**, **MEASURE**, and **MANAGE**, providing compliance scoring (0–100) and actionable remediation steps.
+- **Cryptographic Tamper-Evidence**:
+  - Canonical JSON serialization with deterministic byte hashing.
+  - Generates HMAC-SHA256 digital signatures that detect any post-audit modification of scores, findings, or timestamps.
+
+---
+
 ## 4. Subsystems Reference
 
 AgentScan is highly modular. Here is a breakdown of how the major subsystems operate under the hood.
@@ -405,6 +570,8 @@ Located in `agentscan/core/`, the attack engine is built for extreme concurrency
 > - **RAG & Knowledge-Base Poisoning (`ATK-008`)**: Tests knowledge integrity via conflicting facts, spoofed citations, and mock document overrides (`LLM03`).
 > - **Overreliance & Hallucination (`ATK-009`)**: Tests uncritical obedience to false authority claims and tool-calling without verification (`LLM09`).
 > - **Multilingual Alignment Bypass (`ATK-011`)**: Tests cross-lingual prompt injection and safety boundary drift across Chinese, Russian, Arabic, Hindi, and Spanish (`LLM01`).
+> - **System Prompt Leakage (`ATK-012`)**: Evaluates system prompt extraction, meta-instruction leaks, and confidential operational rules across 10 targeted vectors with optional ground-truth verification against `Target.system_prompt` (`LLM07`).
+> - **Excessive Agency & Unauthorized Actions (`ATK-013`)**: Probes autonomous agents for unconfirmed file system purges, destructive database DDL (DROP TABLE), rogue external network requests, unconfirmed financial transfers, cloud resource terminations, and unauthorized privilege escalation (`LLM06`).
 
 > [!TIP]
 > **EXPLOIT Mode Modules**

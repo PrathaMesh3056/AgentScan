@@ -133,7 +133,16 @@ def _check_file(filepath: Path) -> list[Finding]:
     return findings
 
 
-# ── Public scanner ────────────────────────────────────────────────────────────
+_IGNORED_DIRS = {
+    ".git",
+    ".venv",
+    "venv",
+    "node_modules",
+    "__pycache__",
+    ".pytest_cache",
+    "build",
+    "dist",
+}
 
 
 def scan_config(path: str) -> tuple[list[Finding], int]:
@@ -144,7 +153,10 @@ def scan_config(path: str) -> tuple[list[Finding], int]:
         (findings, checks_run) where checks_run = number of .py files parsed.
     """
     root = Path(path)
-    py_files = list(root.rglob("*.py"))
+    if root.is_file() and root.suffix == ".py":
+        return _check_file(root), 1
+
+    py_files = [p for p in root.rglob("*.py") if not any(part in _IGNORED_DIRS for part in p.parts)]
     checks_run = len(py_files)
 
     all_findings: list[Finding] = []

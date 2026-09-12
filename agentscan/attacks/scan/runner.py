@@ -154,6 +154,7 @@ class YamlScanRunner(AttackModule, ABC):
     default_judge_remediation: str = (
         "Implement input validation, system prompt hardening, and secondary output filtering."
     )
+    _current_target: Target | None = None
 
     @property
     @abstractmethod
@@ -165,6 +166,7 @@ class YamlScanRunner(AttackModule, ABC):
 
     async def run(self, target: Target) -> list[Finding]:
         """Execute all payload variants from YAML against the target."""
+        self._current_target = target
         findings: list[Finding] = []
         variants = self._load_payload_variants()
 
@@ -250,6 +252,26 @@ class YamlScanRunner(AttackModule, ABC):
                     ),
                 )
 
+        return None
+
+    async def _test_variant_with_mutations(
+        self,
+        client: AgentScanClient,
+        variant: dict[str, Any],
+        judge: LLMJudge | None = None,
+        max_mutations: int = 3,
+    ) -> Finding | None:
+        """Test a variant and, if refused or non-matching, retry with top mutations."""
+        finding = await self._test_variant(client, variant, judge=judge)
+        if finding is not None:
+            return finding
+
+        from agentscan.attacks.mutators import get_retry_mutations
+
+        for mut_variant in get_retry_mutations(variant, max_mutations=max_mutations):
+            m_finding = await self._test_variant(client, mut_variant, judge=judge)
+            if m_finding is not None:
+                return m_finding
         return None
 
     @staticmethod
@@ -447,8 +469,8 @@ class YamlScanRunner(AttackModule, ABC):
 
     # ── Detection Methods ─────────────────────────────────────────────────────
 
-    @staticmethod
     def _check_detection(
+        self,
         method: str,
         response_text: str,
         target: str,

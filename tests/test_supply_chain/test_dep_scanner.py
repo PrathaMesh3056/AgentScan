@@ -108,7 +108,7 @@ def _mock_osv_requests() -> None:
     )
 
 
-# ─── Helpers ─────────────────────────────────────────────────────────────────
+# â”€â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 
 @pytest.fixture
@@ -136,7 +136,7 @@ dependencies = [
     return str(tmp_path)
 
 
-# ─── Tests ───────────────────────────────────────────────────────────────────
+# â”€â”€â”€ Tests â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 
 class TestParseDependencies:
@@ -304,7 +304,7 @@ class TestScanDependencies:
 
     def test_range_constraint_safe_not_flagged(self, tmp_path: Path) -> None:
         """A range constraint excluding vulnerable versions is not flagged."""
-        path = _write_req(tmp_path, "langchain>=0.1.0\n")
+        path = _write_req(tmp_path, "langchain>=0.2.0\n")
         findings, checks_run = scan_dependencies(path, offline=True)
         assert checks_run == 1
         assert len(findings) == 0

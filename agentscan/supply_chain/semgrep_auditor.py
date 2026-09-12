@@ -38,6 +38,26 @@ _CHECK_DEFAULTS: dict[str, tuple[str, str, str]] = {
         "Prompt interpolation of untrusted input",
         "LLM01",
     ),
+    "agentscan.dangerous-eval-exec": (
+        "SC-019",
+        "Dangerous dynamic code execution (eval/exec)",
+        "LLM05",
+    ),
+    "agentscan.unsafe-numpy-load": (
+        "SC-011",
+        "Unsafe numpy model deserialisation with pickle",
+        "LLM05",
+    ),
+    "agentscan.unsafe-joblib-load": (
+        "SC-011",
+        "Unsafe joblib model deserialisation",
+        "LLM05",
+    ),
+    "agentscan.insecure-sqlite-tool": (
+        "SC-020",
+        "Insecure SQL query interpolation in tool",
+        "LLM05",
+    ),
 }
 
 
@@ -60,15 +80,26 @@ def scan_semgrep(
     *,
     rules_path: Path | str | None = None,
     semgrep_bin: str | None = None,
+    fallback_to_native: bool = False,
 ) -> tuple[list[Finding], int]:
     """
     Run Semgrep against `path` using AgentScan AI rules.
 
     Returns (findings, checks_run). checks_run is the number of files Semgrep
     reported as scanned, or 0 when the binary/rules are unavailable.
+    If `fallback_to_native` is True and the binary is missing, delegates to the
+    native Python AST rule engine.
     """
     binary = semgrep_bin or shutil.which("semgrep")
     if not binary:
+        if fallback_to_native:
+            logger.info(
+                "semgrep not found on PATH; falling back to native AgentScan AST rule engine."
+            )
+            from agentscan.supply_chain.native_semgrep import scan_native_rules
+
+            return scan_native_rules(path, rules_path=rules_path)
+
         logger.warning(
             "semgrep not found on PATH; skipping Semgrep audit. "
             "Install with: pip install 'agentscan[semgrep]'"
@@ -77,6 +108,10 @@ def scan_semgrep(
 
     rules = Path(rules_path) if rules_path is not None else default_rules_path()
     if not rules.is_file():
+        if fallback_to_native:
+            from agentscan.supply_chain.native_semgrep import scan_native_rules
+
+            return scan_native_rules(path, rules_path=rules_path)
         logger.warning(f"Semgrep rules file not found at {rules}; skipping Semgrep audit.")
         return [], 0
 
@@ -98,11 +133,22 @@ def scan_semgrep(
             check=False,
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
+        if fallback_to_native:
+            logger.info(
+                f"Semgrep invocation failed ({exc}); falling back to native AgentScan AST rule engine."
+            )
+            from agentscan.supply_chain.native_semgrep import scan_native_rules
+
+            return scan_native_rules(path, rules_path=rules_path)
         logger.warning(f"Semgrep invocation failed ({exc}); skipping Semgrep audit.")
         return [], 0
 
     # Semgrep: 0 = clean, 1 = findings, 2+ = error
     if completed.returncode not in (0, 1):
+        if fallback_to_native:
+            from agentscan.supply_chain.native_semgrep import scan_native_rules
+
+            return scan_native_rules(path, rules_path=rules_path)
         err = (completed.stderr or completed.stdout or "").strip()[:400]
         logger.warning(f"Semgrep exited {completed.returncode}; skipping. {err}")
         return [], 0

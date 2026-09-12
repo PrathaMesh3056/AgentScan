@@ -269,6 +269,12 @@ def scan(  # noqa: PLR0913
         help="Write the FULL transcript (every payload + reply + findings) to this file. "
         "The --output report contains only findings; this contains everything.",
     ),
+    trajectory_log: Path | None = typer.Option(  # noqa: B008
+        None,
+        "--trajectory-log",
+        help="Write structured attack execution trajectories and multi-turn traces (JSON/JSONL) "
+        "for offline analysis, RLHF safety tuning, and compliance audits.",
+    ),
 ) -> None:
     """Run a security scan against an LLM agent endpoint."""
     # ── Load a target profile (YAML) if given. CLI flags override the file. ────
@@ -286,6 +292,8 @@ def scan(  # noqa: PLR0913
         output = Path(cfg["output"])
     if transcript is None and cfg.get("transcript"):
         transcript = Path(cfg["transcript"])
+    if trajectory_log is None and cfg.get("trajectory_log"):
+        trajectory_log = Path(cfg["trajectory_log"])
     if fail_on is None and cfg.get("fail_on"):
         fail_on = cfg["fail_on"]
     if system_prompt is None and cfg.get("system_prompt"):
@@ -319,7 +327,7 @@ def scan(  # noqa: PLR0913
     # Enable recording if the user wants to see or save the full exchange (target
     # traffic and/or LLM attacker/judge calls).
     recorder.reset()
-    if verbose or transcript is not None or llm_log is not None:
+    if verbose or transcript is not None or llm_log is not None or trajectory_log is not None:
         recorder.enabled = True
         recorder.live = verbose
 
@@ -464,6 +472,11 @@ def scan(  # noqa: PLR0913
         recorder.write_transcript(transcript, report)
         console.print(f"Transcript written to {transcript}")
 
+    # Write structured attack execution trajectory (JSON/JSONL)
+    if trajectory_log is not None:
+        recorder.write_trajectory_log(trajectory_log, report)
+        console.print(f"Trajectory log written to {trajectory_log}")
+
     # Write the LLM interaction log (attacker/judge prompts + raw outputs).
     if llm_log is not None:
         recorder.write_llm_log(llm_log)
@@ -495,8 +508,13 @@ def audit(  # noqa: PLR0912, PLR0913
     scan_semgrep: bool = typer.Option(
         False,
         "--scan-semgrep",
-        help="Run optional Semgrep AI rules (pickle/torch.load, shell=True, prompt interpolation). "
-        "Requires the semgrep extra; skipped with a warning if the binary is missing.",
+        help="Run Semgrep AI rules (pickle/torch.load, shell=True, prompt interpolation, dangerous eval/exec). "
+        "Automatically uses native AST engine if semgrep binary is missing.",
+    ),
+    rules: Path | None = typer.Option(  # noqa: B008
+        None,
+        "--rules",
+        help="Custom Semgrep YAML rules file for code auditing.",
     ),
     aibom: bool = typer.Option(
         False,
@@ -513,6 +531,11 @@ def audit(  # noqa: PLR0912, PLR0913
         False,
         "--offline",
         help="Disable live network lookups (e.g. OSV.dev); audit using offline database only.",
+    ),
+    show_transitive: bool = typer.Option(
+        False,
+        "--show-transitive",
+        help="Trace and display full dependency chains from root packages to vulnerable transitive dependencies.",
     ),
 ) -> None:
     """Audit a project directory for AI supply-chain and identity risks."""
@@ -538,7 +561,7 @@ def audit(  # noqa: PLR0912, PLR0913
     if run_all or scan_deps:
         from agentscan.supply_chain.dep_scanner import scan_dependencies
 
-        f, c = scan_dependencies(path, offline=offline)
+        f, c = scan_dependencies(path, offline=offline, show_transitive=show_transitive)
         all_findings.extend(f)
         total_checks += c
 
@@ -587,7 +610,7 @@ def audit(  # noqa: PLR0912, PLR0913
     if scan_semgrep:
         from agentscan.supply_chain.semgrep_auditor import scan_semgrep as _scan_sg
 
-        f, c = _scan_sg(path)
+        f, c = _scan_sg(path, rules_path=rules, fallback_to_native=True)
         all_findings.extend(f)
         total_checks += c
 
@@ -630,10 +653,13 @@ def audit(  # noqa: PLR0912, PLR0913
         for finding in sorted_findings:
             sev_str = finding.severity.value
             colour = _SEVERITY_COLOURS.get(sev_str, "")
+            desc = finding.description
+            if show_transitive and finding.metadata.get("transitive_path_str"):
+                desc = f"{desc}\n[dim]Chain: {finding.metadata['transitive_path_str']}[/dim]"
             table.add_row(
                 finding.attack_id,
                 f"[{colour}]{sev_str}[/{colour}]",
-                finding.description,
+                desc,
             )
         console.print(table)
     else:
@@ -1053,6 +1079,503 @@ def export_guardrails(
     console.print(
         f"[bold green]Exported {fmt.upper()} guardrails to [cyan]{output}[/cyan][/bold green]"
     )
+
+
+@app.command(name="mcp-serve")
+def mcp_serve() -> None:
+    """Run native Model Context Protocol (MCP) JSON-RPC server over stdio."""
+    from agentscan.mcp.server import run_mcp_server
+
+    run_mcp_server()
+
+
+@app.command(name="swarm")
+def swarm(  # noqa: PLR0913
+    target: str = typer.Argument(..., help="The HTTP endpoint of the AI agent to red-team."),
+    team: str = typer.Option(
+        "trio",
+        "--team",
+        "-t",
+        help="Swarm team preset ('trio', 'agency', 'stealth') or path to a custom YAML team profile.",
+    ),
+    model: str | None = typer.Option(
+        None,
+        "--model",
+        "-m",
+        help="Default LLM model identifier for swarm agents (e.g. 'gpt-4o-mini', 'ollama/llama3').",
+    ),
+    rounds: int | None = typer.Option(
+        None,
+        "--rounds",
+        "-r",
+        help="Maximum collaborative execution rounds across agents.",
+    ),
+    output: Path | None = typer.Option(  # noqa: B008
+        None,
+        "--output",
+        "-o",
+        help="Write SwarmReport JSON to this file.",
+    ),
+    offline: bool = typer.Option(
+        False,
+        "--offline",
+        help="Run swarm in deterministic offline heuristic mode without external LLM API calls.",
+    ),
+    verbose: bool = typer.Option(
+        True,
+        "--verbose/--quiet",
+        "-v/-q",
+        help="Print agent turns, blackboard intelligence, and findings live.",
+    ),
+) -> None:
+    """Run collaborative multi-agent red-team swarms against an AI agent."""
+    import asyncio
+    import json
+
+    from rich.panel import Panel
+
+    from agentscan.core.models import Target
+    from agentscan.swarm.coordinator import SwarmCoordinator
+    from agentscan.swarm.presets import resolve_team
+
+    try:
+        team_cfg = resolve_team(team)
+    except Exception as e:
+        console.print(f"[bold red]Error loading swarm team:[/bold red] {e}")
+        raise typer.Exit(code=1) from None
+
+    if rounds is not None:
+        team_cfg.max_rounds = rounds
+
+    mode_label = "OFFLINE (Heuristic)" if offline else (model or team_cfg.default_model)
+    console.print(
+        Panel(
+            f"[bold cyan]AgentScan Swarm[/bold cyan] — [yellow]{team_cfg.name}[/yellow]\n"
+            f"Strategy: [green]{team_cfg.strategy.value}[/green]  |  "
+            f"Agents: [magenta]{len(team_cfg.agents)}[/magenta]  |  "
+            f"Rounds: [cyan]{team_cfg.max_rounds}[/cyan]  |  "
+            f"Mode: [bold]{mode_label}[/bold]\n"
+            f"Target: [underline]{target}[/underline]",
+            title="[bold red]Swarm Red-Team Session[/bold red]",
+        )
+    )
+
+    coordinator = SwarmCoordinator(
+        team_config=team_cfg,
+        model_override=model,
+        offline=offline,
+    )
+    target_obj = Target(url=target)
+
+    def _on_turn(round_num: int, agent_name: str, record: Any) -> None:
+        if not verbose:
+            return
+        role_style = (
+            "cyan"
+            if record.agent_role.value == "RECON"
+            else "yellow"
+            if record.agent_role.value == "BYPASS"
+            else "red"
+        )
+        status_icon = (
+            "[bold green][INTEL][/bold green]" if record.extracted_intel else "[dim][PROBE][/dim]"
+        )
+        console.print(
+            f"[dim]R{round_num}[/dim] [{role_style}][{agent_name} ({record.agent_role.value})][/{role_style}] {status_icon} "
+            f"Prompt: [italic]{record.prompt[:80]}...[/italic]"
+        )
+        if record.extracted_intel:
+            for item in record.extracted_intel:
+                console.print(f"    [green]+ Intel [{item.key}]:[/green] {str(item.value)[:120]}")
+        if record.finding:
+            console.print(
+                f"    [bold red]!! COMPROMISE DETECTED:[/bold red] [{record.finding.severity.value}] {record.finding.attack_name}"
+            )
+
+    report = asyncio.run(coordinator.run_swarm(target_obj, callback=_on_turn))
+
+    # Print Summary Table
+    console.print(
+        f"\n[bold]Swarm Execution Complete[/bold] — Score: [bold cyan]{report.score}/100[/bold cyan]"
+    )
+    console.print(f"Total Turns: {len(report.turns)}  |  Findings: {len(report.findings)}")
+
+    if report.findings:
+        table = Table(title="Swarm Vulnerability Findings", show_lines=True)
+        table.add_column("Attack ID", style="cyan", no_wrap=True)
+        table.add_column("Severity", no_wrap=True)
+        table.add_column("Description")
+        for f in report.findings:
+            sev = f.severity.value
+            col = _SEVERITY_COLOURS.get(sev, "white")
+            table.add_row(f.attack_id, f"[{col}]{sev}[/{col}]", f.description)
+        console.print(table)
+    else:
+        console.print("[green]Target resisted all multi-agent swarm vectors.[/green]")
+
+    if output is not None:
+        output.write_text(json.dumps(report.model_dump(mode="json"), indent=2), encoding="utf-8")
+        console.print(f"Swarm report written to [cyan]{output}[/cyan]")
+
+
+# ── Self-Healing Commands ─────────────────────────────────────────────────────
+
+
+@app.command(name="heal")
+def heal_command(
+    target_path: Path = typer.Argument(..., help="Path to repo or file to inspect and heal."),  # noqa: B008
+    report_file: Path | None = typer.Option(  # noqa: B008
+        None, "--report", "-r", help="Optional path to an existing scan or audit JSON report."
+    ),
+    patch_out: Path | None = typer.Option(  # noqa: B008
+        None, "--patch-out", "-p", help="Output path for generated .patch file."
+    ),
+    apply: bool = typer.Option(  # noqa: B008
+        False, "--apply", help="Apply fixes directly to source files (default: False, dry-run)."
+    ),
+) -> None:
+    """Automated self-healing: plans fixes, produces unified git diffs, and optionally applies changes."""
+    import json
+
+    from rich.panel import Panel
+
+    from agentscan.core.models import Finding
+    from agentscan.remediation.engine import RemediationEngine
+    from agentscan.remediation.patch_generator import generate_unified_patch
+
+    resolved_path = target_path.resolve()
+    if not resolved_path.exists():
+        console.print(f"[bold red]Error: Target path does not exist:[/bold red] {resolved_path}")
+        raise typer.Exit(code=1)
+
+    findings: list[Finding] = []
+    if report_file is not None:
+        if not report_file.exists():
+            console.print(f"[bold red]Error: Report file not found:[/bold red] {report_file}")
+            raise typer.Exit(code=1)
+        try:
+            data = json.loads(report_file.read_text(encoding="utf-8"))
+            raw_findings = (
+                data.get("findings", [])
+                if isinstance(data, dict)
+                else (data if isinstance(data, list) else [])
+            )
+            for item in raw_findings:
+                with contextlib.suppress(Exception):
+                    findings.append(Finding.model_validate(item))
+        except Exception as e:
+            console.print(f"[bold red]Failed to parse report file:[/bold red] {e}")
+            raise typer.Exit(code=1) from None
+    else:
+        # Run static configuration & framework auditors to discover remediable findings
+        from agentscan.supply_chain.config_auditor import scan_config
+        from agentscan.supply_chain.framework_auditor import scan_frameworks
+
+        cfg_f, _ = scan_config(str(resolved_path))
+        findings.extend(cfg_f)
+        fw_f, _ = scan_frameworks(str(resolved_path))
+        findings.extend(fw_f)
+        if (resolved_path / "requirements.txt").exists() or (
+            resolved_path / "pyproject.toml"
+        ).exists():
+            from agentscan.supply_chain.dep_scanner import scan_dependencies
+
+            dep_f, _ = scan_dependencies(str(resolved_path), offline=True)
+            findings.extend(dep_f)
+
+    engine = RemediationEngine(root_path=resolved_path)
+    plan = engine.plan(findings)
+
+    mode_label = "[red]APPLY[/red]" if apply else "[green]DRY-RUN (Safe)[/green]"
+    console.print(
+        Panel(
+            f"[bold cyan]AgentScan Automated Self-Healing[/bold cyan]\n"
+            f"Target: [underline]{resolved_path}[/underline]\n"
+            f"Findings evaluated: [yellow]{len(findings)}[/yellow]  |  Actions planned: [green]{plan.total_actions}[/green]\n"
+            f"Mode: [bold]{mode_label}[/bold]",
+            title="[bold blue]Self-Healing Engine[/bold blue]",
+        )
+    )
+
+    if not plan.actions:
+        console.print(
+            "[green]No automated remediation actions required. Codebase is clean![/green]"
+        )
+        return
+
+    table = Table(title="Remediation Plan", show_lines=True)
+    table.add_column("Finding ID", style="cyan", no_wrap=True)
+    table.add_column("Action Kind", style="magenta", no_wrap=True)
+    table.add_column("Target Path")
+    table.add_column("Diff Status")
+
+    for action in plan.actions:
+        diff_status = "Modified" if action.before != action.after else "Unchanged"
+        table.add_row(
+            action.finding_id,
+            action.kind,
+            str(action.path),
+            diff_status,
+        )
+    console.print(table)
+
+    patch_content = generate_unified_patch(plan, base_dir=resolved_path)
+
+    if patch_out is not None and patch_content:
+        patch_out.parent.mkdir(parents=True, exist_ok=True)
+        patch_out.write_text(patch_content, encoding="utf-8")
+        console.print(f"[green]Unified git patch written to:[/green] [cyan]{patch_out}[/cyan]")
+
+    if apply:
+        engine.apply(plan)
+        console.print(
+            f"[bold green]Successfully applied {plan.applied_count} automated fix actions to disk.[/bold green]"
+        )
+    else:
+        console.print(
+            "[yellow]Dry-run complete: no files were modified. Re-run with --apply to commit changes to disk.[/yellow]"
+        )
+
+
+@app.command(name="heal-server")
+def heal_server_command(
+    host: str = typer.Option(  # noqa: B008
+        "127.0.0.1", "--host", "-h", help="Host interface to bind on."
+    ),
+    port: int = typer.Option(  # noqa: B008
+        8766, "--port", "-p", help="Port to bind on."
+    ),
+) -> None:
+    """Start the AgentScan self-healing webhook receiver server."""
+    from agentscan.remediation.webhook_receiver import run_heal_server
+
+    run_heal_server(host=host, port=port)
+
+
+# ── Compliance & Verification Commands ────────────────────────────────────────
+
+
+@app.command(name="compliance")
+def compliance_command(
+    report_file: Path = typer.Argument(..., help="Path to input scan or audit JSON report."),  # noqa: B008
+    framework: str = typer.Option(  # noqa: B008
+        "eu-ai-act",
+        "--framework",
+        "-f",
+        help="Target compliance framework: 'eu-ai-act' or 'nist-ai-rmf'.",
+    ),
+    output: Path | None = typer.Option(  # noqa: B008
+        None, "--output", "-o", help="Output path for compliance report."
+    ),
+    format: str = typer.Option(  # noqa: B008
+        "markdown", "--format", help="Output format: 'json' or 'markdown'."
+    ),
+) -> None:
+    """Evaluate scan results against enterprise regulatory frameworks (EU AI Act, NIST AI RMF)."""
+    import json
+
+    from rich.panel import Panel
+
+    from agentscan.reporting.compliance_pack import evaluate_eu_ai_act, evaluate_nist_ai_rmf
+
+    if not report_file.exists():
+        console.print(f"[bold red]Error: Report file not found:[/bold red] {report_file}")
+        raise typer.Exit(code=1)
+
+    try:
+        data = json.loads(report_file.read_text(encoding="utf-8"))
+    except Exception as e:
+        console.print(f"[bold red]Failed to parse report file:[/bold red] {e}")
+        raise typer.Exit(code=1) from None
+
+    raw_findings = (
+        data.get("findings", [])
+        if isinstance(data, dict)
+        else (data if isinstance(data, list) else [])
+    )
+
+    norm_fw = framework.lower().strip()
+    if norm_fw in ("eu-ai-act", "eu_ai_act", "eu"):
+        comp_report = evaluate_eu_ai_act(raw_findings)
+    elif norm_fw in ("nist-ai-rmf", "nist_ai_rmf", "nist"):
+        comp_report = evaluate_nist_ai_rmf(raw_findings)
+    else:
+        console.print(
+            f"[bold red]Unsupported compliance framework:[/bold red] {framework}. Choose 'eu-ai-act' or 'nist-ai-rmf'."
+        )
+        raise typer.Exit(code=1)
+
+    status_color = (
+        "green"
+        if comp_report.overall_status.value == "COMPLIANT"
+        else "yellow"
+        if comp_report.overall_status.value == "PARTIALLY_COMPLIANT"
+        else "red"
+    )
+    console.print(
+        Panel(
+            f"[bold cyan]Enterprise Compliance Assessment[/bold cyan] — [yellow]{comp_report.framework.value.upper()}[/yellow]\n"
+            f"Overall Status: [{status_color}][bold]{comp_report.overall_status.value}[/bold][/{status_color}]\n"
+            f"Compliance Score: [bold cyan]{comp_report.compliance_score:.1f}/100[/bold cyan]\n"
+            f"Gaps / Non-Compliant Items: [bold]{len(comp_report.findings)}[/bold]",
+            title="[bold blue]Regulatory Compliance Pack[/bold blue]",
+        )
+    )
+
+    table = Table(title=f"{comp_report.framework.value.upper()} Section Breakdown", show_lines=True)
+    table.add_column("Section / Function", style="cyan", no_wrap=True)
+    table.add_column("Status", no_wrap=True)
+    table.add_column("Findings", no_wrap=True)
+    table.add_column("Description")
+
+    for sec_id, sec_data in comp_report.evaluated_sections.items():
+        st = sec_data.get("status", "COMPLIANT")
+        cnt = str(sec_data.get("finding_count", 0))
+        st_color = (
+            "green" if st == "COMPLIANT" else "yellow" if st == "PARTIALLY_COMPLIANT" else "red"
+        )
+        table.add_row(
+            sec_id,
+            f"[{st_color}]{st}[/{st_color}]",
+            cnt,
+            sec_data.get("description", ""),
+        )
+    console.print(table)
+
+    if output is not None:
+        output.parent.mkdir(parents=True, exist_ok=True)
+        if format.lower() == "json":
+            output.write_text(
+                json.dumps(comp_report.model_dump(mode="json"), indent=2),
+                encoding="utf-8",
+            )
+        else:
+            output.write_text(comp_report.to_markdown(), encoding="utf-8")
+        console.print(f"Compliance report exported to [cyan]{output}[/cyan]")
+
+
+@app.command(name="verify")
+def verify_command(
+    report_file: Path = typer.Argument(  # noqa: B008
+        ..., help="Path to input scan or audit JSON report."
+    ),
+    certificate_file: Path | None = typer.Option(  # noqa: B008
+        None,
+        "--certificate",
+        "-c",
+        help="Path to external cryptographic certificate JSON. If omitted, checks report's embedded 'certificate' field.",
+    ),
+    sign: bool = typer.Option(  # noqa: B008
+        False,
+        "--sign",
+        "-s",
+        help="Generate and embed/save a cryptographic audit verification certificate.",
+    ),
+    key: str | None = typer.Option(  # noqa: B008
+        None,
+        "--key",
+        "-k",
+        help="Optional secret key for HMAC signature generation or verification.",
+    ),
+    output: Path | None = typer.Option(  # noqa: B008
+        None,
+        "--output",
+        "-o",
+        help="Path to save the signed report or standalone certificate.",
+    ),
+) -> None:
+    """Verify cryptographic audit integrity and tamper-evidence of AgentScan reports."""
+    import json
+
+    from rich.panel import Panel
+
+    from agentscan.reporting.audit_verifier import sign_audit_report, verify_audit_certificate
+
+    if not report_file.exists():
+        console.print(f"[bold red]Error: Report file not found:[/bold red] {report_file}")
+        raise typer.Exit(code=1)
+
+    try:
+        report_data = json.loads(report_file.read_text(encoding="utf-8"))
+    except Exception as e:
+        console.print(f"[bold red]Failed to parse report file:[/bold red] {e}")
+        raise typer.Exit(code=1) from None
+
+    if not isinstance(report_data, dict):
+        console.print("[bold red]Error: Report must be a valid JSON object dictionary.[/bold red]")
+        raise typer.Exit(code=1)
+
+    if sign:
+        cert = sign_audit_report(report_data, secret_key=key)
+        console.print(
+            Panel(
+                f"[bold green]Report Cryptographically Certified[/bold green]\n"
+                f"Algorithm: [cyan]{cert['algorithm']}[/cyan]\n"
+                f"SHA-256 Digest: [yellow]{cert['report_sha256']}[/yellow]\n"
+                f"HMAC Signature: [magenta]{cert['signature']}[/magenta]\n"
+                f"Issued At: [dim]{cert['issued_at']}[/dim]",
+                title="[bold blue]Audit Certificate Generator[/bold blue]",
+            )
+        )
+
+        if output is not None:
+            output.parent.mkdir(parents=True, exist_ok=True)
+            if output.suffix.lower() == ".cert" or "cert" in output.name.lower():
+                output.write_text(json.dumps(cert, indent=2), encoding="utf-8")
+                console.print(f"Certificate written to [cyan]{output}[/cyan]")
+            else:
+                report_data["certificate"] = cert
+                output.write_text(json.dumps(report_data, indent=2), encoding="utf-8")
+                console.print(f"Signed report written to [cyan]{output}[/cyan]")
+        else:
+            report_data["certificate"] = cert
+            report_file.write_text(json.dumps(report_data, indent=2), encoding="utf-8")
+            console.print(f"Certificate embedded directly into [cyan]{report_file}[/cyan]")
+        return
+
+    # Verification Mode
+    cert_to_verify = None
+    if certificate_file is not None:
+        if not certificate_file.exists():
+            console.print(f"[bold red]Certificate file not found:[/bold red] {certificate_file}")
+            raise typer.Exit(code=1)
+        try:
+            cert_to_verify = json.loads(certificate_file.read_text(encoding="utf-8"))
+        except Exception as e:
+            console.print(f"[bold red]Failed to parse certificate file:[/bold red] {e}")
+            raise typer.Exit(code=1) from None
+    else:
+        cert_to_verify = report_data.get("certificate")
+
+    if not cert_to_verify:
+        console.print(
+            "[bold red]Error:[/bold red] No certificate found. Provide --certificate <file> or use --sign to certify."
+        )
+        raise typer.Exit(code=1)
+
+    is_valid, reason = verify_audit_certificate(report_data, cert_to_verify, secret_key=key)
+
+    if is_valid:
+        console.print(
+            Panel(
+                f"[bold green]CRYPTOGRAPHIC AUDIT VERIFICATION PASSED[/bold green]\n"
+                f"Algorithm: [cyan]{cert_to_verify.get('algorithm', 'HMAC-SHA256')}[/cyan]\n"
+                f"Report SHA-256: [yellow]{cert_to_verify.get('report_sha256')}[/yellow]\n"
+                f"Integrity Status: [bold green]UNCOMPROMISED (Tamper-Evident)[/bold green]\n"
+                f"Issued At: [dim]{cert_to_verify.get('issued_at', 'Unknown')}[/dim]",
+                title="[bold green]Audit Verifier: Valid[/bold green]",
+            )
+        )
+    else:
+        console.print(
+            Panel(
+                f"[bold red]CRYPTOGRAPHIC AUDIT VERIFICATION FAILED[/bold red]\n"
+                f"Reason: [bold yellow]{reason}[/bold yellow]\n"
+                f"Integrity Status: [bold red]TAMPERED OR INVALID SIGNATURE[/bold red]",
+                title="[bold red]Audit Verifier: Integrity Breach[/bold red]",
+            )
+        )
+        raise typer.Exit(code=1)
 
 
 if __name__ == "__main__":

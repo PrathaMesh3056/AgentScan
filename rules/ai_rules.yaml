@@ -76,3 +76,57 @@ rules:
       - pattern: $X.format(user_input)
       - pattern: $X.format(..., user_input, ...)
       - pattern: $X.format(user_input=$Y)
+
+  - id: agentscan.dangerous-eval-exec
+    languages: [python]
+    severity: ERROR
+    message: >
+      eval() or exec() executes dynamic code without sandboxing. Untrusted input
+      leads directly to arbitrary code execution (RCE).
+    metadata:
+      agentscan_id: SC-019
+      owasp_id: LLM05
+      category: code-injection
+    pattern-either:
+      - pattern: eval(...)
+      - pattern: exec(...)
+
+  - id: agentscan.unsafe-numpy-load
+    languages: [python]
+    severity: ERROR
+    message: >
+      numpy.load(..., allow_pickle=True) allows pickle deserialization of untrusted
+      array files, leading to arbitrary code execution.
+    metadata:
+      agentscan_id: SC-011
+      owasp_id: LLM05
+      category: deserialization
+    pattern: numpy.load(..., allow_pickle=True, ...)
+
+  - id: agentscan.unsafe-joblib-load
+    languages: [python]
+    severity: ERROR
+    message: >
+      joblib.load() deserializes Python objects using pickle or custom pickle-like
+      loaders and can execute attacker-controlled code from untrusted files.
+    metadata:
+      agentscan_id: SC-011
+      owasp_id: LLM05
+      category: deserialization
+    pattern: joblib.load(...)
+
+  - id: agentscan.insecure-sqlite-tool
+    languages: [python]
+    severity: WARNING
+    message: >
+      SQL query execution with string formatting or f-strings in agent tools.
+      Use parameterized queries (? or :param) to prevent SQL injection.
+    metadata:
+      agentscan_id: SC-020
+      owasp_id: LLM05
+      category: sql-injection
+    pattern-either:
+      - pattern: $CURSOR.execute(f"...")
+      - pattern: $CURSOR.execute("..." % ...)
+      - pattern: $CURSOR.execute("...".format(...))
+

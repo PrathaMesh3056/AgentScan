@@ -43,6 +43,15 @@ def _patch_allow_dangerous_deserialization(content: str) -> str:
     )
 
 
+def _patch_numpy_allow_pickle(content: str) -> str:
+    """Flip allow_pickle=True to allow_pickle=False in numpy.load."""
+    return re.sub(
+        r"\ballow_pickle\s*=\s*True\b",
+        "allow_pickle=False",
+        content,
+    )
+
+
 def _patch_shell_true(content: str) -> str:
     """Flip shell=True to shell=False in subprocess invocations."""
     return re.sub(
@@ -132,6 +141,7 @@ def plan_ast_patches(findings: list[Finding], root_path: Path) -> list[FixAction
             if attack_id == "SC-011":
                 updated = _patch_torch_load(updated)
                 updated = _patch_allow_dangerous_deserialization(updated)
+                updated = _patch_numpy_allow_pickle(updated)
             elif attack_id in ("SC-012", "SC-013"):
                 updated = _patch_shell_true(updated)
                 updated = _patch_allow_dangerous_deserialization(updated)

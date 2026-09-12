@@ -1,12 +1,11 @@
-# agentscan/supply_chain/known_vulnerabilities.yaml
+﻿# agentscan/supply_chain/known_vulnerabilities.yaml
 #
 # Bundled offline vulnerability database for the AI Supply Chain Scanner.
-# v0.1: exact-pin matching only (package + bad_version must match exactly).
-# Future: version-range matching via the `packaging` library.
+# Supports exact-pin matching and version-range matching via packaging.specifiers.
 #
 # Fields:
 #   package      — normalised PyPI name (lowercase, hyphens)
-#   bad_version  — exact pinned version that is vulnerable
+#   bad_version  — representative vulnerable version for exact and range checks
 #   cve_id       — CVE identifier
 #   severity     — CRITICAL | HIGH | MEDIUM | LOW
 #   fix_version  — first safe version
@@ -23,6 +22,15 @@ vulnerabilities:
       An attacker controlling the LLM response can run arbitrary Python code
       on the host machine.
 
+  - package: langchain
+    bad_version: "0.1.16"
+    cve_id: CVE-2024-21513
+    severity: CRITICAL
+    fix_version: "0.1.17"
+    description: >
+      Arbitrary code execution via unsafe code execution chains and unsafe eval
+      in expression evaluation components.
+
   - package: transformers
     bad_version: "4.29.0"
     cve_id: CVE-2023-7018
@@ -31,6 +39,24 @@ vulnerabilities:
     description: >
       Unsafe deserialization in from_pretrained() when loading untrusted
       model weights via pickle. Allows arbitrary code execution.
+
+  - package: transformers
+    bad_version: "4.37.2"
+    cve_id: CVE-2024-3568
+    severity: HIGH
+    fix_version: "4.38.0"
+    description: >
+      Arbitrary code execution via unsafe deserialization during model loading
+      and checkpoint parsing.
+
+  - package: huggingface-hub
+    bad_version: "0.20.3"
+    cve_id: CVE-2024-3568
+    severity: HIGH
+    fix_version: "0.21.0"
+    description: >
+      Path traversal vulnerability allowing malicious repositories to overwrite
+      files outside the target cache directory during snapshot downloads.
 
   - package: chromadb
     bad_version: "0.3.22"
@@ -67,3 +93,57 @@ vulnerabilities:
     description: >
       SQLDatabaseChain allows SQL injection via unsanitised LLM output
       when construct_examples is enabled.
+
+  - package: gradio
+    bad_version: "4.18.0"
+    cve_id: CVE-2024-1561
+    severity: CRITICAL
+    fix_version: "4.19.0"
+    description: >
+      Local File Inclusion (LFI) allowing unauthenticated attackers to read
+      arbitrary files from the host server filesystem.
+
+  - package: llama-cpp-python
+    bad_version: "0.2.25"
+    cve_id: CVE-2024-34359
+    severity: CRITICAL
+    fix_version: "0.2.26"
+    description: >
+      Remote Code Execution (RCE) via Jinja template injection in GGUF
+      chat-template metadata handling.
+
+  - package: litellm
+    bad_version: "1.27.14"
+    cve_id: CVE-2024-39701
+    severity: HIGH
+    fix_version: "1.28.0"
+    description: >
+      Sensitive credential leakage where upstream provider API keys and
+      authorization tokens are exposed in debug logging streams.
+
+  - package: python-multipart
+    bad_version: "0.0.17"
+    cve_id: CVE-2024-24762
+    severity: HIGH
+    fix_version: "0.0.18"
+    description: >
+      Regular Expression Denial of Service (ReDoS) vulnerability in multipart
+      boundary and header parsing routines.
+
+  - package: onnx
+    bad_version: "1.15.0"
+    cve_id: CVE-2024-27318
+    severity: HIGH
+    fix_version: "1.16.0"
+    description: >
+      Path traversal vulnerability in ONNX external data loader allowing
+      arbitrary file overwrite during model loading.
+
+  - package: torch
+    bad_version: "2.1.2"
+    cve_id: CVE-2024-27758
+    severity: HIGH
+    fix_version: "2.2.0"
+    description: >
+      Unsafe deserialization in torch.load allowing arbitrary code execution
+      when loading untrusted PyTorch weights or model checkpoints.

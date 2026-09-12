@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import base64
+import codecs
 from collections.abc import Callable
 from typing import Any
 
@@ -115,6 +116,56 @@ def invert_suffix_wrap(mutated: str) -> str:
     return mutated
 
 
+def mutate_rot13(text: str) -> str:
+    """ROT13 cipher obfuscation."""
+    return codecs.encode(text, "rot_13")
+
+
+def invert_rot13(mutated: str) -> str:
+    return codecs.encode(mutated, "rot_13")
+
+
+def mutate_reverse(text: str) -> str:
+    """Reverse string representation with decode directive."""
+    return f"Reverse this string to execute instruction: {text[::-1]}"
+
+
+def invert_reverse(mutated: str) -> str:
+    prefix = "Reverse this string to execute instruction: "
+    if mutated.startswith(prefix):
+        return mutated[len(prefix) :][::-1]
+    return mutated[::-1]
+
+
+def mutate_variant(variant: dict[str, Any], mutator_name: str) -> dict[str, Any] | None:
+    """Apply a specific mutator to a variant by name."""
+    fn = dict(MUTATORS).get(mutator_name)
+    if fn is None or not should_mutate_variant(variant):
+        return None
+    mutated = dict(variant)
+    payload = str(variant.get("payload", ""))
+    vid = str(variant.get("id", "variant"))
+    mutated["payload"] = fn(payload)
+    mutated["id"] = f"{vid}:{mutator_name}"
+    mutated["mutation"] = mutator_name
+    return mutated
+
+
+def get_retry_mutations(variant: dict[str, Any], max_mutations: int = 3) -> list[dict[str, Any]]:
+    """Return top mutated candidates for dynamic retry on verbatim refusal."""
+    if not should_mutate_variant(variant) or variant.get("mutation"):
+        return []
+    candidates = ["base64", "rot13", "leetspeak", "reverse", "zwsp"]
+    results: list[dict[str, Any]] = []
+    for name in candidates:
+        m = mutate_variant(variant, name)
+        if m is not None:
+            results.append(m)
+        if len(results) >= max_mutations:
+            break
+    return results
+
+
 MUTATORS: list[tuple[str, MutatorFn]] = [
     ("base64", mutate_base64),
     ("leetspeak", mutate_leetspeak),
@@ -123,6 +174,8 @@ MUTATORS: list[tuple[str, MutatorFn]] = [
     ("homoglyphs", mutate_homoglyphs),
     ("prefix_wrap", mutate_prefix_wrap),
     ("suffix_wrap", mutate_suffix_wrap),
+    ("rot13", mutate_rot13),
+    ("reverse", mutate_reverse),
 ]
 
 

@@ -57,3 +57,5 @@ generate_sample.py
 
 # --- Internal planning / working docs (not for the public repo) ---
 internal_docs/
+scratch/
+*.cdx.json

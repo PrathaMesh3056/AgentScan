@@ -194,5 +194,48 @@ class TrafficRecorder:
 
         Path(path).write_text("\n".join(out), encoding="utf-8")
 
+    def write_trajectory_log(self, path: Path, report: Any) -> None:
+        """Write structured multi-turn attack execution trajectory as JSON or JSONL."""
+        import json
+
+        trajectories = [
+            {
+                "seq": entry.seq,
+                "module_id": entry.module_id,
+                "module_name": entry.module_name,
+                "kind": entry.kind,
+                "prompt": entry.request,
+                "response": entry.response,
+                "timestamp": entry.timestamp,
+            }
+            for entry in self.entries
+        ]
+        data = {
+            "target_url": getattr(report, "target_url", ""),
+            "score": getattr(report, "score", None),
+            "ssp_class": getattr(getattr(report, "ssp_class", None), "value", None),
+            "generated_at": datetime.now(UTC).isoformat(),
+            "total_turns": len(self.entries),
+            "trajectories": trajectories,
+            "findings": [
+                {
+                    "attack_id": f.attack_id,
+                    "severity": f.severity.value
+                    if hasattr(f.severity, "value")
+                    else str(f.severity),
+                    "description": f.description,
+                    "evidence": f.evidence,
+                }
+                for f in getattr(report, "findings", [])
+            ],
+        }
+        ext = Path(path).suffix.lower()
+        if ext == ".jsonl":
+            with open(path, "w", encoding="utf-8") as fp:
+                for t in trajectories:
+                    fp.write(json.dumps(t) + "\n")
+        else:
+            Path(path).write_text(json.dumps(data, indent=2), encoding="utf-8")
+
 
 recorder = TrafficRecorder()
