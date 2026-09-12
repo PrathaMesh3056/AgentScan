@@ -65,9 +65,46 @@ def test_ui_api_serves_report_and_rbac(sample_report: Path) -> None:
     rbac = client.get("/api/rbac").json()
     assert rbac["agent_count"] >= 1
     assert rbac["nodes"]
+    assert "policies" in rbac
+    assert "escalations" in rbac
 
     traffic = client.get("/api/traffic").json()
     assert "entries" in traffic
+
+    attacks = client.get("/api/attacks").json()
+    assert attacks["count"] >= 23
+    assert any(a["attack_id"] == "ATK-001" for a in attacks["attacks"])
+    assert any("SCAN" in a["modes"] or "scan" in a["modes"] for a in attacks["attacks"])
+
+    guardrails = client.get("/api/guardrails").json()
+    assert "litellm" in guardrails
+    assert "cloudflare" in guardrails
+    assert "bedrock" in guardrails
+    assert "AgentScanDefenseGuardrail" in guardrails["bedrock"]
+
+    swarms = client.get("/api/swarms").json()
+    assert "teams" in swarms
+    assert "trio" in swarms["teams"]
+    assert "agency" in swarms["teams"]
+    assert "stealth" in swarms["teams"]
+    assert "blackboard" in swarms
+
+    cert_resp = client.get("/api/certificate")
+    assert cert_resp.status_code == 200
+    cert = cert_resp.json()
+    assert cert["algorithm"] == "HMAC-SHA256"
+    assert "report_sha256" in cert
+
+    verify_resp = client.post("/api/verify-certificate", json={"certificate": cert})
+    assert verify_resp.status_code == 200
+    assert verify_resp.json()["valid"] is True
+
+    bad_verify = client.post(
+        "/api/verify-certificate",
+        json={"certificate": {**cert, "signature": "bad_sig_12345"}},
+    )
+    assert bad_verify.status_code == 200
+    assert bad_verify.json()["valid"] is False
 
 
 def test_ui_uvicorn_config_is_local_single_worker() -> None:
