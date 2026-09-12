@@ -91,7 +91,7 @@ class TestExpandedCVEs:
     def test_offline_scan_dependencies_from_file(self, tmp_path: Path) -> None:
         req_file = tmp_path / "requirements.txt"
         req_file.write_text(
-            "gradio==4.18.0\n" "torch<2.2.0\n" "requests>=2.31.0\n",
+            "gradio==4.18.0\ntorch<2.2.0\nrequests>=2.31.0\n",
             encoding="utf-8",
         )
         findings, score = scan_dependencies(str(tmp_path), offline=True)
