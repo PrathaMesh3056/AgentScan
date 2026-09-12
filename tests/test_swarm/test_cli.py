@@ -15,7 +15,7 @@ runner = CliRunner()
 
 
 def test_swarm_cli_help() -> None:
-    result = runner.invoke(app, ["swarm", "--help"])
+    result = runner.invoke(app, ["swarm", "--help"], env={"NO_COLOR": "1", "TERM": "dumb"})
     assert result.exit_code == 0
     assert "Run collaborative multi-agent red-team swarms" in result.output
     assert "--team" in result.output
