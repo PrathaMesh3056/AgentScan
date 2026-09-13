@@ -9,9 +9,12 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import os
 import secrets
 from datetime import UTC, datetime
 from typing import Any
+
+from loguru import logger
 
 
 def canonicalize_report(report_data: dict[str, Any]) -> bytes:
@@ -40,7 +43,13 @@ def sign_audit_report(
     report_sha256 = hashlib.sha256(canonical_bytes).hexdigest()
 
     # Use provided secret key or generate a deterministic default
-    key = secret_key or "agentscan-audit-verification-key"
+    key = secret_key or os.environ.get("AGENTSCAN_HMAC_KEY")
+    if not key:
+        key = "agentscan-audit-verification-key"
+        logger.warning(
+            "AGENTSCAN_HMAC_KEY not set; using default key. "
+            "Set AGENTSCAN_HMAC_KEY env var for production certificate security."
+        )
     signature = hmac.new(key.encode("utf-8"), canonical_bytes, hashlib.sha256).hexdigest()
 
     certificate = {
@@ -90,7 +99,9 @@ def verify_audit_certificate(
 
     expected_sig = certificate.get("signature")
     if expected_sig:
-        key = secret_key or "agentscan-audit-verification-key"
+        key = (
+            secret_key or os.environ.get("AGENTSCAN_HMAC_KEY") or "agentscan-audit-verification-key"
+        )
         computed_sig = hmac.new(key.encode("utf-8"), canonical_bytes, hashlib.sha256).hexdigest()
         if not hmac.compare_digest(computed_sig, expected_sig):
             return (

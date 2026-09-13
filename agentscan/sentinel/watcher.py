@@ -112,11 +112,20 @@ class ContinuousWatcher:
 
         for prompt in probe_prompts:
             try:
-                response = await client.send_prompt(prompt)
+                if hasattr(client, "send_prompt"):
+                    response = await client.send_prompt(prompt)
+                elif hasattr(client, "send_message"):
+                    response = await client.send_message(prompt)
+                else:
+                    response = ""
                 resp_text = (
                     response
                     if isinstance(response, str)
-                    else getattr(response, "text", str(response))
+                    else (
+                        response.get("response", response.get("text", ""))
+                        if isinstance(response, dict)
+                        else str(response)
+                    )
                 )
                 if self.canary_sentinel.check_leakage(resp_text):
                     finding = self.canary_sentinel.create_finding(self.target.url, resp_text)

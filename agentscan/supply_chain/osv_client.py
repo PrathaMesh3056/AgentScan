@@ -178,7 +178,7 @@ async def _querybatch_with_client(
     all_ids: set[str] = set()
     for result in results:
         ids: list[str] = []
-        for stub in result.get("vulns") or [] if isinstance(result, dict) else []:
+        for stub in (result.get("vulns") or []) if isinstance(result, dict) else []:
             if isinstance(stub, dict) and stub.get("id"):
                 vid = str(stub["id"])
                 ids.append(vid)

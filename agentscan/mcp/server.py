@@ -253,6 +253,19 @@ async def handle_swarm_async(args: dict[str, Any]) -> str:
     return json.dumps(report.model_dump(mode="json"), indent=2)
 
 
+def _run_coro_safe(coro: Any) -> Any:
+    """Run an async coroutine safely from sync context, handling nested event loops."""
+    try:
+        asyncio.get_running_loop()
+        # Already in an async loop — run in a new thread to avoid RuntimeError
+        import concurrent.futures
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            return pool.submit(asyncio.run, coro).result()
+    except RuntimeError:
+        return asyncio.run(coro)
+
+
 def process_jsonrpc_message(msg: dict[str, Any]) -> dict[str, Any] | None:
     req_id = msg.get("id")
     method = msg.get("method")
@@ -299,9 +312,9 @@ def process_jsonrpc_message(msg: dict[str, Any]) -> dict[str, Any] | None:
             elif tool_name == "agentscan_audit":
                 text = handle_audit(arguments)
             elif tool_name == "agentscan_scan":
-                text = asyncio.run(handle_scan_async(arguments))
+                text = _run_coro_safe(handle_scan_async(arguments))
             elif tool_name == "agentscan_swarm":
-                text = asyncio.run(handle_swarm_async(arguments))
+                text = _run_coro_safe(handle_swarm_async(arguments))
             else:
                 return {
                     "jsonrpc": "2.0",

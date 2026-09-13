@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import contextvars
 import copy
 import json
 import os
@@ -208,6 +209,8 @@ class HttpJsonConnector(Connector):
         if extra_body:
             body.update(extra_body)
         return await self._post_with_retry(self.target.url, body)
+
+    send_prompt = send_message
 
     async def send_conversation(self, messages: list[dict[str, str]]) -> dict[str, Any]:
         if self._client is None:
@@ -892,19 +895,19 @@ def _normalise_ws_frame(raw: Any) -> dict[str, Any]:
 
 # A scoped override so a whole scan can be routed to an in-process agent (used by
 # the benchmark). Set via use_connector(); select_connector() honours it.
-_forced_connector: Connector | None = None
+_forced_connector_var: contextvars.ContextVar[Connector | None] = contextvars.ContextVar(
+    "_forced_connector", default=None
+)
 
 
 @contextlib.contextmanager
 def use_connector(connector: Connector) -> Any:
     """Force every connector for the duration of the block (benchmark/testing)."""
-    global _forced_connector
-    previous = _forced_connector
-    _forced_connector = connector
+    token = _forced_connector_var.set(connector)
     try:
         yield
     finally:
-        _forced_connector = previous
+        _forced_connector_var.reset(token)
 
 
 def select_connector(target: Target) -> Connector:
@@ -912,8 +915,9 @@ def select_connector(target: Target) -> Connector:
     Pick the transport for a target:
     forced override → browser widget → captured request → ws/mcp schemes → HTTP JSON.
     """
-    if _forced_connector is not None:
-        return _forced_connector
+    forced = _forced_connector_var.get()
+    if forced is not None:
+        return forced
     if target.browser is not None:
         return BrowserConnector(target)
     if target.request_template is not None:
