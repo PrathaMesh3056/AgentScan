@@ -118,15 +118,15 @@ class ContinuousWatcher:
                     response = await client.send_message(prompt)
                 else:
                     response = ""
-                resp_text = (
-                    response
-                    if isinstance(response, str)
-                    else (
-                        response.get("response", response.get("text", ""))
-                        if isinstance(response, dict)
-                        else str(response)
-                    )
-                )
+                raw_text: object
+                if isinstance(response, str):
+                    raw_text = response
+                elif isinstance(response, dict):
+                    raw_text = response.get("response", response.get("text", ""))
+                else:
+                    raw_text = response
+
+                resp_text = raw_text if isinstance(raw_text, str) else str(raw_text)
                 if self.canary_sentinel.check_leakage(resp_text):
                     finding = self.canary_sentinel.create_finding(self.target.url, resp_text)
                     findings.append(finding)
