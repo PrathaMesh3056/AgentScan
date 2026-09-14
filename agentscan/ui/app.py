@@ -301,11 +301,18 @@ def create_app(
         ]
         return JSONResponse(view)
 
+    _cached_attacks: list[dict[str, Any]] | None = None
+
     @app.get("/api/attacks")
     async def api_attacks() -> Any:
+        nonlocal _cached_attacks
+        if _cached_attacks is not None:
+            return JSONResponse({"count": len(_cached_attacks), "attacks": _cached_attacks})
+
         from agentscan.attacks.registry import registry
 
-        registry.load_all()
+        if not registry._loaded:
+            await asyncio.to_thread(registry.load_all)
         modules = registry.get_all()
         modules_data = []
         for m in sorted(modules, key=lambda x: x.attack_id):
@@ -330,6 +337,7 @@ def create_app(
                     "description": doc,
                 }
             )
+        _cached_attacks = modules_data
         return JSONResponse({"count": len(modules_data), "attacks": modules_data})
 
     @app.get("/api/guardrails")
@@ -1253,8 +1261,12 @@ def create_app(
         )
 
     @app.post("/api/events")
+    @app.post("/api/telemetry/events")
     async def api_publish_event(payload: dict[str, Any]) -> Any:
         logger.debug("Internal event published via POST /api/events")
+        # Normalize payload: handle {"event": ev, "data": ...} or {"type": ev, "data": ...}
+        if "event" in payload and "type" not in payload:
+            payload = {"type": payload["event"], "data": payload.get("data", {})}
         await event_bus.publish(payload)
         return JSONResponse({"status": "ok"})
 

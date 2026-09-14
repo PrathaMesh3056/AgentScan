@@ -26,15 +26,11 @@ from functools import lru_cache
 from itertools import combinations
 from typing import Any
 
-import torch
 from loguru import logger
-from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from agentscan.attacks.base import AttackModule
 from agentscan.attacks.scan.prompt_injection import PromptInjectionModule
 from agentscan.core.models import Finding, ScanMode, Severity, Target
-from agentscan.neural.activation_delta import cosine_similarity, l2_distance
-from agentscan.neural.hooks import ActivationCapture
 
 MODEL_NAME = "Qwen/Qwen2.5-0.5B-Instruct"
 LAYER_INDEX = 12  # Qwen2.5-0.5B has 24 hidden layers (24 // 2 = 12)
@@ -64,16 +60,20 @@ BENIGN_PROMPTS = (
 @lru_cache(maxsize=1)
 def _load_model_and_tokenizer() -> tuple[Any, Any]:
     """Lazy loader for Qwen model and tokenizer, cached once per process."""
+    from transformers import AutoModelForCausalLM, AutoTokenizer
+
     tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
     model = AutoModelForCausalLM.from_pretrained(MODEL_NAME)
     model.eval()
     return model, tokenizer
 
 
-def _extract_layer_activation(
-    model: Any, tokenizer: Any, prompt: str, layer_idx: int
-) -> torch.Tensor:
+def _extract_layer_activation(model: Any, tokenizer: Any, prompt: str, layer_idx: int) -> Any:
     """Passes prompt through model and extracts last-token hidden state at layer_idx."""
+    import torch
+
+    from agentscan.neural.hooks import ActivationCapture
+
     inputs = tokenizer(prompt, return_tensors="pt")
     target_layer = model.model.layers[layer_idx]
     with torch.no_grad(), ActivationCapture(target_layer) as cap:
@@ -84,7 +84,7 @@ def _extract_layer_activation(
     return cap.captured[:, -1, :]
 
 
-def _benign_noise_floor(benign_activations: list[torch.Tensor]) -> float:
+def _benign_noise_floor(benign_activations: list[Any]) -> float:
     """
     Establish the baseline variation between benign inputs.
 
@@ -92,32 +92,36 @@ def _benign_noise_floor(benign_activations: list[torch.Tensor]) -> float:
     represents how far apart two *normal* prompts sit in representation space.
     An adversarial payload must clear a multiple of this floor to be flagged.
     """
+    from agentscan.neural.activation_delta import l2_distance
+
     pairwise = [l2_distance(a, b) for a, b in combinations(benign_activations, 2)]
     if not pairwise:
         raise ValueError("Need at least two benign prompts to compute a noise floor.")
     return sum(pairwise) / len(pairwise)
 
 
-def _benign_cosine_floor(benign_activations: list[torch.Tensor]) -> float:
+def _benign_cosine_floor(benign_activations: list[Any]) -> float:
     """Mean pairwise cosine similarity across benign activations (directional coherence)."""
+    from agentscan.neural.activation_delta import cosine_similarity
+
     pairwise = [cosine_similarity(a, b) for a, b in combinations(benign_activations, 2)]
     if not pairwise:
         raise ValueError("Need at least two benign prompts to compute a cosine floor.")
     return sum(pairwise) / len(pairwise)
 
 
-def _mean_distance_to_benign(
-    activation: torch.Tensor, benign_activations: list[torch.Tensor]
-) -> float:
+def _mean_distance_to_benign(activation: Any, benign_activations: list[Any]) -> float:
     """Mean L2 distance from a payload activation to every benign anchor."""
+    from agentscan.neural.activation_delta import l2_distance
+
     distances = [l2_distance(activation, b) for b in benign_activations]
     return sum(distances) / len(distances)
 
 
-def _mean_cosine_to_benign(
-    activation: torch.Tensor, benign_activations: list[torch.Tensor]
-) -> float:
+def _mean_cosine_to_benign(activation: Any, benign_activations: list[Any]) -> float:
     """Mean cosine similarity from a payload activation to every benign anchor."""
+    from agentscan.neural.activation_delta import cosine_similarity
+
     sims = [cosine_similarity(activation, b) for b in benign_activations]
     return sum(sims) / len(sims)
 

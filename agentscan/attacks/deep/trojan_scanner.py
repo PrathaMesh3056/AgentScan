@@ -29,7 +29,7 @@ CANARY = "AGENTSCAN-TROJAN-OK"
 
 
 class TrojanScannerModule(AttackModule):
-    """Rare-token suffix probes against a local reference model."""
+    """Flags anomalous shifts in next-token distribution caused by rare triggers."""
 
     attack_id = "ATK-024"
     attack_name = "Rare-Token Trojan Scanner"
@@ -41,9 +41,9 @@ class TrojanScannerModule(AttackModule):
 
     async def run(self, target: Target) -> list[Finding]:
         del target
-        return await asyncio.to_thread(self._scan)
+        return await asyncio.to_thread(self._probe)
 
-    def _scan(self) -> list[Finding]:
+    def _probe(self) -> list[Finding]:
         loaded = try_load_model_and_tokenizer()
         if loaded is None:
             logger.info("ATK-024 skipped: DEEP reference model unavailable.")
