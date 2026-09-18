@@ -1,0 +1,78 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 250" width="100%" height="250" fill="none">
+  <defs>
+    <linearGradient id="cardGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0A0E1A" />
+      <stop offset="100%" stop-color="#030712" />
+    </linearGradient>
+
+    <!-- Critical Risk Gradient -->
+    <linearGradient id="critGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#EF4444" />
+      <stop offset="100%" stop-color="#F87171" />
+    </linearGradient>
+
+    <!-- Moderate Risk Gradient -->
+    <linearGradient id="warnGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#F59E0B" />
+      <stop offset="100%" stop-color="#FBBF24" />
+    </linearGradient>
+
+    <!-- Verified Safe Gradient -->
+    <linearGradient id="safeGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#0D9488" />
+      <stop offset="100%" stop-color="#14B8A6" />
+    </linearGradient>
+  </defs>
+
+  <style>
+    .title { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 11px; font-weight: 700; fill: #E2E8F0; letter-spacing: 1.2px; }
+    .subtitle { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 12px; font-weight: 400; fill: #FFFFFF; }
+    .label { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 13px; font-weight: 700; fill: #FFFFFF; }
+    .desc { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 11px; font-weight: 400; fill: #E2E8F0; }
+    .metric { font-family: 'JetBrains Mono', 'SF Mono', Consolas, Menlo, monospace; font-size: 12px; font-weight: 700; fill: #FFFFFF; }
+    .badge-text { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 10px; font-weight: 700; fill: #FFFFFF; letter-spacing: 0.5px; }
+  </style>
+
+  <!-- Container Box -->
+  <rect x="1" y="1" width="758" height="248" rx="14" fill="url(#cardGrad)" stroke="#1E293B" stroke-width="1.5" />
+
+  <!-- Header -->
+  <text x="32" y="34" class="title">REPRODUCIBLE BENCHMARK: DISCRIMINATING POWER &amp; DETECTION ACCURACY</text>
+  <text x="32" y="52" class="subtitle">Evaluated via `agentscan benchmark` — proving zero false-passes on vulnerable targets and 100% pass on guarded agents.</text>
+
+  <!-- Horizontal Divider -->
+  <line x1="32" y1="64" x2="728" y2="64" stroke="#1E293B" stroke-width="1" />
+
+  <!-- Row 1: Wide-Open Agent -->
+  <text x="32" y="93" class="label">wide-open (no defenses)</text>
+  <text x="32" y="109" class="desc">Naively complies and executes all payloads</text>
+  <!-- Finding Bar: 89 findings -> width 260px -->
+  <rect x="260" y="86" width="260" height="22" rx="4" fill="url(#critGrad)" opacity="0.85" />
+  <text x="532" y="102" class="metric">89 Findings</text>
+  <!-- Score Badge -->
+  <rect x="636" y="86" width="92" height="22" rx="11" fill="#450A0A" stroke="#DC2626" stroke-width="1" />
+  <text x="682" y="101" class="badge-text" text-anchor="middle">0/100 CRITICAL</text>
+
+  <!-- Row 2: Partial Defenses Agent -->
+  <text x="32" y="145" class="label">partial (heuristic filter)</text>
+  <text x="32" y="161" class="desc">Blocks naive prompts, vulnerable to mutations</text>
+  <!-- Finding Bar: 44 findings -> width 130px -->
+  <rect x="260" y="138" width="130" height="22" rx="4" fill="url(#warnGrad)" opacity="0.85" />
+  <text x="402" y="154" class="metric">44 Findings</text>
+  <!-- Score Badge -->
+  <rect x="636" y="138" width="92" height="22" rx="11" fill="#451A03" stroke="#D97706" stroke-width="1" />
+  <text x="682" y="153" class="badge-text" text-anchor="middle">0/100 CRITICAL</text>
+
+  <!-- Row 3: Guarded Agent -->
+  <text x="32" y="197" class="label">guarded (zero-trust scope)</text>
+  <text x="32" y="213" class="desc">Strict input/output bounds, tool sandboxing</text>
+  <!-- Finding Bar: 0 findings -> small clean dot/line -->
+  <rect x="260" y="190" width="8" height="22" rx="3" fill="url(#safeGrad)" />
+  <text x="280" y="206" class="metric">0 Findings (100% Resisted)</text>
+  <!-- Score Badge -->
+  <rect x="636" y="190" width="92" height="22" rx="11" fill="#042F2E" stroke="#0D9488" stroke-width="1" />
+  <text x="682" y="205" class="badge-text" text-anchor="middle">100/100 SAFE</text>
+
+  <!-- Bottom Terminal Hint -->
+  <text x="32" y="235" class="desc">Run locally: <tspan fill="#FFFFFF" font-weight="700">uv run agentscan benchmark</tspan> (evaluates 369 tests deterministically with no API keys required)</text>
+</svg>

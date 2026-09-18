@@ -24,6 +24,7 @@ htmlcov/
 # --- IDEs & OS ---
 .vscode/
 .cursor/
+.kiro/
 .obsidian/
 .idea/
 .DS_Store

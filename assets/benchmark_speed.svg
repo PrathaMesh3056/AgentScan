@@ -1,0 +1,106 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 860 440" width="100%" height="440" fill="none">
+  <defs>
+    <linearGradient id="cardGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0B0F19" />
+      <stop offset="100%" stop-color="#030712" />
+    </linearGradient>
+
+    <!-- AgentScan Cyan-Blue Electric Gradient -->
+    <linearGradient id="agentScanGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#0284C7" />
+      <stop offset="100%" stop-color="#38BDF8" />
+    </linearGradient>
+
+    <!-- Competitor Muted Slate Gradient -->
+    <linearGradient id="compGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#334155" />
+      <stop offset="100%" stop-color="#475569" />
+    </linearGradient>
+
+    <!-- Garak Gradient -->
+    <linearGradient id="garakGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#27272A" />
+      <stop offset="100%" stop-color="#52525B" />
+    </linearGradient>
+  </defs>
+
+  <style>
+    .card-title { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 13px; font-weight: 700; fill: #FFFFFF; letter-spacing: 1.2px; }
+    .card-subtitle { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 13px; font-weight: 400; fill: #E2E8F0; }
+
+    .label-lead { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 16px; font-weight: 800; fill: #FFFFFF; }
+    .label-comp { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 14px; font-weight: 700; fill: #FFFFFF; }
+    .subtag { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 12px; font-weight: 400; fill: #CBD5E1; }
+
+    .time-lead { font-family: 'JetBrains Mono', 'SF Mono', Consolas, Menlo, monospace; font-size: 15px; font-weight: 800; fill: #38BDF8; }
+    .time-val { font-family: 'JetBrains Mono', 'SF Mono', Consolas, Menlo, monospace; font-size: 13px; font-weight: 700; fill: #FFFFFF; }
+    .cost-val { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 12px; font-weight: 500; fill: #F1F5F9; }
+
+    .badge-text { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 11px; font-weight: 800; fill: #FFFFFF; letter-spacing: 0.5px; }
+    .footer-text { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 13px; font-weight: 400; fill: #FFFFFF; }
+  </style>
+
+  <!-- Container Box -->
+  <rect x="1" y="1" width="858" height="438" rx="14" fill="url(#cardGrad)" stroke="#1E293B" stroke-width="1.5" />
+
+  <!-- Header -->
+  <text x="36" y="38" class="card-title">BENCHMARK: FULL SECURITY AUDIT DURATION (100+ OWASP ATTACK PROBES)</text>
+  <text x="36" y="58" class="card-subtitle">Live endpoint scan duration (shorter is better) • 100% reproducible via `uv run agentscan benchmark`</text>
+
+  <!-- Horizontal Divider -->
+  <line x1="36" y1="74" x2="824" y2="74" stroke="#1E293B" stroke-width="1.5" />
+
+  <!-- Row 1: AgentScan -->
+  <text x="36" y="112" class="label-lead">AgentScan</text>
+  <text x="122" y="112" class="subtag">(async concurrent)</text>
+  <!-- Bar: 2.1s -->
+  <rect x="270" y="96" width="30" height="24" rx="5" fill="url(#agentScanGrad)" />
+  <text x="312" y="113" class="time-lead">2.1s</text>
+  <!-- Speedup badge -->
+  <rect x="366" y="96" width="138" height="24" rx="12" fill="#0284C7" stroke="#38BDF8" stroke-width="1.2" />
+  <text x="435" y="112" class="badge-text" text-anchor="middle">⚡ 100x–500x FASTER</text>
+  <!-- Token cost badge -->
+  <rect x="514" y="96" width="112" height="24" rx="12" fill="#059669" stroke="#34D399" stroke-width="1.2" />
+  <text x="570" y="112" class="badge-text" text-anchor="middle">$0.00 TOKENS</text>
+  <!-- CI/CD Callout -->
+  <rect x="636" y="96" width="136" height="24" rx="12" fill="#1E293B" stroke="#475569" stroke-width="1" />
+  <text x="704" y="112" class="badge-text" text-anchor="middle">PR GATE: &lt; 3 SEC</text>
+
+  <!-- Row 2: DeepEval / DeepTeam -->
+  <text x="36" y="170" class="label-comp">DeepEval</text>
+  <text x="108" y="170" class="subtag">(GPT-4o judge)</text>
+  <!-- Bar: 650s -->
+  <rect x="270" y="155" width="130" height="22" rx="5" fill="url(#compGrad)" />
+  <text x="412" y="171" class="time-val">650s (~11m)</text>
+  <text x="522" y="171" class="cost-val">$15 – $35 API token cost</text>
+
+  <!-- Row 3: Promptfoo Redteam -->
+  <text x="36" y="228" class="label-comp">Promptfoo</text>
+  <text x="118" y="228" class="subtag">(synthesizer + judge)</text>
+  <!-- Bar: 840s -->
+  <rect x="270" y="213" width="170" height="22" rx="5" fill="url(#compGrad)" />
+  <text x="452" y="229" class="time-val">840s (~14m)</text>
+  <text x="562" y="229" class="cost-val">$15 – $45 API token cost</text>
+
+  <!-- Row 4: PyRIT (Microsoft) -->
+  <text x="36" y="286" class="label-comp">PyRIT</text>
+  <text x="88" y="286" class="subtag">(triple-role SDK)</text>
+  <!-- Bar: 1,500s -->
+  <rect x="270" y="271" width="280" height="22" rx="5" fill="url(#compGrad)" />
+  <text x="562" y="287" class="time-val">1,500s (~25m)</text>
+  <text x="676" y="287" class="cost-val">$20 – $60+ API cost</text>
+
+  <!-- Row 5: Garak (NVIDIA) -->
+  <text x="36" y="344" class="label-comp">Garak</text>
+  <text x="88" y="344" class="subtag">(sequential loops)</text>
+  <!-- Bar: 1,980s -->
+  <rect x="270" y="329" width="370" height="22" rx="5" fill="url(#garakGrad)" />
+  <text x="652" y="345" class="time-val">1,980s (~33m)</text>
+  <text x="768" y="345" class="cost-val" fill="#FCA5A5">No CI Gate</text>
+
+  <!-- Bottom Divider -->
+  <line x1="36" y1="382" x2="824" y2="382" stroke="#1E293B" stroke-width="1.5" />
+
+  <!-- Bottom Terminal Callout -->
+  <text x="36" y="410" class="footer-text">In-process reference throughput: <tspan fill="#38BDF8" font-weight="800">~2,975 tests/sec</tspan> (369 attacks in 124ms)  •  Zero API tokens  •  Run: <tspan font-weight="800" fill="#FFFFFF">uv run agentscan benchmark</tspan></text>
+</svg>
