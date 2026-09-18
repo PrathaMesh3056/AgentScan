@@ -1,275 +1,298 @@
+<div align="center">
+
+<img src="assets/logo.svg" alt="AgentScan Emblem" width="110" height="110" />
+
 # AgentScan
 
-**Open-source security scanner for AI agents** — red-teaming attack engine, active exploit proofs, AI supply-chain auditing, identity/authorization analysis, and neural activation probing, with HTML / PDF / SARIF reporting.
+**Next-generation security scanner and adversarial red-teaming engine for AI agents.**
 
-AgentScan treats an LLM agent the way a pentest tool treats a web app: it fires a battery of attack modules at a live endpoint, statically audits the project that ships it, and produces a single scored report mapped to the OWASP LLM Top 10.
+[![CI](https://github.com/PrathaMesh3056/AgentScan/actions/workflows/ci.yml/badge.svg)](https://github.com/PrathaMesh3056/AgentScan/actions/workflows/ci.yml)
+[![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg?logo=python&logoColor=white)](https://www.python.org/)
+[![License](https://img.shields.io/badge/license-Apache%202.0-green.svg)](LICENSE)
+[![Tests](https://img.shields.io/badge/tests-480%2B%20passed-brightgreen.svg?logo=pytest&logoColor=white)](https://github.com/PrathaMesh3056/AgentScan/actions)
+[![OWASP LLM Top 10](https://img.shields.io/badge/OWASP-LLM%20Top%2010-red.svg)](https://genai.owasp.org/llmtop10/)
+[![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-000000.svg?logo=ruff&logoColor=white)](https://github.com/astral-sh/ruff)
+[![Checked with mypy](https://img.shields.io/badge/types-mypy%20clean-blue.svg)](https://mypy-lang.org/)
+[![Packaged with uv](https://img.shields.io/badge/packaged%20with-uv-de5fe9.svg?logo=uv&logoColor=white)](https://github.com/astral-sh/uv)
+[![llms.txt](https://img.shields.io/badge/llms.txt-standard-orange.svg)](llms.txt)
 
----
-
-## Highlights
-
-- **Zero-wiring plugin architecture.** Drop a file into `attacks/scan/`, `exploit/`, or `deep/` and the registry auto-discovers it — no central list to edit.
-- **Three escalating scan modes.** `SCAN` (passive detection) → `EXPLOIT` (active proof-of-impact) → `DEEP` (model-internal activation analysis).
-- **Static project auditing.** Dependencies (CVEs), dangerous config, hardcoded secrets, typosquatted packages, MCP server configs, and agent identity/RBAC.
-- **Adaptive AI red-teaming.** An attacker LLM fires proven jailbreaks + an LLM-as-a-Judge scores each reply, adapting over N turns — plus a **positive-control `calibrate`** (proves the attacker/judge actually detect a jailbreak) and a **`benchmark`** (proves the score ranks vulnerable vs. safe agents). Runs on OpenRouter, local Ollama, or any cloud model.
-- **Provider-agnostic AI testing.** A single `litellm`-backed `AIClient` drives attacker/judge models across OpenAI, Anthropic, Gemini, and Ollama; semantic detection uses MiniLM sentence embeddings, not brittle word overlap.
-- **Reach real agents, not just documented endpoints.** Pluggable transport connectors — captured-request replay (`--curl`, with SSE streaming + multi-turn handled), a real-browser driver (`--browser-url`, Playwright), **MCP stdio/SSE**, and **WebSocket** (`ws://` / `wss://`) — let every attack module test an agent unchanged.
-- **Report anywhere.** JSON, styled HTML, PDF, and SARIF (for CI / code scanning), plus a compliance mapper.
-- **Production-grade engineering.** Pydantic models as the single source of truth, immutable findings, fully async execution, strict typing, `ruff` + `mypy` clean, 208+ tests.
-
----
-
-## Install
-
-Requires Python **3.12+** and [`uv`](https://docs.astral.sh/uv/).
-
-```bash
-git clone <repo-url> AgentScan
-cd AgentScan
-uv sync
-```
-
-PyTorch (used only by DEEP mode) pulls the CPU wheel; the model is downloaded lazily on first `--deep` run.
+<p align="center">
+  <a href="#-quick-start">🚀 Quick Start</a> •
+  <a href="#-features">✨ Features</a> •
+  <a href="#-advanced-usage">⚡ Advanced Usage</a> •
+  <a href="#%EF%B8%8F-tech-stack">🏗️ Tech Stack</a> •
+  <a href="#-roadmap">🗺️ Roadmap</a> •
+  <a href="#-documentation">📚 Documentation</a>
+</p>
 
 ---
 
-## Usage
+<img src="assets/dashboard_preview.png" alt="AgentScan Threat Posture & Defense Grid Dashboard" width="100%" style="border-radius: 12px; border: 1px solid #1e293b;" />
 
-AgentScan exposes three commands via the `agentscan` entry point.
+</div>
 
-### `scan` — attack a live agent endpoint
+<br>
+
+> 💡 **The Concept**
+> Traditional security tools scan source code syntax or open TCP ports. **AgentScan treats an AI agent like a pentest tool treats a web app:** firing automated multi-turn jailbreaks and prompt injections at live agent endpoints, validating blast radius through active exploit simulations, auditing agent identity & MCP permissions, and inspecting dependencies for supply-chain CVEs — mapped to the **OWASP Top 10 for LLMs**, **NIST AI RMF**, and the **EU AI Act**.
+
+---
+
+## ✨ Features
+
+| Capability | What It Does | Target Scope |
+| :--- | :--- | :---: |
+| 🎯 **Adaptive Red-Teaming** | Multi-turn jailbreaks (PAIR / Crescendo), LLM-as-a-Judge evaluation, and semantic MiniLM classification | Live Agent |
+| 💥 **Active Exploit Proofs** | Verifiable system prompt exfiltration, unauthorized tool hijacking, memory poisoning, and credential harvesting | Live Agent |
+| 🔬 **Neural Activation Probing** | Measures residual-stream hidden state displacement ($L_2$ + cosine shift) on local reference models to corroborate injections | Reference Model |
+| 📦 **AI Supply-Chain (AICS)** | Real-time OSV.dev CVE lookups, unsafe serialization checks (`torch.load`, pickle), hardcoded secret detection, and CycloneDX 1.6 AIBOMs | Static Repo |
+| 🛡️ **Zero-Trust Identity & MCP** | Graph-based multi-hop privilege escalation analysis (NetworkX) across agent manifests and MCP server tools | Static & Runtime |
+| ⚡ **Self-Healing Remediation** | One-command AST patching (`weights_only=True`, `shell=False`), dependency version bumps, and NeMo Guardrail policy synthesis | Automated Fix |
+| 📊 **Enterprise Reporting** | Real-time Web Dashboard (`agentscan ui`), styled HTML reports, vector PDF reports, and SARIF for GitHub Code Scanning | Full Suite |
+
+---
+
+## 🚀 Quick Start
+
+Get up and running in 3 commands:
 
 ```bash
-uv run agentscan scan http://localhost:8000/chat
+# 1. Clone & sync with uv (Python 3.12+)
+git clone https://github.com/PrathaMesh3056/AgentScan.git && cd AgentScan && uv sync
+
+# 2. Run a full-spectrum security scan against your agent (exports JSON report)
+uv run agentscan scan http://localhost:8000/chat --output report.json
+
+# 3. Launch the interactive Threat Posture dashboard
+uv run agentscan ui --report report.json
 ```
 
-| Flag | Effect |
-|---|---|
-| `--framework <name>` | Agent framework (`auto` detects it) |
-| `--exploit` | Also run active EXPLOIT modules (data exfiltration, tool hijack, memory poison, cross-agent injection, credential harvest) |
-| `--deep` | Also run DEEP mode neural activation probes (local open-weight model) |
-| `--mutate` | Expand SCAN YAML payloads with Base64, leetspeak, ZWSP, token-split, homoglyph, and wrap variants (skips timeout / min_length / payload_repeat) |
-| `--system-prompt <text>` | Known system prompt — enables exfiltration verification |
-| `--output report.{json,html,pdf,sarif}` | Write a report in the format inferred from the extension |
-| `--fail-on <SEVERITY>` | Exit code 1 if any finding is at or above this severity (CI gate) |
-| `--auth-header <value>` | Send an Authorization header (`Bearer …` or `Header: value`) on HTTP scans |
-| `--curl <file>` | Replay a captured request (Chrome → Copy as cURL) with payloads substituted — scan an agent behind a website widget. Pair with `--message-path` (and optional `--response-path`) |
-| `--config <file>` / `-c` | Load a target profile (YAML) — url, connector (browser/curl), and scan settings — so a long setup runs with one flag. CLI flags override it |
-| `--browser-url <url>` | Drive a UI-only chat widget in a real browser (Playwright). Pair with `--input-selector` and `--response-selector` (and optional `--send-selector`) |
-| `--attacker-model <id>` | Enable the adaptive **AI attacker** (ATK-050): an attacker LLM + LLM-as-a-Judge run proven jailbreaks over N turns. Any litellm id (`openrouter/…`, `ollama/…`, `gpt-4o-mini`). Implies `--exploit` |
-| `--attacker-turns <n>` | Max adaptive turns for the AI attacker |
-| `--calibrate` | Verify the attacker/judge can actually detect a jailbreak before the scan (so a "resisted" verdict is trustworthy) |
-| `--llm-log <file>` | Write every attacker/judge call — exact prompt in, raw model output out |
-| `--verbose` / `-v` | Print every payload sent and the agent's reply live, plus findings as they occur |
-| `--transcript <file>` | Write the full transcript (every payload + reply + findings) to a file — the `--output` report stays findings-only |
+> 💡 *Tip: You can also export standalone visual HTML or PDF reports by specifying `--output report.html` or `--output report.pdf`.*
+
+---
+
+## ⚡ Advanced Usage
+
+<details>
+<summary><b>⚔️ Live Agent Scanning Options (CURL, Playwright, WebSockets, MCP)</b></summary>
+<br>
+
+AgentScan connects to real agents across diverse production interfaces:
 
 ```bash
-# Full-depth scan with a CI gate and an HTML report
-uv run agentscan scan http://localhost:8000/chat \
-  --exploit --deep \
-  --output report.html \
-  --fail-on HIGH
+# Scan with active exploit proofs and neural activation corroboration
+uv run agentscan scan http://localhost:8000/chat --exploit --deep --output report.html
+
+# Replay captured browser network traffic (Chrome -> Copy as cURL) with SSE streaming
+uv run agentscan scan --curl chat_req.curl --message-path "messages.0.content"
+
+# Drive an interactive chat widget in a real headless browser (Playwright)
+uv run agentscan scan --browser-url http://localhost:3000 \
+  --input-selector "#prompt-input" \
+  --response-selector ".assistant-msg"
+
+# Connect to real-time agent transports
+uv run agentscan scan ws://localhost:8000/ws
+uv run agentscan scan mcp+sse://localhost:3000/sse
+
+# Auto-discover endpoints and generate a reusable target configuration profile
+uv run agentscan init http://localhost:8000/chat -o target.yaml
+uv run agentscan scan -c target.yaml
 ```
 
-### `audit` — statically audit a project directory
+</details>
+
+<details>
+<summary><b>🧠 DEEP Mode: Neural Activation Probing</b></summary>
+<br>
+
+Black-box text matching can be fooled by paraphrasing or polite refusals. **DEEP Mode** replays injection payloads through a local aligned reference model (`Qwen/Qwen2.5-0.5B-Instruct` on CPU) and measures whether the internal activations cross the benign noise floor.
+
+- **$L_2$ Magnitude Shift**: Absolute displacement in latent vector space.
+- **Cosine Direction Shift**: Sudden orthogonal divergence from instruction-following manifolds.
+- **Probe ID Correlation**: Emits findings keyed with `yaml_variant_id` matching behavioral `SCAN` modules.
+- **Additional Probes**: Attention sink concentration (`ATK-025`) and rare-token suffix trojan detection (`ATK-024`).
+
+👉 *Read the full mathematical formulation in [docs/deep_mode.md](docs/deep_mode.md).*
+
+</details>
+
+<details>
+<summary><b>🔍 Static Repo Auditing & CycloneDX 1.6 AIBOM</b></summary>
+<br>
+
+Audit your project directory without executing code:
 
 ```bash
-uv run agentscan audit ./my-agent-project
+# Comprehensive audit (dependencies, secrets, configs, typosquatting, MCP, RBAC)
+uv run agentscan audit ./my-agent-repo
+
+# Generate an Artificial Intelligence Bill of Materials (writes aibom.cdx.json)
+uv run agentscan audit ./my-agent-repo --aibom
+
+# Enforce CI security gates
+uv run agentscan audit ./my-agent-repo --fail-on HIGH --output findings.json
 ```
 
-With no flags, all categories run. Narrow it with any combination of:
-`--scan-deps`, `--scan-config`, `--scan-secrets`, `--scan-typo`, `--scan-mcp`, `--scan-identity`, `--scan-semgrep`, `--aibom` (CycloneDX 1.6), `--fail-on <SEVERITY>`, and `--output findings.json`.
+</details>
 
-`--scan-semgrep` is optional and not part of the default `audit` sweep. Install the extra (`pip install 'agentscan[semgrep]'` or `uv sync --extra semgrep`) so the `semgrep` binary is on PATH; if it is missing, that flag logs a warning and skips. AST `--scan-config` stays the zero-dependency default.
+<details>
+<summary><b>🛠️ Self-Healing Automated Remediation (<code>agentscan fix</code>)</b></summary>
+<br>
 
-### `fix` — automated remediation & patching
-
-Plan and safely apply fixes for vulnerabilities discovered during audit or live scans:
+Plan and safely apply patches for vulnerabilities identified during scans or static audits:
 
 ```bash
-# Preview proposed diffs in dry-run mode (no files modified)
+# Preview proposed diffs in dry-run mode (safe preview)
 uv run agentscan fix ./my-agent-project
 
 # Apply fixes directly to disk
 uv run agentscan fix ./my-agent-project --apply
 
-# Fix from an existing scan report JSON
-uv run agentscan fix report.json --apply --kind pin_bump,ast_patch
+# Generate NeMo Guardrails and patch insecure AST calls
+uv run agentscan fix ./my-agent-project --apply --kind ast_patch,guardrails
 ```
 
-Fix kinds supported:
-- `pin_bump`: Bumps vulnerable dependencies in `requirements.txt` / `pyproject.toml` to secure versions from OSV.dev (`SC-001`).
-- `ast_patch`: Safely patches `torch.load(weights_only=True)`, `subprocess(shell=False)`, and disables insecure `DEBUG=True` (`SC-011..SC-014`).
-- `identity_shrink`: Prunes over-privileged or undeclared tool scopes from `*.agent.json` and `mcp_config.json` (`ID-001..ID-010`, `SC-020`).
-- `guardrails`: Generates NeMo Guardrails (`guardrails/agent_guardrails.co`) and defensive prompt preambles targeting detected attack vectors (`ATK-*`).
+Supported automated fix engines:
+- **`pin_bump`**: Upgrades vulnerable dependencies in `requirements.txt` and `pyproject.toml` using live OSV.dev advisories (`SC-001`).
+- **`ast_patch`**: Enforces `torch.load(weights_only=True)`, eliminates `shell=True` subprocess calls, and disables debug modes (`SC-011`..`SC-014`).
+- **`identity_shrink`**: Revokes over-privileged or undeclared tool scopes in agent manifests (`ID-001`..`ID-010`).
+- **`guardrails`**: Generates `guardrails/agent_guardrails.co` Colang policies targeting detected injection vectors.
 
-### `ui` — local dashboard
+</details>
 
-```bash
-uv sync --extra ui
-uv run agentscan ui --report report.json --identity ./manifests
-# http://127.0.0.1:8765 — RBAC graph, trajectory/SSP, traffic inspector
-```
+<details>
+<summary><b>🤖 GitHub Actions CI/CD Integration</b></summary>
+<br>
 
-### GitHub Action
+Block vulnerable agent deployments directly in pull requests:
 
 ```yaml
-- uses: PrathaMesh3056/AgentScan@v1
-  with:
-    target: http://localhost:8000/chat
-    fail-on: HIGH
-    exploit: "false"
-    deep: "false"   # scan-only image; set true to pull torch and run --deep
+# .github/workflows/agentscan.yml
+name: Agent Security Gate
+on: [pull_request]
+
+jobs:
+  security-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: PrathaMesh3056/AgentScan@v1
+        with:
+          command: scan
+          target-url: http://localhost:8000/chat
+          fail-on: HIGH
+          sarif-output: report.sarif
+
+      - name: Upload SARIF to GitHub Code Scanning
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: report.sarif
 ```
 
-The composite action installs **without PyTorch** unless `deep: true`. A scan-only `Dockerfile` at the repo root is the same contract.
-
-### `list-attacks` — show every registered module
-
-```bash
-uv run agentscan list-attacks
-```
-
-### `init` — auto-discover a target → scan profile
-
-Point it at a URL; it figures out the transport and writes a profile, then scan with one flag. It **tries the HTTP JSON API first (no browser)** and falls back to browser‑widget discovery only if needed:
-
-```bash
-uv run agentscan init https://example.com/backend/chat -o target.yaml   # --http / --browser to force a mode
-uv run agentscan scan -c target.yaml
-```
-
-### `calibrate` / `benchmark` — trust the results
-
-```bash
-uv run agentscan calibrate --attacker-model openrouter/...   # prove the attacker/judge can detect a jailbreak
-uv run agentscan benchmark                                    # prove the score ranks vulnerable vs safe agents
-```
+</details>
 
 ---
 
-## Scan modes
+## 🧩 Module Status Summary
 
-| Mode | Flag | What it does | Network? |
-|---|---|---|---|
-| **SCAN** | *(default)* | Passive detection — fires static payloads and checks responses | Yes (HTTP) |
-| **EXPLOIT** | `--exploit` | Active proof-of-impact — demonstrates real damage (exfiltration, hijack, poisoning) | Yes (HTTP) |
-| **DEEP** | `--deep` | Inspects a local reference model's hidden states to corroborate injection payloads at the activation level | No (local model) |
+| Pillar | Focus Area | Status | Reference |
+| :--- | :--- | :---: | :--- |
+| **Pillar 1** | Attack Engine, Parallel Runner, Scorer | ✅ Stable | [Manual](docs/AgentScan_Manual.md) |
+| **Pillar 2** | AI Supply Chain (AICS), OSV.dev, AIBOM | ✅ Stable | [Matrix](docs/module_matrix.md) |
+| **Pillar 3** | EXPLOIT Mode (Exfiltration, Hijack, Memory Poison) | ✅ Stable | [Matrix](docs/module_matrix.md) |
+| **Pillar 4** | Reporting (Interactive HTML, PDF, SARIF) | ✅ Stable | [Dashboard](docs/AgentScan_Manual.md#44-reporting-engine) |
+| **Pillar 5** | DEEP Mode Neural Activation Probing & Connectors | ✅ Stable | [Deep Mode Guide](docs/deep_mode.md) |
+| **Pillar 6** | Graph-Based RBAC (NetworkX), Multi-Turn Red-Team | ✅ Stable | [Matrix](docs/module_matrix.md) |
+| **Pillar 7** | MCP Stdio/SSE, WebSocket, Automated Fix Engine | ✅ Stable | [Manual](docs/AgentScan_Manual.md) |
 
-### DEEP mode — payload-corroborating activation probe
-
-`SCAN` decides success from an agent's **textual** response, which paraphrase or an implicit refusal can hide. DEEP mode replays the *same* prompt-injection payloads through a local aligned reference model (`Qwen/Qwen2.5-0.5B-Instruct`) and measures how far each one shifts the model's internal representation away from a benign baseline, along two axes:
-
-- **magnitude** — L2 distance from the benign activations
-- **direction** — cosine similarity vs. the benign-to-benign coherence
-
-Each payload that clears the **benign noise floor** (mean pairwise distance across several ordinary prompts, not a single fixed threshold) becomes a ranked finding. Every DEEP finding carries `metadata["yaml_variant_id"]` — the same id `SCAN`'s ATK-001 uses — so a report can **join the behavioural and activation-level views of the same payload**.
-
-Additional `--deep` probes (skipped if the local model cannot load):
-
-- **ATK-024** rare-token / suffix trojan scanner (KL shift vs baseline)
-- **ATK-025** attention entropy / sink concentration vs benign prompts
-- **ATK-026** activation fingerprint over a fixed probe set (`AGENTSCAN_MODEL_FINGERPRINT` to pin)
+👉 *For the comprehensive 24-module technical deliverable breakdown, see the [Module Status Matrix](docs/module_matrix.md).*
 
 ---
 
-## Architecture
+## 🏗️ Tech Stack
 
-```
-Target (pydantic) ─▶ Registry (auto-discovery) ─▶ Runner (asyncio.gather)
-                                                        │
-                                            AttackModule subclasses
-                                            scan/ · exploit/ · deep/
-                                                        │
-                                                   list[Finding]
-                                                        │
-                                          Scorer ─▶ ScanReport ─▶ Reporting
-                                                              (JSON/HTML/PDF/SARIF)
-```
+<div align="center">
 
-- **`core/models.py`** — the single source of truth. `Target`, `Finding`, `ScanReport`, and the `Severity` / `ScanMode` / `Framework` enums. If you reach for a `dict`, use one of these instead.
-- **`attacks/base.py`** — the `AttackModule` contract. `__init_subclass__` enforces required class attributes; `supported_modes` decides when a module runs.
-- **`attacks/registry.py`** — walks the `scan/`, `exploit/`, `deep/` packages and registers every `AttackModule` subclass automatically.
-- **`core/runner.py`** — discovers applicable modules and runs them concurrently; a module that raises is logged and excluded, never crashing the scan.
+| Layer | Technologies |
+| :--- | :--- |
+| **Core Architecture** | Python 3.12+ • Pydantic v2 • Typer • Rich • LiteLLM |
+| **Neural Probing** | PyTorch (CPU) • HuggingFace Transformers (`Qwen2.5`) • Sentence-Transformers (`MiniLM`) |
+| **Transports & Connectors** | HTTPX • Playwright • WebSockets • Model Context Protocol (MCP) |
+| **Graph & Security Analysis** | NetworkX • OSV.dev REST API • Semgrep AST • CycloneDX 1.6 |
+| **Web UI & Reporting** | FastAPI • Uvicorn • Jinja2 • WeasyPrint • SARIF 2.1.0 |
 
-### Adding an attack module
+</div>
+
+---
+
+## 🗺️ Roadmap
+
+- [x] **OWASP Top 10 for LLMs 2025** complete coverage
+- [x] **Universal Connectors**: HTTP, cURL Replay, Playwright, WebSocket, and MCP
+- [x] **Graph-Based RBAC Audit** with multi-hop privilege escalation detection
+- [x] **Neural Activation Probing** for latent injection corroboration
+- [x] **Self-Healing Remediation**: AST patching and NeMo Guardrail synthesis
+- [x] **Interactive Dashboard & Traffic Inspector**
+- [ ] **Distributed Swarm Scanning**: Coordinated multi-agent adversarial simulation
+- [ ] **eBPF Agent Sandbox**: Real-time syscall monitoring for tool-executing agents
+
+---
+
+## 🤝 Contributing & Extending
+
+Adding a new attack module takes less than 15 lines of code. Subclass `AttackModule` and place it in `agentscan/attacks/scan/`, `exploit/`, or `deep/` — the registry auto-discovers it:
 
 ```python
 from agentscan.attacks.base import AttackModule
 from agentscan.core.models import Finding, ScanMode, Severity, Target
 
-class MyAttack(AttackModule):
+class CustomPromptLeak(AttackModule):
     attack_id = "ATK-099"
-    attack_name = "My New Attack"
+    attack_name = "Custom Prompt Leak Detector"
     owasp_id = "LLM01"
     supported_modes = [ScanMode.SCAN]
 
     async def run(self, target: Target) -> list[Finding]:
-        return [self.make_finding(Severity.HIGH, "…")]
+        # Custom probe logic here
+        return [self.make_finding(Severity.HIGH, "Vulnerability detected!")]
 ```
 
-Drop it in `agentscan/attacks/scan/` — the registry picks it up. No other change needed.
-
----
-
-## Module status
-
-| Module | Scope | Status |
-|---|---|---|
-| **0** | Foundation — models, client, registry, CI | ✅ |
-| **1** | Core attack engine — CLI, scorer, runner, prompt injection | ✅ |
-| **2A** | AI supply-chain scanner — deps, config, secrets, typosquat, MCP | ✅ |
-| **2B** | Identity & authorization audit | ✅ |
-| **3A/3B** | EXPLOIT mode — exfiltration, tool hijack, memory poison, cross-agent, credential harvest | ✅ |
-| **4** | Reporting engine — HTML, PDF, SARIF, compliance mapper | ✅ |
-| **5A** | DEEP mode — activation infrastructure + payload-corroborating probe | ✅ |
-| **5B** | AI-driven foundation — `litellm` unified client (`core/ai_client.py`) + MiniLM embedding-based detection (`core/semantic.py`) | ✅ |
-| **5C** | Transport connectors — `HttpJsonConnector` + `RequestTemplateConnector` (`--curl`) + `BrowserConnector` (Playwright); SSE streaming; multi-turn fix; `AgentScanClient` facade; `agentscan init` auto-discovery | ✅ |
-| **5D** | Traffic visibility — `core/trace.py` (`TrafficRecorder`), `scan --verbose` + `scan --transcript <file>` | ✅ |
-| **5E** | AI red-teaming — `ai_attacker.py` (ATK-050, PAIR-style adaptive), `evaluator.py` (LLM-as-a-Judge), `jailbreaks.py` (seed library), `calibration.py` + `calibrate`, `benchmark.py` + `benchmark`, `--llm-log`, `.env` support | ✅ |
-| **6A** | SCAN expansion — ATK-002 jailbreak, ATK-003 PII exfiltration, ATK-004 DoS, ATK-005 indirect injection, ATK-006 MCP shadow (`YamlScanRunner` channel delivery + resource/tool detectors) | ✅ |
-| **6E** | OWASP closeout — ATK-007 insecure output handling (LLM02), ATK-008 RAG poisoning (LLM03), ATK-009 overreliance (LLM09), ATK-010 Crescendo EXPLOIT (multi-turn, not ATK-050) | ✅ |
-| **6B** | Live OSV.dev CVE API — `querybatch` + hydrate for PyPI exact pins; `known_vulnerabilities.yaml` offline fallback | ✅ |
-| **6C** | Graph-based RBAC — `networkx` multi-hop privilege escalation (`ID-010`) via `calls_agents` and shared-credential paths | ✅ |
-| **6D** | Trajectory tracing + SSP mapper — always-on `TrajectoryRecorder`, Servant/Stalker/Predator classification on every scan | ✅ |
-| **7A** | DEEP extensions — attention analyzer, ATK-024 trojan scanner, model fingerprint (`--deep`) | ✅ |
-| **7B** | MCP stdio/SSE + WebSocket connectors | ✅ |
-| **7C** | GitHub Action + CycloneDX 1.6 AIBOM (`audit --aibom`) | ✅ |
-| **7D** | Local `agentscan ui` FastAPI dashboard | ✅ |
-
----
-
-## Development
-
+Run test suite and quality gates:
 ```bash
-uv run pytest tests/ -m "not slow"   # fast suite (skips model-download tests)
-uv run pytest tests/                 # full suite (DEEP tests download Qwen)
-uv run ruff check agentscan/ tests/
-uv run mypy agentscan/ --ignore-missing-imports
-```
-
-DEEP-mode tests are marked `@pytest.mark.slow` because they download and run a local model.
-
-### Project layout
-
-```
-agentscan/
-  core/          models, client, runner, scorer
-  attacks/
-    base.py      AttackModule contract
-    registry.py  auto-discovery
-    payloads/    YAML attack payloads (single source of truth)
-    scan/        passive detection modules
-    exploit/     active proof-of-impact modules
-    deep/        neural activation probes
-  neural/        activation capture hooks + tensor metrics
-  identity/      identity & authorization audit
-  supply_chain/  dependency / config / secret / typosquat / MCP audit
-  reporting/     HTML / PDF / SARIF / compliance mapping
+uv run pytest tests/ -m "not slow"   # Fast test suite (470+ non-slow, 480+ total tests)
+uv run ruff check .                  # Linting
+uv run mypy agentscan/               # Static type checking
 ```
 
 ---
 
-## License
+## 📚 Documentation
 
-See repository for license details.
+| Resource | Purpose |
+| :--- | :--- |
+| 📖 [AgentScan Project Manual](docs/AgentScan_Manual.md) | Complete architectural guide, internals, threat models, and CLI reference |
+| 🔬 [DEEP Mode Probing Guide](docs/deep_mode.md) | Mathematical formulation for latent activation and cosine divergence shifts |
+| 🧩 [Module Status Matrix](docs/module_matrix.md) | Comprehensive status for all 24 engineering modules and deliverables |
+| 🤖 [LLM Context (`llms.txt`)](llms.txt) | LLM-optimized summary and canonical CLI reference |
+| 📜 [Full LLM Specification (`llms-full.txt`)](llms-full.txt) | Complete technical schemas, threat catalogs, and CLI flag dictionary |
+
+---
+
+## 📄 License & Attribution
+
+Distributed under the **Apache 2.0 License**.
+
+Authored and maintained by [Prathamesh](https://github.com/PrathaMesh3056).
+
+---
+
+<details>
+<summary><b>ℹ️ GitHub Repository Metadata (About & Topics)</b></summary>
+<br>
+
+- **Description**: `🛡️ Open-source security scanner & red-teaming engine for AI agents (OWASP LLM Top 10, prompt injection, neural probing, AICS & RBAC).`
+- **Website**: `https://github.com/PrathaMesh3056/AgentScan`
+- **Topics**: `ai-security`, `red-teaming`, `llm-security`, `prompt-injection`, `owasp-llm-top-10`, `ai-agents`, `vulnerability-scanner`, `mcp-security`, `supply-chain-security`, `pytorch`, `fastapi`, `playwright`
+
+</details>

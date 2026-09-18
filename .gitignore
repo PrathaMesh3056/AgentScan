@@ -46,6 +46,8 @@ Desktop.ini
 captured*.txt
 *llm*log*.txt
 *llm*.txt
+!llms.txt
+!llms-full.txt
 
 # --- Local target profiles / init output (users force-add if they want to keep one) ---
 target.yaml

@@ -1,0 +1,46 @@
+# AgentScan
+
+> Open-source security scanner and adversarial red-teaming engine for AI agents. Fires attack batteries across live endpoints (HTTP, WebSockets, MCP, Playwright browser), statically audits agent supply chains and identity permissions, and probes neural activations for latent injection corroboration.
+
+## Core Capabilities
+
+- **Automated AI Red-Teaming**: Multi-turn adaptive jailbreaks (PAIR, Crescendo), LLM-as-a-Judge semantic grading, and OWASP LLM Top 10 automated test suites.
+- **Active Exploit Proofs**: Live verification of system prompt exfiltration, unauthorized tool invocation, memory poisoning, cross-agent prompt injection, and credential harvesting.
+- **Neural Activation Probing (DEEP Mode)**: PyTorch-powered latent hidden-state displacement ($L_2$ and cosine shifts) vs. calibrated benign baselines, attention entropy analysis, and suffix trojan detection.
+- **AI Supply-Chain & Static Auditing**: OSV.dev live CVE intelligence, unsafe model serialization checks (`torch.load`, pickle), hardcoded secret detection, typosquatting guards, and CycloneDX 1.6 AIBOM generation.
+- **Zero-Trust Identity & MCP RBAC**: NetworkX multi-hop privilege escalation graph analysis across agent manifests and MCP server configurations.
+- **Self-Healing Remediation**: Automated AST code patching, dependency version bumping, and NeMo Guardrail policy generation (`agentscan fix`).
+- **Universal Connectors**: HTTP JSON, curl replay templates with SSE streaming, headless Playwright browser automation, MCP stdio/SSE, and raw WebSockets.
+- **Interactive UI & Enterprise Reporting**: Real-time web dashboard (`agentscan ui`), styled HTML reports, vector PDF reports, and SARIF export for GitHub Code Scanning.
+
+## Quick CLI Reference
+
+```bash
+# Live agent scan
+uv run agentscan scan http://localhost:8000/chat --output report.html
+
+# Full-depth scan (passive + exploit proofs + neural activation probe)
+uv run agentscan scan http://localhost:8000/chat --exploit --deep --output report.html
+
+# Statically audit an AI agent repository (dependencies, configs, secrets, MCP)
+uv run agentscan audit ./my-agent-repo --aibom
+
+# Preview automated security patches
+uv run agentscan fix ./my-agent-repo
+
+# Apply automated security patches directly
+uv run agentscan fix ./my-agent-repo --apply
+
+# Launch interactive threat dashboard
+uv run agentscan ui --report report.json
+```
+
+## Documentation & Key Files
+
+- [Full LLM Context (llms-full.txt)](file:///d:/prathamesh/AgentScan/llms-full.txt): Complete technical specification, schema definitions, and CLI flag dictionary.
+- [Project Manual](file:///d:/prathamesh/AgentScan/docs/AgentScan_Manual.md): In-depth guide to AgentScan internals, architecture, and threat modeling.
+- [DEEP Mode Neural Probing](file:///d:/prathamesh/AgentScan/docs/deep_mode.md): Theoretical foundation and mathematical formulas for neural activation analysis.
+- [Module Status Matrix](file:///d:/prathamesh/AgentScan/docs/module_matrix.md): Exhaustive breakdown of all 24 engineering modules and milestone deliverables.
+- [Core Models](file:///d:/prathamesh/AgentScan/agentscan/core/models.py): Canonical Pydantic v2 schemas (`Target`, `Finding`, `ScanReport`, `Severity`, `ScanMode`).
+- [Attack Module Contract](file:///d:/prathamesh/AgentScan/agentscan/attacks/base.py): Base class for authoring custom attack modules.
+- [GitHub Action Specification](file:///d:/prathamesh/AgentScan/action.yml): CI/CD composite action definition for automated pull request security gating.

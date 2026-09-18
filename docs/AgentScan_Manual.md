@@ -58,7 +58,7 @@ pip install -e .
 **1. Run your first live scan:**
 If you have a LangChain or OpenAI-based agent running locally on port 8000:
 ```bash
-agentscan scan --target http://localhost:8000/chat --framework langchain
+agentscan scan http://localhost:8000/chat --framework langchain
 ```
 
 **2. Audit an AI project directory:**

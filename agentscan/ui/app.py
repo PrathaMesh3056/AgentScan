@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from loguru import logger
+from pydantic import ValidationError
 
 from agentscan.core.models import (
     Finding,
@@ -70,9 +71,16 @@ class UiState:
         if path is None or not path.exists():
             self.report = None
             return None
-        data = json.loads(path.read_text(encoding="utf-8"))
-        self.report = ScanReport.model_validate(data)
-        return self.report
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            self.report = ScanReport.model_validate(data)
+            return self.report
+        except (json.JSONDecodeError, ValidationError, UnicodeDecodeError) as err:
+            raise RuntimeError(
+                f"Failed to parse report from '{path}': expected valid JSON adhering to ScanReport schema. "
+                f"Detail: {err}. Note: 'agentscan ui --report' requires a JSON report generated via "
+                f"'agentscan scan --output report.json' (HTML reports cannot be loaded as data)."
+            ) from err
 
 
 state = UiState()

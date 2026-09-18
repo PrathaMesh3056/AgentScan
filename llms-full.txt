@@ -1,0 +1,76 @@
+# AgentScan — Full Machine-Readable Specification
+
+## Project Essence
+AgentScan is an open-source, production-grade security scanner and automated red-teaming platform for AI agents. It applies offensive pentesting techniques directly to LLMs, autonomous agent loops, tool-calling APIs, and their supporting software supply chains.
+
+## Technical Architecture
+
+### 1. Data Models (Single Source of Truth)
+Defined in `agentscan.core.models`:
+- `Target`: Endpoint metadata, connector configuration, headers, framework detection, and transport parameters.
+- `Finding`: Immutable vulnerability record with `id`, `attack_id`, `severity` (CRITICAL, HIGH, MEDIUM, LOW, INFO), `title`, `description`, `evidence`, `remediation`, `owasp_id`, `compliance_tags`, and `metadata`.
+- `ScanReport`: Scored scan results (0-100), execution duration, target details, aggregated findings, and compliance alignments (OWASP LLM Top 10, NIST AI RMF, EU AI Act, MITRE ATLAS).
+- `Severity`: Enum (`CRITICAL`, `HIGH`, `MEDIUM`, `LOW`, `INFO`).
+- `ScanMode`: Enum (`SCAN`, `EXPLOIT`, `DEEP`).
+
+### 2. Attack Execution Engine
+- `AttackModule` (`agentscan.attacks.base`): Abstract base class requiring `attack_id`, `attack_name`, `owasp_id`, and `supported_modes`.
+- Auto-discovery Registry (`agentscan.attacks.registry`): Dynamically walks `agentscan.attacks.scan`, `agentscan.attacks.exploit`, and `agentscan.attacks.deep` without manual registration lists.
+- Parallel Runner (`agentscan.core.runner`): Concurrent asynchronous module execution with isolated error boundaries.
+
+### 3. Connectors & Transports
+- `HttpJsonConnector`: Standard JSON REST endpoints (`POST /chat`).
+- `RequestTemplateConnector`: Replays captured browser network traffic (`--curl`) with dynamic payload substitution, supporting Server-Sent Events (SSE) streaming and multi-turn state.
+- `BrowserConnector`: Headless Playwright browser automation driving visual web widgets via CSS selectors.
+- `McpConnector`: Model Context Protocol inspection via stdio and SSE transports (`mcp://`).
+- `WebSocketConnector`: Interactive two-way message framing (`ws://`, `wss://`).
+
+### 4. Detection Engines
+- Semantic Matching: SentenceTransformers (`all-MiniLM-L6-v2`) for robust intent and meaning classification, avoiding brittle substring matches.
+- LLM-as-a-Judge: Automated verification and scoring via LiteLLM (`evaluator.py`).
+- Neural Hidden-State Probing: Layerwise activation vector displacement, L2 distance, cosine shift against benign baseline noise floor (`Qwen/Qwen2.5-0.5B-Instruct`).
+- Supply Chain & AST Auditing: OSV.dev live API CVE querying, Python AST parsing for insecure calls (`torch.load`, `shell=True`), secret entropy regexes, and typosquatting edit distance.
+- Zero-Trust Identity: NetworkX directed graph analysis detecting privilege escalation paths across agent manifests and tool bindings.
+
+## CLI Commands Reference
+
+### `agentscan scan <target_url>`
+- `--framework [auto|langchain|crewai|autogen|openai]`: Agent framework hint.
+- `--exploit`: Execute active exploit proof modules.
+- `--deep`: Run neural activation probes on local reference model.
+- `--mutate`: Apply payload mutation variants (Base64, leetspeak, ZWSP, homoglyphs).
+- `--system-prompt <text>`: Reference system prompt for exfiltration verification.
+- `--output <path>`: Write report (`.json`, `.html`, `.pdf`, `.sarif`).
+- `--fail-on [CRITICAL|HIGH|MEDIUM|LOW]`: CI gate exit code 1 threshold.
+- `--curl <file>`: Use cURL capture file for replay.
+- `--browser-url <url>`: Launch Playwright for web widget testing.
+- `--attacker-model <model_id>`: Enable multi-turn adaptive AI red-teaming (e.g. `openrouter/...`, `ollama/...`).
+- `--attacker-turns <n>`: Maximum adaptive turns.
+- `--verbose` / `-v`: Live payload and reply terminal streaming.
+- `--transcript <file>`: Full raw conversation transcript export.
+
+### `agentscan audit <directory>`
+- `--scan-deps`: Scan dependencies for CVEs via OSV.dev.
+- `--scan-config`: Check code and configuration for unsafe patterns.
+- `--scan-secrets`: Detect hardcoded API keys and credentials.
+- `--scan-typo`: Detect typosquatted Python packages.
+- `--scan-mcp`: Audit MCP configuration files.
+- `--scan-identity`: Audit agent identity manifests and RBAC permissions.
+- `--aibom`: Export CycloneDX 1.6 Artificial Intelligence Bill of Materials (writes aibom.cdx.json by default, or to --output).
+- `--output <file>`: Write findings JSON.
+
+### `agentscan fix <target_path>`
+- `--apply`: Apply proposed fixes directly to disk (default is dry-run diff preview).
+- `--kind [pin_bump,ast_patch,identity_shrink,guardrails]`: Filter fix types.
+
+### `agentscan ui`
+- `--host <host>`: Host to bind dashboard (default `127.0.0.1`).
+- `--port <port>`: Port to bind dashboard (default `8765`).
+- `--report <path>`: Load initial scan report JSON into dashboard.
+- `--identity <dir>`: Load agent manifests for RBAC graph visualization.
+
+### `agentscan init <url>`
+- Automatically probes target endpoint and outputs a reusable scan profile YAML (`target.yaml`).
+
+### `agentscan calibrate` / `agentscan benchmark`
+- Verifies judge and attacker model reliability and validates agent defense scoring against known baselines.
