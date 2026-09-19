@@ -15,12 +15,24 @@
 
 from __future__ import annotations
 
+import asyncio
+import contextvars
 from typing import Any
 
 from agentscan.core.connectors import Connector, select_connector
 from agentscan.core.models import Target
 from agentscan.core.trace import recorder
 from agentscan.core.trajectory import trajectory_recorder
+
+_GLOBAL_SEMAPHORE: contextvars.ContextVar[asyncio.Semaphore | None] = contextvars.ContextVar(
+    "_GLOBAL_SEMAPHORE", default=None
+)
+
+
+def set_global_concurrency_limit(limit: int | None) -> None:
+    """Set or clear a global concurrency limiter across all AgentScanClient requests."""
+    sem = asyncio.Semaphore(limit) if limit and limit > 0 else None
+    _GLOBAL_SEMAPHORE.set(sem)
 
 
 class AgentScanClient:
@@ -46,7 +58,13 @@ class AgentScanClient:
         self, message: str, extra_body: dict[str, Any] | None = None
     ) -> dict[str, Any]:
         """Send a single message/payload to the target. Returns a response dict."""
-        resp = await self._connector.send_message(message, extra_body)
+        sem = _GLOBAL_SEMAPHORE.get()
+        if sem is not None:
+            async with sem:
+                resp = await self._connector.send_message(message, extra_body)
+        else:
+            resp = await self._connector.send_message(message, extra_body)
+
         trajectory_recorder.record(message, resp)
         if recorder.enabled:
             recorder.record("message", message, resp)
@@ -54,7 +72,13 @@ class AgentScanClient:
 
     async def send_conversation(self, messages: list[dict[str, str]]) -> dict[str, Any]:
         """Send a multi-turn conversation history to the target."""
-        resp = await self._connector.send_conversation(messages)
+        sem = _GLOBAL_SEMAPHORE.get()
+        if sem is not None:
+            async with sem:
+                resp = await self._connector.send_conversation(messages)
+        else:
+            resp = await self._connector.send_conversation(messages)
+
         payload = next(
             (m.get("content", "") for m in reversed(messages) if m.get("role") == "user"),
             " || ".join(f"{m.get('role')}: {m.get('content', '')}" for m in messages),

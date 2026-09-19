@@ -37,12 +37,13 @@ _INJECT_ASCSS = r"""
     for (const c of classes) { const n = document.querySelectorAll('.' + c).length;
       if (n >= 1 && n < bestCount) { best = '.' + c; bestCount = n; } }
     if (best && bestCount > 12) {
-      for (let i = 0; i < classes.length; i++) for (let j = i + 1; j < classes.length; j++) {
-        const sel = '.' + classes[i] + '.' + classes[j]; const n = document.querySelectorAll(sel).length;
+      const candClasses = classes.slice(0, 4);
+      for (let i = 0; i < candClasses.length; i++) for (let j = i + 1; j < candClasses.length; j++) {
+        const sel = '.' + candClasses[i] + '.' + candClasses[j]; const n = document.querySelectorAll(sel).length;
         if (n >= 1 && n < bestCount) { best = sel; bestCount = n; } } }
     // Scope to a parent class if still broad, to bias toward the newest bubble.
     if (best && bestCount > 12 && el.parentElement) {
-      const pcs = [...(el.parentElement.classList || [])].filter(clean);
+      const pcs = [...(el.parentElement.classList || [])].filter(clean).slice(0, 3);
       for (const pc of pcs) { const sel = '.' + pc + ' ' + best; const n = document.querySelectorAll(sel).length;
         if (n >= 1 && n < bestCount) { best = sel; bestCount = n; } }
     }
@@ -169,34 +170,43 @@ def _find_reply_path(parsed: dict[str, Any]) -> str | None:
 
 async def discover_http(url: str, test_message: str = _PROBE) -> dict[str, Any] | None:
     """
-    Probe `url` as a JSON chat API (no browser). Tries common request shapes and,
+    Probe `url` as a JSON chat API (no browser). Tries common request shapes concurrently and,
     on a plausible reply, returns {message_path, response_path, json_body, streaming}.
     """
+    import asyncio
+
     import httpx
 
     from agentscan.core.connectors import parse_response
 
-    async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
-        for message_path, make_body in _HTTP_SHAPES:
+    async with httpx.AsyncClient(timeout=6.0, follow_redirects=True) as client:
+
+        async def _probe_single(message_path: str, make_body: Any) -> dict[str, Any] | None:
             body = make_body(test_message)
             try:
                 r = await client.post(url, json=body, headers={"content-type": "application/json"})
-            except Exception:  # noqa: BLE001 - just try the next shape
-                continue
+            except Exception:
+                return None
             if r.status_code >= 400 or "html" in r.headers.get("content-type", ""):
-                continue
+                return None
             parsed = parse_response(r)
             if "error" in parsed:
-                continue
+                return None
             response_path = _find_reply_path(parsed)
             if response_path is None:
-                continue
+                return None
             return {
                 "message_path": message_path,
                 "response_path": response_path,
                 "json_body": body,
                 "streaming": "event-stream" in r.headers.get("content-type", ""),
             }
+
+        tasks = [_probe_single(mp, mb) for mp, mb in _HTTP_SHAPES]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        for res in results:
+            if isinstance(res, dict):
+                return res
     return None
 
 
@@ -284,8 +294,8 @@ async def _discover_response(
       return window.__ascss(els[els.length - 1]);
     }
     """
-    for _ in range(25):
-        await page.wait_for_timeout(1000)
+    for _ in range(35):
+        await page.wait_for_timeout(350)
         sel = await page.evaluate(find_reply, [before, msg])
         if sel:
             return sel

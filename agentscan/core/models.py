@@ -293,6 +293,25 @@ class Target(BaseModel):
         "obfuscation mutators (Base64, leetspeak, ZWSP, token-split, homoglyphs, wraps).",
     )
 
+    concurrency: int = Field(
+        default=10,
+        ge=1,
+        le=100,
+        description="Maximum concurrent HTTP requests per attack module.",
+    )
+
+    mutation_budget: int | None = Field(
+        default=None,
+        ge=1,
+        le=10,
+        description="Maximum number of mutators to apply per variant when mutate=True (None = all).",
+    )
+
+    judge_cache: bool = Field(
+        default=True,
+        description="When True, caches LLM judge verdicts for identical (objective, response) pairs.",
+    )
+
     mode: ScanMode = Field(
         default=ScanMode.SCAN,
         description="Scan mode. SCAN=passive, EXPLOIT=active, DEEP=neural.",

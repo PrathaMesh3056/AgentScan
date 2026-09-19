@@ -188,8 +188,13 @@ def should_mutate_variant(variant: dict[str, Any]) -> bool:
 
 def expand_variants(
     variants: list[dict[str, Any]] | tuple[dict[str, Any], ...],
+    budget: int | None = None,
 ) -> list[dict[str, Any]]:
-    """Return originals plus N mutated copies (shallow-copied dicts)."""
+    """Return originals plus N mutated copies (shallow-copied dicts).
+
+    If budget is provided, limits the number of mutators applied per variant.
+    """
+    mutators = MUTATORS if budget is None else MUTATORS[: max(0, budget)]
     expanded: list[dict[str, Any]] = []
     for variant in variants:
         expanded.append(dict(variant))
@@ -197,7 +202,7 @@ def expand_variants(
             continue
         payload = str(variant.get("payload", ""))
         vid = str(variant.get("id", "variant"))
-        for name, fn in MUTATORS:
+        for name, fn in mutators:
             mutated = dict(variant)
             mutated["payload"] = fn(payload)
             mutated["id"] = f"{vid}:{name}"

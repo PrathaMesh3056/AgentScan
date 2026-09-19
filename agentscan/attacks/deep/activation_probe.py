@@ -76,7 +76,7 @@ def _extract_layer_activation(model: Any, tokenizer: Any, prompt: str, layer_idx
 
     inputs = tokenizer(prompt, return_tensors="pt")
     target_layer = model.model.layers[layer_idx]
-    with torch.no_grad(), ActivationCapture(target_layer) as cap:
+    with torch.inference_mode(), ActivationCapture(target_layer) as cap:
         model(**inputs)
     if cap.captured is None:
         raise RuntimeError(f"Failed to capture activation at layer {layer_idx}")
@@ -110,20 +110,30 @@ def _benign_cosine_floor(benign_activations: list[Any]) -> float:
     return sum(pairwise) / len(pairwise)
 
 
-def _mean_distance_to_benign(activation: Any, benign_activations: list[Any]) -> float:
-    """Mean L2 distance from a payload activation to every benign anchor."""
-    from agentscan.neural.activation_delta import l2_distance
+def _mean_distance_to_benign(activation: Any, benign_activations: list[Any] | Any) -> float:
+    """Mean L2 distance from a payload activation to every benign anchor (vectorized)."""
+    import torch
 
-    distances = [l2_distance(activation, b) for b in benign_activations]
-    return sum(distances) / len(distances)
+    a_flat = activation.flatten().unsqueeze(0)
+    if isinstance(benign_activations, torch.Tensor):
+        b_stack = benign_activations
+    else:
+        b_stack = torch.stack([b.flatten() for b in benign_activations])
+    distances = torch.linalg.norm(b_stack - a_flat, dim=1)
+    return float(distances.mean().item())
 
 
-def _mean_cosine_to_benign(activation: Any, benign_activations: list[Any]) -> float:
-    """Mean cosine similarity from a payload activation to every benign anchor."""
-    from agentscan.neural.activation_delta import cosine_similarity
+def _mean_cosine_to_benign(activation: Any, benign_activations: list[Any] | Any) -> float:
+    """Mean cosine similarity from a payload activation to every benign anchor (vectorized)."""
+    import torch
 
-    sims = [cosine_similarity(activation, b) for b in benign_activations]
-    return sum(sims) / len(sims)
+    a_flat = activation.flatten().unsqueeze(0)
+    if isinstance(benign_activations, torch.Tensor):
+        b_stack = benign_activations
+    else:
+        b_stack = torch.stack([b.flatten() for b in benign_activations])
+    sims = torch.nn.functional.cosine_similarity(a_flat, b_stack, dim=1)
+    return float(sims.mean().item())
 
 
 class ActivationProbeModule(AttackModule):
@@ -131,7 +141,7 @@ class ActivationProbeModule(AttackModule):
     DEEP mode attack module detecting activation-level anomalies in model hidden states.
 
     Instead of a single hardcoded adversarial prompt, this module replays every
-    prompt-injection payload that ATK-001 fires and ranks them by how far each one
+    prompt-injection payloads that ATK-001 fires and ranks them by how far each one
     shifts the model's internal representation past the benign noise floor, using
     both a magnitude (L2) and a direction (cosine) signal.
 
@@ -162,6 +172,8 @@ class ActivationProbeModule(AttackModule):
             logger.warning(f"ATK-023 skipped: DEEP reference model unavailable: {e}")
             return []
 
+        import torch
+
         # 1. Benign baseline: activations for a set of ordinary prompts, plus the
         #    magnitude (L2) and directional (cosine) coherence between them.
         benign_activations = [
@@ -169,6 +181,7 @@ class ActivationProbeModule(AttackModule):
         ]
         noise_floor = max(_benign_noise_floor(benign_activations), 1e-6)
         cosine_floor = _benign_cosine_floor(benign_activations)
+        benign_stack = torch.stack([b.flatten() for b in benign_activations])
 
         # 2. Replay the real ATK-001 payloads and measure each one's delta.
         variants = PromptInjectionModule._load_payload_variants()
@@ -184,12 +197,12 @@ class ActivationProbeModule(AttackModule):
                 logger.error(f"Activation probe failed on payload {vid}: {e}")
                 continue
 
-            delta = _mean_distance_to_benign(activation, benign_activations)
+            delta = _mean_distance_to_benign(activation, benign_stack)
             ratio = delta / noise_floor
             if ratio < ANOMALY_MULTIPLIER:
                 continue
 
-            cos_sim = _mean_cosine_to_benign(activation, benign_activations)
+            cos_sim = _mean_cosine_to_benign(activation, benign_stack)
             directional_anomaly = cos_sim < (cosine_floor - COS_MARGIN)
 
             # Magnitude alone at HIGH_RATIO is HIGH; otherwise a concurrent

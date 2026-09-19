@@ -16,6 +16,7 @@ import asyncio
 from loguru import logger
 
 from agentscan.attacks.registry import registry
+from agentscan.core.client import set_global_concurrency_limit
 from agentscan.core.connectors import (
     browser_session_active,
     close_browser_session,
@@ -38,7 +39,7 @@ async def run_scan(target: Target, *, reset_trajectory: bool = True) -> ScanRepo
     Run a full security scan against the target.
 
     Discovers all applicable attack modules, runs them concurrently,
-    scores the results, and returns a completed ScanReport.
+    scores findings, and returns a completed ScanReport.
     """
     if reset_trajectory:
         trajectory_recorder.reset()
@@ -75,6 +76,9 @@ async def run_scan(target: Target, *, reset_trajectory: bool = True) -> ScanRepo
         own_session = True
 
     sequential = recorder.enabled or target.browser is not None
+    if not sequential and getattr(target, "concurrency", None):
+        set_global_concurrency_limit(target.concurrency * 2)
+
     try:
         results: list[list[Finding] | BaseException]
         if sequential:
@@ -96,6 +100,7 @@ async def run_scan(target: Target, *, reset_trajectory: bool = True) -> ScanRepo
                 return_exceptions=True,
             )
     finally:
+        set_global_concurrency_limit(None)
         if own_session:
             await close_browser_session()
 

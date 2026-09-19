@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import difflib
 import functools
@@ -25,6 +26,20 @@ from agentscan.core.ai_client import AIClient
 from agentscan.core.client import AgentScanClient
 from agentscan.core.evaluator import LLMJudge
 from agentscan.core.models import Finding, ScanMode, Severity, Target
+
+
+@functools.lru_cache(maxsize=512)
+def _compile_regex(pattern: str) -> re.Pattern[str] | None:
+    if (pattern.startswith('r"') and pattern.endswith('"')) or (
+        pattern.startswith("r'") and pattern.endswith("'")
+    ):
+        pattern = pattern[2:-1]
+    try:
+        return re.compile(pattern, flags=re.IGNORECASE)
+    except re.error as e:
+        logger.warning(f"Invalid regex pattern {pattern!r}: {e}")
+        return None
+
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -187,22 +202,49 @@ class YamlScanRunner(AttackModule, ABC):
         if target.mutate:
             from agentscan.attacks.mutators import expand_variants
 
-            variant_list = expand_variants(variant_list)
+            mutation_budget = getattr(target, "mutation_budget", None)
+            variant_list = expand_variants(variant_list, budget=mutation_budget)
+
+        concurrency = getattr(target, "concurrency", 10) or 10
+        sem = asyncio.Semaphore(concurrency)
+
+        async def _test_one(idx: int, var: dict[str, Any]) -> tuple[int, Finding | None]:
+            async with sem:
+                try:
+                    finding = await self._test_variant(client, var, judge=judge)
+                    return idx, finding
+                except Exception as e:
+                    logger.error(f"Error testing variant {var.get('id', '?')}: {e}")
+                    return idx, None
 
         async with AgentScanClient(target) as client:
-            for variant in variant_list:
-                try:
-                    finding = await self._test_variant(client, variant, judge=judge)
-                    if finding is not None:
-                        findings.append(finding)
-                except Exception as e:
-                    logger.error(f"Error testing variant {variant.get('id', '?')}: {e}")
+            tasks = [_test_one(i, v) for i, v in enumerate(variant_list)]
+            results = await asyncio.gather(*tasks)
+            for _, finding in sorted(results, key=lambda x: x[0]):
+                if finding is not None:
+                    findings.append(finding)
 
         logger.info(
             f"{self.attack_name} scan complete: "
             f"{len(findings)}/{len(variant_list)} variants succeeded"
         )
         return findings
+
+    @staticmethod
+    async def _cached_judge(
+        judge: LLMJudge, objective: str, response_text: str, use_cache: bool = True
+    ) -> Any:
+        """Evaluate response with judge, optionally caching verdicts by (objective, response)."""
+        if not use_cache:
+            return await judge.judge(objective, response_text)
+        if not hasattr(judge, "_verdict_cache"):
+            judge._verdict_cache = {}  # type: ignore[attr-defined]
+        cache_key = (objective, response_text)
+        if cache_key in judge._verdict_cache:  # type: ignore[attr-defined]
+            return judge._verdict_cache[cache_key]  # type: ignore[attr-defined]
+        verdict = await judge.judge(objective, response_text)
+        judge._verdict_cache[cache_key] = verdict  # type: ignore[attr-defined]
+        return verdict
 
     async def _test_variant(
         self,
@@ -212,7 +254,7 @@ class YamlScanRunner(AttackModule, ABC):
     ) -> Finding | None:
         """Test a single payload variant. Returns Finding if attack succeeded, None otherwise."""
         payload_text = self._build_payload(variant)
-        response = await self._deliver_variant(client, variant)
+        response = await self._deliver_variant(client, variant, payload_text=payload_text)
         response_text = self._extract_text(response)
 
         detection_method = variant["detection_method"]
@@ -236,7 +278,8 @@ class YamlScanRunner(AttackModule, ABC):
 
         if judge is not None and detection_method not in _JUDGE_SKIP_METHODS:
             objective = self.build_judge_objective(variant, payload_text, detection_target)
-            verdict = await judge.judge(objective, response_text)
+            use_cache = getattr(self._current_target, "judge_cache", True)
+            verdict = await self._cached_judge(judge, objective, response_text, use_cache=use_cache)
             if verdict.success:
                 return self.make_finding(
                     severity=Severity(variant["severity"]),
@@ -320,9 +363,11 @@ class YamlScanRunner(AttackModule, ABC):
         self,
         client: AgentScanClient,
         variant: dict[str, Any],
+        payload_text: str | None = None,
     ) -> dict[str, Any]:
         """Send the variant to the target using the configured delivery channel."""
-        payload_text = self._build_payload(variant)
+        if payload_text is None:
+            payload_text = self._build_payload(variant)
         channel = variant.get("channel", "user")
         if channel == "user":
             return await client.send_message(payload_text)
@@ -482,16 +527,10 @@ class YamlScanRunner(AttackModule, ABC):
         if method == "not_contains":
             return target.lower() not in response_text.lower()
         if method == "regex":
-            pattern = target
-            if (pattern.startswith('r"') and pattern.endswith('"')) or (
-                pattern.startswith("r'") and pattern.endswith("'")
-            ):
-                pattern = pattern[2:-1]
-            try:
-                return bool(re.search(pattern, response_text, flags=re.IGNORECASE))
-            except re.error as e:
-                logger.warning(f"Invalid regex pattern {target!r}: {e}")
+            compiled = _compile_regex(target)
+            if compiled is None:
                 return False
+            return bool(compiled.search(response_text))
         if method == "semantic_similarity":
             return YamlScanRunner._semantic_similarity_match(response_text, target)
         if method == "timeout":
@@ -515,7 +554,8 @@ class YamlScanRunner(AttackModule, ABC):
     @staticmethod
     def _check_repetition(response_text: str, target: str) -> bool:
         """Detect looping or repetitive dumps via n-gram frequency and compression ratio."""
-        words = response_text.split()
+        capped_text = response_text[:10000]
+        words = capped_text.split()[:2000]
         if len(words) < 20:
             return False
 
@@ -525,17 +565,17 @@ class YamlScanRunner(AttackModule, ABC):
                 min_repeat = max(2, int(target))
 
         for n in (2, 3, 4, 5):
-            counts: dict[str, int] = {}
+            counts: dict[tuple[str, ...], int] = {}
             for i in range(len(words) - n + 1):
-                gram = " ".join(words[i : i + n])
+                gram = tuple(words[i : i + n])
                 counts[gram] = counts.get(gram, 0) + 1
             if counts:
                 peak = max(counts.values())
                 if peak >= min_repeat and peak / len(words) >= 0.2:
                     return True
 
-        if len(response_text) >= 100:
-            raw = response_text.encode("utf-8", errors="ignore")
+        if len(capped_text) >= 100:
+            raw = capped_text.encode("utf-8", errors="ignore")
             ratio = len(zlib.compress(raw)) / len(raw)
             if ratio <= 0.12:
                 return True
