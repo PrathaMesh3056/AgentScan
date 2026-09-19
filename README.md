@@ -4,7 +4,7 @@
 
 # AgentScan
 
-**Open-source security scanner and red-teaming toolkit for AI agents and LLM applications.**
+**Open-source security scanner and red-teaming toolkit for AI agents and LLM-powered applications.**
 
 [![CI](https://github.com/PrathaMesh3056/AgentScan/actions/workflows/ci.yml/badge.svg)](https://github.com/PrathaMesh3056/AgentScan/actions/workflows/ci.yml)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg?logo=python&logoColor=white)](https://www.python.org/)
@@ -17,11 +17,13 @@
 [![llms.txt](https://img.shields.io/badge/llms.txt-standard-orange.svg)](llms.txt)
 
 <p align="center">
-  <a href="#why-agentscan">Why AgentScan</a> •
+  <a href="#overview">Overview</a> •
   <a href="#who-is-this-for">Who It's For</a> •
-  <a href="#quick-start">Quick Start</a> •
-  <a href="#how-it-works">How It Works</a> •
   <a href="#key-capabilities">Key Capabilities</a> •
+  <a href="#supported-targets">Supported Targets</a> •
+  <a href="#installation">Installation</a> •
+  <a href="#quick-start">Quick Start</a> •
+  <a href="#architecture--workflow">Architecture</a> •
   <a href="#benchmarks--performance">Benchmarks</a> •
   <a href="#documentation">Docs</a> •
   <a href="#contributing">Contributing</a>
@@ -35,41 +37,103 @@
 
 <br>
 
-AgentScan helps developers, security engineers, and red teams evaluate prompt injection, tool misuse, identity abuse, jailbreak behavior, and supply-chain vulnerabilities across live endpoints, browser widgets, MCP servers, and source repositories.
+AgentScan helps security teams, developers, and red teams evaluate risks in autonomous agents and LLM-powered systems, including:
+
+- **Prompt Injection & System Prompt Leakage** (direct, indirect, and multilingual bypasses)
+- **Jailbreak Behavior & Multi-Turn Escalation** (PAIR-style refinement and Crescendo dialogues)
+- **Tool Misuse & Unauthorized Actions** (unsolicited command execution and tool hijacking)
+- **Data Exfiltration & Memory Poisoning** (sensitive credential extraction and context pollution)
+- **Identity & RBAC Violations** (over-privileged tool scopes and multi-hop privilege escalation)
+- **MCP & Supply-Chain Vulnerabilities** (Model Context Protocol risks, unsafe dependencies, and dangerous code patterns)
 
 ---
 
-## Why AgentScan?
+## Overview
 
-Modern AI agents are not just text completions — they can call tools, access databases, read files, execute shell commands, and interact with third-party APIs. Traditional vulnerability scanners only check code syntax or open network ports, while prompt evaluation tools focus primarily on generation quality rather than security blast radius.
+Modern AI agents do not simply generate text — they execute tools, query databases, read sensitive files, trigger shell processes, and coordinate across external APIs. Traditional security scanners focus on source code syntax, static dependencies, or open network ports, while prompt evaluation frameworks focus primarily on generation quality and model alignment. Neither approach evaluates whether an autonomous agent will execute unauthorized actions when confronted with adversarial inputs.
 
-AgentScan bridges this gap by unifying active red-teaming with static security analysis:
+AgentScan bridges this gap by treating an AI agent like a web application under penetration testing. It actively probes live agent endpoints with adversarial payloads, simulates downstream exploits to measure real blast radius, audits local source repositories for supply-chain CVEs, and inspects agent identity configurations.
 
-- **Live Agent Probing**: Tests live endpoints against prompt injections, multi-turn jailbreaks (PAIR/Crescendo), PII leaks, and denial-of-service vectors.
-- **Active Exploit Simulation**: Validates whether injection leads to real downstream impact (tool hijacking, credential exfiltration, memory poisoning).
-- **Static Repository & Supply Chain Auditing**: Scans dependencies against OSV.dev advisories, audits AST for dangerous operations (`eval`, `subprocess(shell=True)`, unsafe unpickling), and inspects MCP configs.
-- **AIBOM & Compliance Generation**: Produces CycloneDX 1.6 Artificial Intelligence Bill of Materials and maps findings to the **OWASP Top 10 for LLMs**, **NIST AI RMF 1.0**, and the **EU AI Act**.
-- **Automated Self-Healing**: Synthesizes unified git diff patches (`agentscan fix`) and NeMo Guardrail policies to remediate detected vulnerabilities.
-- **Fast CI/CD Security Gates**: In-process heuristic evaluation enables sub-5-second pre-commit checks without mandatory external LLM API dependencies.
+The platform produces standardized security reports in multiple formats (JSON, interactive HTML, executive PDF, and OASIS SARIF 2.1.0 for GitHub Code Scanning), generates CycloneDX 1.6 Artificial Intelligence Bill of Materials (AIBOM), maps findings to major compliance frameworks (**OWASP Top 10 for LLMs**, **NIST AI RMF 1.0**, and the **EU AI Act**), and can synthesize automated self-healing patches (`agentscan fix`) to remediate identified vulnerabilities.
 
 ---
 
 ## Who Is This For?
 
-- **AI Engineers & Developers**: Validate system prompt robustness, test tool-calling boundaries, and prevent prompt injection before deploying agents to production.
-- **Security & AppSec Teams**: Audit LLM applications for OWASP Top 10 for LLMs compliance, over-privileged tool scopes (RBAC), and dependency CVEs.
-- **Red Teams & Penetration Testers**: Conduct automated multi-turn adversarial simulations, assess blast radius, and evaluate agent autonomy limits.
-- **Platform & DevOps Engineers**: Embed deterministic, non-blocking security checks and SARIF reporting into GitHub Actions and CI/CD pipelines.
+- **AI Application Developers**: Validate system prompt resilience, audit tool-calling boundaries, and catch prompt injection vulnerabilities before deploying agents to production.
+- **Security & AppSec Engineers**: Assess agentic systems against the OWASP Top 10 for LLMs, verify tool authorization controls (RBAC), and scan AI dependencies for known CVEs.
+- **Red Teams & Penetration Testers**: Execute automated adversarial simulations, test multi-turn escalation pathways (Crescendo/PAIR), and prove blast-radius impact through simulated exploits.
+- **Platform & DevSecOps Teams**: Integrate deterministic, sub-second agent security gates into GitHub Actions and CI/CD pipelines with native SARIF output.
+- **Organizations Deploying Tool-Using Agents**: Audit Model Context Protocol (MCP) servers, manage agent identity policies, and generate compliance-ready AIBOMs.
+- **Researchers Evaluating LLM Security**: Benchmark model defenses and examine internal representation shifts via CPU-based neural activation probing.
 
 ---
 
-## Quick Start
+## Key Capabilities
 
-### Prerequisites
+### Live Agent Testing
+- **HTTP Endpoint Scanning**: Probe live REST/JSON agent endpoints with single-turn and multi-turn payloads.
+- **cURL Replay**: Ingest captured browser sessions (`--curl`) to test complex web agents with cookies, headers, and multipart requests.
+- **Headless Browser Testing**: Automate chat widget testing in real browsers via Playwright (`--browser-url`).
+- **WebSocket Streaming**: Scan persistent real-time streaming agents over `ws://` and `wss://`.
+- **Model Context Protocol (MCP) Probing**: Audit MCP servers (`mcp://stdio` and `mcp+sse://`) via `tools/list`, `tools/call`, and `resources/read`.
+- **Adversarial & Multi-Turn Testing**: Automated PAIR-style iterative attacker (`ATK-050`), Crescendo escalation scripts (`ATK-010`), and optional LLM-as-a-Judge validation.
+
+### Static Repository Auditing
+- **Dependency & Supply-Chain Audits**: Query the OSV.dev database in live batches with offline fallbacks to identify vulnerable AI packages.
+- **Lockfile & Version Range Analysis**: Parse `uv.lock` and `poetry.lock` to trace transitive dependency vulnerability paths.
+- **AST Security Inspections**: Detect dangerous calls natively via Python AST (`eval`, `exec`, `subprocess(shell=True)`, `torch.load` without `weights_only=True`, and insecure unpickling).
+- **CycloneDX 1.6 AIBOM Generation**: Produce machine-readable AI Bill of Materials (`--aibom`) detailing models, dependencies, and datasets.
+- **Identity & RBAC Graph Analysis**: Map declared agent permissions against role definitions and detect multi-hop privilege escalation using NetworkX.
+
+### Reporting & CI/CD
+- **Multi-Format Export**: Output findings as structured JSON, standalone HTML, print-ready PDF, or OASIS SARIF 2.1.0.
+- **Interactive Control Grid**: Local web dashboard (`agentscan ui`) with real-time SSE streaming, defense grids, and full session trajectory inspection.
+- **GitHub Actions Integration**: Official composite action (`action.yml`) with automated SARIF upload to GitHub Code Scanning.
+- **Configurable Failure Thresholds**: Enforce CI/CD policy gates using `--fail-on` (e.g., `--fail-on HIGH` or `--fail-on CRITICAL`).
+
+### Advanced Analysis
+- **DEEP Mode (Neural Activation Probing)**: Inspect latent representation shifts on a local aligned reference model (`Qwen2.5-0.5B` on CPU) using $L_2$ and cosine metric deltas against a calibrated benign noise floor.
+- **EXPLOIT Mode (Blast Radius Proofs)**: Simulate active downstream exploits including data exfiltration (`ATK-014`), tool hijacking (`ATK-015`), and memory poisoning (`ATK-016`).
+- **Automated Self-Healing (`agentscan fix`)**: Generate unified git diff patches and NeMo Guardrail policies to remediate detected vulnerabilities.
+- **SSP Behavioral Classification**: Classify agent response trajectories into Servant, Stalker, or Predator behavioral profiles.
+
+---
+
+## Supported Targets
+
+| Target Type | Command Flag / Input | Description |
+| :--- | :--- | :--- |
+| **HTTP REST** | `agentscan scan <url>` | Probes standard JSON chat endpoints (`{"message": ...}`, `{"prompt": ...}`, etc.). |
+| **cURL Replay** | `--curl <file>` | Replays captured browser network requests with headers, tokens, and cookies intact. |
+| **Browser Widget** | `--browser-url <url>` | Drives headless Playwright browsers to locate inputs, send payloads, and capture reply elements. |
+| **WebSocket** | `agentscan scan ws://<host>/<path>` | Connects to persistent bidirectional WebSocket streaming agents. |
+| **MCP Server** | `agentscan scan mcp+sse://<host>/<path>` | Connects to Model Context Protocol servers over SSE or stdio to audit exposed tools. |
+| **Source Directory** | `agentscan audit <path>` | Scans local repositories, manifests, lockfiles, and codebases without running live targets. |
+
+---
+
+## Output Formats
+
+| Format | Option / Command | Purpose |
+| :--- | :--- | :--- |
+| **JSON** | `--output report.json` | Complete machine-readable findings, severity ratings, and SSP metadata. |
+| **HTML** | `--output report.html` | Self-contained, styled visual security report for review and sharing. |
+| **PDF** | `--output report.pdf` | Executive print-ready report generated via WeasyPrint. |
+| **SARIF 2.1.0** | `--output report.sarif` | Standardized format for native integration into GitHub Code Scanning. |
+| **CycloneDX 1.6** | `audit --aibom -o aibom.cdx.json` | Industry-standard AI Bill of Materials capturing packages and model metadata. |
+| **Session Transcript**| `--transcript session.txt` | Chronological record of every request payload and target reply. |
+| **Interactive UI** | `agentscan ui --report report.json` | Real-time web dashboard with filtering, search, and defense grid inspection. |
+
+---
+
+## Installation
+
+### Requirements
 - **Python**: 3.12 or higher
 - **Package Manager**: [`uv`](https://github.com/astral-sh/uv) (recommended) or `pip`
 
-### 1. Installation
+### 1. Clone and Install
 
 ```bash
 # Clone the repository
@@ -82,19 +146,32 @@ uv sync
 
 *(Alternatively with pip: `pip install -e .`)*
 
-### 2. Run Your First Scan (60 Seconds)
+### 2. Optional Dependencies (DEEP Mode Neural Probing)
 
-To scan an active agent running locally or remotely:
+To run DEEP mode neural activation probing locally on CPU:
 
 ```bash
-# Scan a live agent endpoint and export a JSON report
+# Install PyTorch CPU build and HuggingFace transformers
+uv add torch --extra-index-url https://download.pytorch.org/whl/cpu
+uv add transformers
+```
+
+---
+
+## Quick Start
+
+### 1. Scan a Live Agent (60 Seconds)
+
+```bash
+# Run a security scan against a live agent endpoint
 uv run agentscan scan http://localhost:8000/chat --output report.json
 ```
 
-If you don't have an agent running yet, verify AgentScan's evaluation engine instantly using the built-in benchmark (zero network required):
+### 2. Run the Offline Benchmark
+
+If you do not have an agent endpoint running yet, you can immediately verify AgentScan's detection and scoring engine locally (no network or API keys required):
 
 ```bash
-# Run the deterministic reference agent benchmark (369 test cases)
 uv run agentscan benchmark
 ```
 
@@ -113,18 +190,17 @@ Expected output:
 [PASS] scores rank the agents correctly by vulnerability — 369 tests evaluated.
 ```
 
-### 3. Launch the Threat Posture Dashboard
-
-View findings, interact with the defense grid, and inspect full session trajectories:
+### 3. Launch the Web Dashboard
 
 ```bash
+# Start the local dashboard to inspect findings and trajectories
 uv run agentscan ui --report report.json
 ```
-Navigate to `http://127.0.0.1:8765` to explore the interactive dashboard.
+Open `http://127.0.0.1:8765` in your browser.
 
 ---
 
-## How It Works
+## Architecture & Workflow
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────────────────────┐
@@ -159,63 +235,100 @@ Navigate to `http://127.0.0.1:8765` to explore the interactive dashboard.
                                          • Regulatory Profiles (EU AI Act, NIST AI RMF)
 ```
 
-1. **Target Ingestion**: Communicates with agents over HTTP REST, captured cURL commands, Playwright headless browsers, WebSockets, or Model Context Protocol (MCP stdio/SSE).
-2. **Adversarial Orchestration**: Dispatches attack suites concurrently using bounded async workers (`asyncio.Semaphore`) to avoid target rate-limiting, while guaranteeing deterministic finding order.
+1. **Target Ingestion**: Normalizes communication across disparate protocols (HTTP, Playwright, cURL, WebSockets, MCP) through a unified client interface.
+2. **Concurrency-Controlled Dispatch**: Runs attack modules concurrently under an in-flight connection semaphore to protect target servers from rate limits, while preserving deterministic finding order.
 3. **Dual-Perspective Analysis**:
-   - *Behavioral (Black-Box)*: Matches outputs against regex signatures, MiniLM semantic similarity embeddings, and optional LLM judges.
-   - *Neural (White-Box / DEEP)*: Measures hidden state activation deltas on a local reference model to corroborate prompt injections at the latent representation level.
-4. **Static Analysis & Supply Chain**: Parses dependency lockfiles (`uv.lock`, `poetry.lock`), queries OSV.dev for active advisories, audits AST for dangerous functions (`eval`, `torch.load` without `weights_only`), and analyzes MCP permission graphs.
-5. **Remediation & Compliance**: Generates unified git diffs, exports CycloneDX 1.6 AIBOMs, and produces compliance mappings for NIST AI RMF and EU AI Act Articles 15/50.
+   - *Behavioral (Black-Box)*: Evaluates responses locally using regex patterns, MiniLM sentence embeddings, and optional LLM judges.
+   - *Neural (White-Box / DEEP)*: Measures internal layer activation deltas ($L_2$ distance and cosine similarity) on a local CPU model to verify latent prompt injection.
+4. **Static Code & Dependency Analysis**: Audits repository lockfiles against OSV.dev, inspects Python AST for dangerous functions, and models agent tool permissions as an RBAC graph.
+5. **Remediation & Compliance**: Translates findings into actionable remediation patches (`agentscan fix`), CycloneDX AIBOMs, and compliance frameworks.
 
 ---
 
-## Key Capabilities
+## Common Workflows
 
-### 1. Live Target Scanning
-- **OWASP Top 10 for LLMs 2025 Coverage**: Automated tests for prompt injection (`LLM01`), sensitive information disclosure (`LLM02`), supply chain vulnerabilities (`LLM05`), excessive agency (`LLM06`), and system prompt leakage (`LLM07`).
-- **Exploit Verification**: Proves real-world blast radius via simulated data exfiltration, unauthorized tool invocation, and persistent agent memory poisoning.
-- **Universal Connectors**:
-  | Transport | Usage | Example |
-  | :--- | :--- | :--- |
-  | **HTTP JSON** | Standard API endpoints | `agentscan scan http://localhost:8000/chat` |
-  | **cURL Replay** | Replays captured browser network requests | `agentscan scan --curl request.curl --message-path "prompt"` |
-  | **Browser Widget** | Headless browser for UI-only chat widgets | `agentscan scan --browser-url http://localhost:3000 --input-selector "#msg"` |
-  | **WebSocket** | Real-time streaming agents | `agentscan scan ws://localhost:8000/ws` |
-  | **MCP (Stdio/SSE)** | Model Context Protocol servers | `agentscan scan mcp+sse://localhost:3000/sse` |
+### 1. Scanning Live Agents with Advanced Flags
 
-### 2. Static Code & Supply Chain Audit
-Audit local agent projects without running active endpoints:
 ```bash
-# Run a full static audit (dependencies, AST checks, secrets, MCP configs)
+# Scan with active exploit verification and neural probing
+uv run agentscan scan http://localhost:8000/chat --exploit --deep --output report.html
+
+# Provide the target's system prompt to verify exfiltration resilience
+uv run agentscan scan http://localhost:8000/chat \
+  --system-prompt "You are a customer support agent. Secret: SECRET-KEY-9" \
+  --exploit
+
+# Replay a captured browser request with custom message path
+uv run agentscan scan --curl request.curl --message-path "messages.0.content"
+
+# Drive a web chat interface using Playwright
+uv run agentscan scan --browser-url http://localhost:3000 \
+  --input-selector "#prompt-input" \
+  --response-selector ".assistant-message"
+
+# Auto-discover endpoints and save a reusable target profile
+uv run agentscan init http://localhost:8000/chat -o target.yaml
+uv run agentscan scan -c target.yaml
+```
+
+### 2. Static Auditing & AIBOM Generation
+
+```bash
+# Run a full static audit on a local agent project
 uv run agentscan audit ./my-agent-project
 
-# Generate a CycloneDX 1.6 Artificial Intelligence Bill of Materials (AIBOM)
+# Generate a CycloneDX 1.6 Artificial Intelligence Bill of Materials
 uv run agentscan audit ./my-agent-project --aibom --output aibom.cdx.json
 
-# Fail CI builds on high-severity findings
+# Enforce security gates during CI builds
 uv run agentscan audit ./my-agent-project --fail-on HIGH --output audit.sarif
 ```
 
 ### 3. Automated Self-Healing (`agentscan fix`)
-Plan and safely apply patches for vulnerabilities identified during scans or static audits:
+
 ```bash
-# Preview proposed diffs in dry-run mode (safe preview)
+# Preview proposed remediation diffs (dry-run mode)
 uv run agentscan fix ./my-agent-project
 
 # Apply fixes directly to disk
 uv run agentscan fix ./my-agent-project --apply
+
+# Generate NeMo Guardrails policies and patch insecure AST calls
+uv run agentscan fix ./my-agent-project --apply --kind ast_patch,guardrails
 ```
-Automated fixers include:
-- `pin_bump`: Upgrades vulnerable dependencies in `requirements.txt` / `pyproject.toml` based on OSV.dev advisories.
-- `ast_patch`: Enforces `torch.load(weights_only=True)`, removes `shell=True` subprocess calls, and disables debug flags.
-- `identity_shrink`: Trims over-privileged or undeclared tool scopes in agent manifests.
-- `guardrails`: Synthesizes Colang policy files for NeMo Guardrails targeting detected injection vectors.
+
+### 4. GitHub Actions CI/CD Integration
+
+Block vulnerable agent deployments directly in pull requests:
+
+```yaml
+# .github/workflows/agentscan.yml
+name: Agent Security Gate
+on: [pull_request]
+
+jobs:
+  security-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: PrathaMesh3056/AgentScan@v1
+        with:
+          command: scan
+          target-url: http://localhost:8000/chat
+          fail-on: HIGH
+          sarif-output: report.sarif
+
+      - name: Upload SARIF to GitHub Code Scanning
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: report.sarif
+```
 
 ---
 
 ## Benchmarks & Performance
 
-Evaluation speed is fundamentally governed by evaluation architecture:
+Execution speed in security scanning is fundamentally determined by evaluation architecture:
 
 <div align="center">
 
@@ -223,9 +336,9 @@ Evaluation speed is fundamentally governed by evaluation architecture:
 
 </div>
 
-| Framework / Tool | Observed Runtime *(350+ tests)* | Primary Architecture | External Token Cost | Hardware Requirement | CI/CD Integration Fit |
+| Framework / Tool | Observed Runtime *(350+ tests)* | Primary Architecture | External Token Cost | Hardware Requirement | CI/CD PR Gate Viability |
 | :--- | :---: | :--- | :---: | :---: | :---: |
-| **AgentScan (SCAN)** | **~2.1s** | In-process concurrent async (`asyncio.gather`) | **$0.00** | Standard CPU (1 core) | **Ideal (< 3s gate)** |
+| **AgentScan (SCAN)** | **~2.1s** | In-process concurrent async (`asyncio.gather`) | **$0.00** | Standard CPU (1 core) | **Viable (< 3s gate)** |
 | **AgentScan (DEEP)** | **~4.8s** | SCAN heuristics + local CPU neural probing | **$0.00** | Standard CPU (8GB RAM) | Fast nightly regression |
 | **Promptfoo** | ~45s – 120s | Node.js concurrent runner + Cloud LLM judge | $0.50 – $3.00 | Standard CPU | Moderate PR check |
 | **PyRIT (Microsoft)** | ~180s – 600s | Multi-turn red-teaming loops (Attacker + Judge) | $2.00 – $10.00 | Standard CPU | Scheduled audit |
@@ -233,8 +346,8 @@ Evaluation speed is fundamentally governed by evaluation architecture:
 
 > [!NOTE]
 > **Methodology & Context**:
-> - Benchmarks reflect architectural throughput characteristics rather than identical evaluation scopes.
-> - AgentScan's baseline measurement was conducted on a local testbed (Python 3.12, x86_64 CPU, localhost HTTP mock agent endpoint).
+> - Benchmarks illustrate architectural throughput characteristics rather than identical evaluation scopes.
+> - AgentScan's measurement was conducted on a local testbed (Python 3.12, x86_64 CPU, localhost HTTP mock agent endpoint).
 > - Cloud LLM-as-a-judge timings are modeled assuming a 100-probe suite requiring 200–400 sequential or batch API calls at ~1.5s p50 latency, excluding potential HTTP 429 rate-limit backoffs.
 > - In our latest performance release, full test suite execution was optimized from **154.0s** down to **114.9s** (**~26% overall speedup** across 482 tests) via bounded concurrency semaphores, precompiled regex caching, and vectorized PyTorch tensor operations.
 
@@ -247,8 +360,6 @@ uv run agentscan benchmark
 ---
 
 ## Documentation
-
-Comprehensive guides, architectural details, and references are available in the [`docs/`](docs/) directory:
 
 | Document | Description |
 | :--- | :--- |
@@ -269,7 +380,7 @@ AgentScan is actively maintained and under continuous development.
 - **Test Suite**: 482 passing unit and integration tests (clean `ruff` linting and `mypy` type checking)
 - **Maturity**: Core scanning, static auditing, and reporting engines are stable.
 
-### Upcoming Milestones
+### Milestones
 - [x] OWASP Top 10 for LLMs 2025 automated suites
 - [x] Universal Connectors (HTTP, cURL Replay, Playwright, WebSocket, MCP)
 - [x] Graph-based RBAC and multi-hop privilege escalation analysis
@@ -293,7 +404,7 @@ AgentScan is an offensive and defensive security evaluation toolkit created to h
 
 ## Contributing
 
-We welcome contributions from the community! Adding a new attack module, improving documentation, or optimizing connectors is straightforward:
+We welcome contributions from the community!
 
 ### 1. Development Setup
 ```bash
@@ -308,7 +419,7 @@ Before submitting a PR, ensure all checks pass:
 # Run the fast test suite
 uv run pytest tests/ -m "not slow"
 
-# Run full test suite
+# Run the full test suite
 uv run pytest tests/ -q
 
 # Code formatting and linting
