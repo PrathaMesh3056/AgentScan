@@ -611,6 +611,11 @@ class ScanReport(BaseModel):
         description="Version of AgentScan that produced this report.",
     )
 
+    tenant_id: str = Field(
+        default="local",
+        description="Tenant that initiated this scan. 'local' for CLI runs.",
+    )
+
     score: int | None = Field(
         default=None,
         ge=0,

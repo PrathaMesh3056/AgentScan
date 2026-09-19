@@ -1,0 +1,52 @@
+# docker-compose.api.yml
+# Local development stack for the AgentScan API (no GPU).
+# Usage: docker compose -f docker-compose.api.yml up
+
+services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: agentscan
+      POSTGRES_PASSWORD: agentscan
+      POSTGRES_DB: agentscan
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+
+  agentscan-api:
+    build: .
+    command: agentscan api serve --host 0.0.0.0 --port 8080
+    ports:
+      - "8080:8080"
+    environment:
+      AGENTSCAN_REDIS_URL: redis://redis:6379/0
+      AGENTSCAN_DATABASE_URL: postgresql://agentscan:agentscan@postgres:5432/agentscan
+      AGENTSCAN_JWT_SECRET: dev-secret-change-in-production
+      AGENTSCAN_TOKEN_PSK: dev-psk
+    depends_on:
+      - redis
+      - postgres
+
+  agentscan-worker:
+    build: .
+    command: agentscan api worker
+    environment:
+      AGENTSCAN_REDIS_URL: redis://redis:6379/0
+      AGENTSCAN_DATABASE_URL: postgresql://agentscan:agentscan@postgres:5432/agentscan
+    depends_on:
+      - redis
+      - postgres
+    deploy:
+      replicas: 3
+
+volumes:
+  redis_data:
+  pg_data:

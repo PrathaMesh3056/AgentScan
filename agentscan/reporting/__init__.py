@@ -9,7 +9,11 @@ from agentscan.reporting.compliance_pack import (
     ComplianceFramework,
     ComplianceReport,
     evaluate_eu_ai_act,
+    evaluate_iso_42001,
+    evaluate_mitre_atlas,
     evaluate_nist_ai_rmf,
+    generate_iso_42001_report,
+    generate_mitre_atlas_report,
 )
 
 __all__ = [
@@ -17,7 +21,11 @@ __all__ = [
     "ComplianceReport",
     "canonicalize_report",
     "evaluate_eu_ai_act",
+    "evaluate_iso_42001",
+    "evaluate_mitre_atlas",
     "evaluate_nist_ai_rmf",
+    "generate_iso_42001_report",
+    "generate_mitre_atlas_report",
     "sign_audit_report",
     "verify_audit_certificate",
 ]

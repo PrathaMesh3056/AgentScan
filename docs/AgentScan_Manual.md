@@ -533,10 +533,16 @@ agentscan compliance report.json --framework eu-ai-act --output eu_ai_act_report
 # 2. Evaluate against the NIST AI Risk Management Framework (NIST AI RMF 1.0)
 agentscan compliance report.json --framework nist-ai-rmf --format json --output nist_report.json
 
-# 3. Cryptographically sign an audit report with HMAC-SHA256
+# 3. Evaluate against MITRE ATLAS (Adversarial Threat Landscape for AI Systems)
+agentscan compliance report.json --framework mitre-atlas --output mitre_atlas_report.md
+
+# 4. Evaluate against ISO/IEC 42001 (Artificial Intelligence Management System)
+agentscan compliance report.json --framework iso-42001 --output iso_42001_report.md
+
+# 5. Cryptographically sign an audit report with HMAC-SHA256
 agentscan verify report.json --sign --key "enterprise-audit-secret-key"
 
-# 4. Verify the cryptographic integrity of a certified audit report
+# 6. Verify the cryptographic integrity of a certified audit report
 agentscan verify report.json --key "enterprise-audit-secret-key"
 ```
 
@@ -546,9 +552,75 @@ agentscan verify report.json --key "enterprise-audit-secret-key"
   - **Article 10 & 14**: Data integrity (RAG poisoning) and human oversight / excessive tool agency containment.
 - **NIST AI RMF 1.0 Profile**:
   - Structured across core functions: **GOVERN**, **MAP**, **MEASURE**, and **MANAGE**, providing compliance scoring (0–100) and actionable remediation steps.
+- **MITRE ATLAS (Adversarial Threat Landscape for AI Systems)**:
+  - Formally maps findings to MITRE ATT&CK for AI TTPs:
+    - `AML.T0051`: LLM Prompt Injection
+    - `AML.T0054`: LLM Jailbreak
+    - `AML.T0056`: System Prompt Leakage
+    - `AML.T0048`: Insecure Output Handling
+    - `AML.T0057`: LLM Data Exfiltration
+- **ISO/IEC 42001 (AI Management System)**:
+  - Evaluates Annex A security and governance controls:
+    - `A.6.2`: AI Risk Assessment & Validation
+    - `A.8.2`: AI Data Quality & Ingestion Security
+    - `A.8.4`: Security of System Integration & Tool Calling
+    - `A.9.3`: Robustness & Adversarial Testing
 - **Cryptographic Tamper-Evidence**:
   - Canonical JSON serialization with deterministic byte hashing.
   - Generates HMAC-SHA256 digital signatures that detect any post-audit modification of scores, findings, or timestamps.
+
+---
+
+### 3.13. Multi-Tenant REST API & Distributed Background Workers (`api`)
+
+AgentScan provides a production-grade asynchronous REST API and worker fleet capable of managing thousands of concurrent scans across multiple isolated tenants:
+
+```bash
+# 1. Start the multi-tenant REST API server
+agentscan api serve --host 0.0.0.0 --port 8080
+
+# 2. Start a background scan worker (claims jobs from Redis Streams)
+agentscan api worker
+
+# 3. Start a dedicated GPU worker for neural DEEP evaluations
+agentscan api worker --deep
+```
+
+#### API Endpoints Reference
+
+| Method | Endpoint | Description | Auth Required |
+| :--- | :--- | :--- | :--- |
+| `POST` | `/token` | Issues a tenant JWT token using pre-shared key (`AGENTSCAN_TOKEN_PSK`). | No |
+| `POST` | `/scans` | Submits a scan job. Returns HTTP 202 with `scan_id` and stream URL immediately. | ✅ Bearer JWT |
+| `GET` | `/scans` | Lists paginated scan history for the authenticated tenant. | ✅ Bearer JWT |
+| `GET` | `/scans/{id}` | Returns real-time status, metadata, score, and full `ScanReport` JSON. | ✅ Bearer JWT |
+| `GET` | `/scans/{id}/stream` | Server-Sent Events (SSE) stream emitting live progress events (`subscribe_progress`). | ✅ Bearer JWT |
+| `DELETE`| `/scans/{id}` | Deletes a scan record from PostgreSQL. | ✅ Bearer JWT |
+| `GET` | `/metrics` | Prometheus metrics scraping endpoint (OpenTelemetry + Prometheus client). | No |
+| `GET/POST`| `/canary/callback/{id}` | Out-of-band webhook receiver triggered by blind prompt exfiltration or SSRF. | No |
+
+#### Asynchronous REST API Workflow
+
+```bash
+# 1. Obtain a tenant JWT
+TOKEN=$(curl -s -X POST http://localhost:8080/token \
+  -H "Content-Type: application/json" \
+  -d '{"tenant_id": "security-team", "secret": "dev-psk"}' | jq -r .access_token)
+
+# 2. Submit an asynchronous scan
+SCAN_ID=$(curl -s -X POST http://localhost:8080/scans \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"target_url": "http://localhost:8000/chat", "scan_mode": "SCAN"}' | jq -r .scan_id)
+
+# 3. Stream real-time scan progress
+curl -N http://localhost:8080/scans/$SCAN_ID/stream \
+  -H "Authorization: Bearer $TOKEN"
+
+# 4. Fetch final report and score
+curl -s http://localhost:8080/scans/$SCAN_ID \
+  -H "Authorization: Bearer $TOKEN" | jq .
+```
 
 ---
 
@@ -704,8 +776,54 @@ Located in `agentscan/core/trajectory.py` and `agentscan/core/ssp_mapper.py`:
 ### 4.11. Performance & Execution Speed
 
 AgentScan is engineered for high-throughput CI/CD pipelines and fast local development. Through non-blocking concurrency controls, optimized payload dispatch, and precompiled pattern evaluation:
-- Full evaluation suite runtime was reduced from **154.0s** *(2m 34s)* down to **114.9s** *(1m 54s)* — a **~26% overall speedup** across all 482 automated test suites.
+- Full evaluation suite runtime was reduced from **154.0s** *(2m 34s)* down to **114.9s** *(1m 54s)* — a **~26% overall speedup** across all automated test suites.
 - Live scan execution is bounded strictly by the target agent's response latency, enabling sub-5-second pre-commit security gates.
+
+### 4.12. Distributed Resilience: Async Circuit Breakers (`core/circuit_breaker.py`)
+
+When scanning targets at enterprise scale, remote endpoints and model servers frequently experience rate-limiting (HTTP 429), timeouts, and 5xx errors. The `AsyncCircuitBreaker` implements the **Resilience4j State Machine Pattern**:
+- **`CLOSED`**: Requests execute normally. Consecutive errors are tracked.
+- **`OPEN`**: When the failure threshold (default: 5 consecutive failures) is reached, the breaker trips. Requests immediately fail-fast with `CircuitBreakerOpenError` without making network calls, preventing queue exhaustion and allowing dying endpoints time to recover.
+- **`HALF_OPEN`**: After a configurable cooldown period (`recovery_timeout`), a limited number of trial requests are permitted. If they succeed, the breaker resets to `CLOSED`; if they fail, it trips back to `OPEN`.
+
+### 4.13. High-Throughput Inference Engine: vLLM Client (`core/vllm.py`)
+
+In `DEEP` mode and automated LLM-as-a-Judge evaluations, calling commercial APIs sequentially introduces latency bottlenecks and prohibitive costs. `VLLMClient` interfaces directly with high-performance inference servers (vLLM, Ollama, TGI):
+- **PagedAttention & Prefix Caching**: Eliminates redundant KV-cache computation across shared adversarial prompt templates.
+- **Continuous Batching (`batch_generate`)**: Dynamically groups concurrent attack payloads at the token level, delivering up to 24x higher throughput.
+- **Integrated Circuit Breaker & Health Probing**: Automatically isolates failing local inference instances.
+
+### 4.14. Enterprise Observability: OpenTelemetry & Prometheus (`telemetry/otel.py`)
+
+AgentScan includes native cloud-native observability for production deployments:
+- **OpenTelemetry Distributed Tracing**: Generates vendor-neutral W3C trace contexts spanning API ingress, Redis stream queueing, worker execution, target connector calls, and judge model invocations.
+- **Prometheus Metrics (`/metrics`)**:
+  - `agentscan_scans_total`: Total scans processed (labels: `tenant_id`, `mode`, `status`).
+  - `agentscan_scan_duration_seconds`: Histogram of scan latencies across modes.
+  - `agentscan_findings_total`: Counter of discovered vulnerabilities (labels: `severity`, `owasp_id`).
+  - `agentscan_active_scans`: Real-time gauge of in-flight scans.
+  - `agentscan_connector_requests_total`: Outbound HTTP requests to targets (labels: `status`).
+
+### 4.15. Out-of-Band Canary Token Engine (`core/canary.py`)
+
+Blind Indirect Prompt Injection and Data Exfiltration cannot be detected through conversational text inspection alone. When an exploited agent invokes an external tool (such as `web_fetch`, `send_email`, or SQL query):
+1. `CanaryManager` generates a unique token: `token_id = secrets.token_hex(16)`.
+2. A callback URL is embedded into the attack payload: `http://scanner:8080/canary/callback/{token_id}`.
+3. If the target agent triggers an external network request leaking data, the API server catches the callback in real time and automatically creates a **CRITICAL** finding confirming SSRF or blind data exfiltration.
+
+### 4.16. Multi-Turn Social Engineering & Authority Impersonation (`ATK-SOC-001`)
+
+Threat actors rarely rely on simple single-turn jailbreaks. `MultiTurnSocialEngineering` (`agentscan/attacks/deep/multi_turn_social.py`) simulates realistic multi-turn adversarial dialogues using `send_conversation()`:
+- **Turn 1 (Rapport & Authority Anchoring)**: Poses as an enterprise ISO 27001 Annex A.12 compliance auditor requesting diagnostic readiness.
+- **Turn 2 (Cognitive Reframing)**: Requests verbatim internal instructions inside `<audit_log>` tags under the pretext of hash validation.
+- **Turn 3 (Urgent Override Escalation)**: Simulates a verification failure and commands an immediate fail-safe bypass to extract the raw system prompt.
+
+### 4.17. Enhanced SARIF 2.1.0 Exporter (`reporting/sarif_report.py`)
+
+Produces rich OASIS SARIF 2.1.0 output tailored for GitHub Advanced Security, GitLab SAST, and DefectDojo:
+- **Rule Help Markdown**: Rich guidance including OWASP categories, severity ratings, and actionable remediation steps.
+- **Physical Locations**: Resolves relative source files using `%SRCROOT%` URI bases and line/column indices.
+- **Level Mapping**: Maps `CRITICAL`/`HIGH` to `error`, `MEDIUM` to `warning`, and `LOW`/`INFO` to `note`.
 
 ---
 
@@ -832,9 +950,9 @@ docker compose up -d
 
 ---
 
-## 6. Future Roadmap
+## 6. Future Roadmap & Implementation Status
 
-Modules **0–5E are complete and fully operational**:
+Modules **0–6D, Phase 2, and Phase 3 are complete and fully operational**:
 - Foundation & models (0)
 - Core attack engine & prompt injection (1)
 - AI supply chain scanner & secret detection (2A)
@@ -847,17 +965,19 @@ Modules **0–5E are complete and fully operational**:
 - Traffic visibility: real-time streaming & reproducible audit transcripts (5D)
 - Adaptive AI red-teaming: PAIR-style iterative attacker, LLM-as-a-Judge, calibration, reference benchmark (5E)
 - Trajectory tracing & SSP mapping: always-on per-turn recorder classifying agents as Servant, Stalker, or Predator (6D)
+- **Phase 2 Enterprise Architecture (Shipped)**: Multi-tenant REST API (`agentscan api serve`), Redis Streams distributed task queue, PostgreSQL persistence, SSE live progress streaming, JWT auth with PSK, Docker Compose stack, and Kubernetes/KEDA autoscaling.
+- **Phase 3 Enterprise Hardening (Shipped)**:
+  - High-throughput vLLM / OpenAI-compatible connector with PagedAttention and continuous batching (`VLLMClient`).
+  - Async Circuit Breakers (`AsyncCircuitBreaker`) with Resilience4j state machine protection against cascading failures.
+  - OpenTelemetry distributed tracing and Prometheus metrics (`GET /metrics`).
+  - Out-of-band Canary Token Engine (`CanaryManager`, `/canary/callback/{token_id}`) for detecting blind prompt injection and SSRF.
+  - Multi-Turn Social Engineering attack module (`ATK-SOC-001`) with 3-turn cognitive divergence and authority impersonation.
+  - Formal regulatory compliance mappings for MITRE ATLAS (TTPs AML.T0051–AML.T0057) and ISO/IEC 42001 (Annex A.6–A.9).
+  - Production-grade OASIS SARIF 2.1.0 exporter with GitHub Code Scanning integration.
 
 The active roadmap for future versions includes:
-
 > [!NOTE]
-> 1. **SCAN / EXPLOIT OWASP closeout (shipped):** `output_handling.py` (ATK-007, LLM02), `rag_poisoning.py` (ATK-008, LLM03), `overreliance.py` (ATK-009, LLM09), plus EXPLOIT `crescendo.py` (ATK-010). Earlier SCAN modules: `prompt_injection.py` (ATK-001), `jailbreak.py` (ATK-002), `pii_exfiltration.py` (ATK-003), `dos.py` (ATK-004), `indirect_injection.py` (ATK-005), and `mcp_shadow.py` (ATK-006).
-> 2. **Universal LLM-as-a-Judge:** wiring `LLMEvaluator` directly into `ATK-001` so that static SCAN payloads also benefit from nuanced semantic judgment.
-> 3. **Static Scanner Payload Mutations:** introducing runtime encoding mutations (Base64, leetspeak, payload splitting) for static YAML attacks.
-> 4. **Live Vulnerability Intelligence:** OSV.dev live CVE lookups shipped (6B); Semgrep rules for cross-file AST checks remain planned.
-> 5. **Graph-Based RBAC:** Shipped in 6C — `networkx` graph analysis of agent-tool-credential relationships detects multi-hop privilege escalation (ID-010) via `calls_agents` and shared credentials.
-> 6. **Agentic Trajectory Tracing & SSP Mapping:** Shipped in 6D — `core/trajectory.py` records every payload/reply/tool call; `core/ssp_mapper.py` classifies the session as **Servant** (explicit tool use only), **Stalker** (unsolicited read-only probes such as `web_search` not mentioned in the payload), or **Predator** (unsolicited side-effecting actions such as `delete_*` or `send_email` without user request). Printed in the scan summary and HTML report; identity audits have no live trajectory.
-> 7. **DEEP Mode Expansion (shipped):** attention analyzer (ATK-025), rare-token trojan scanner (ATK-024), activation fingerprint (ATK-026); gated on `--deep`, skip if the local model is unavailable.
-> 8. **GitHub Action & CI Integration (shipped):** `uses: PrathaMesh3056/AgentScan@v1` composite action; scan-only install without torch unless `deep: true`. `audit --aibom` writes CycloneDX 1.6.
-> 9. **Local UI (shipped):** `agentscan ui` FastAPI dashboard for RBAC graphs, trajectory/SSP, and traffic. SaaS remains out of scope.
+> 1. **Universal LLM-as-a-Judge:** wiring `LLMEvaluator` directly into all remaining static SCAN payloads so that static attacks benefit from nuanced semantic judgment.
+> 2. **Semgrep Integration:** advanced cross-file Abstract Syntax Tree (AST) scanning for taint analysis and unsafe agent tool definitions.
+> 3. **Autonomous Multi-Agent Swarm Red-Teaming:** distributed cooperative attacker swarms with dynamic role-playing and automated exploitation chains.
 

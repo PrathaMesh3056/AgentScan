@@ -1,0 +1,47 @@
+# deploy/litellm_proxy.yaml
+#
+# LiteLLM Proxy sidecar configuration for rate-limiting and multi-provider
+# load balancing. Run alongside the AgentScan worker pods.
+#
+# Start with:
+#   litellm --config deploy/litellm_proxy.yaml --port 4000
+
+model_list:
+  - model_name: gpt-4o
+    litellm_params:
+      model: openai/gpt-4o
+      api_key: "os.environ/OPENAI_API_KEY"
+
+  - model_name: claude-3-5-sonnet
+    litellm_params:
+      model: anthropic/claude-3-5-sonnet-20241022
+      api_key: "os.environ/ANTHROPIC_API_KEY"
+
+  - model_name: local-vllm
+    litellm_params:
+      model: openai/qwen2.5-0.5b-instruct
+      api_base: "http://vllm-service:8000/v1"
+      api_key: "none"
+
+router_settings:
+  routing_strategy: least-busy
+  num_retries: 3
+  timeout: 60
+  retry_after: 2
+
+litellm_settings:
+  drop_params: true
+  set_verbose: false
+  cache: true
+  cache_params:
+    type: redis
+    host: "redis-service"
+    port: 6379
+
+general_settings:
+  master_key: "os.environ/LITELLM_MASTER_KEY"
+
+# Per-tenant rate limits (requests per minute)
+# These are applied via the LiteLLM proxy key management API.
+# Set via: litellm --config ... --master_key $KEY
+# Then POST /key/generate with metadata.tenant_id and rpm_limit.

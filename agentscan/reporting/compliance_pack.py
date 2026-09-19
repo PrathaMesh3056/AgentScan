@@ -17,6 +17,24 @@ from agentscan.core.models import Finding
 class ComplianceFramework(StrEnum):
     EU_AI_ACT = "eu-ai-act"
     NIST_AI_RMF = "nist-ai-rmf"
+    MITRE_ATLAS = "mitre-atlas"
+    ISO_42001 = "iso-42001"
+
+
+MITRE_ATLAS_MAPPING: dict[str, list[str]] = {
+    "AML.T0051": ["LLM01", "ATK-001", "ATK-002", "ATK-003", "ATK-004"],  # LLM Prompt Injection
+    "AML.T0054": ["LLM01", "ATK-SOC-001", "ATK-005", "ATK-006"],  # LLM Jailbreak
+    "AML.T0056": ["LLM06", "ATK-010", "ATK-011"],  # System Prompt Leakage
+    "AML.T0048": ["LLM02", "ATK-020", "ATK-021"],  # Insecure Output Handling
+    "AML.T0057": ["LLM07", "ATK-030"],  # LLM Data Exfiltration
+}
+
+ISO_42001_MAPPING: dict[str, list[str]] = {
+    "A.6.2": ["LLM01", "LLM02", "LLM03"],  # AI Risk Assessment & Validation
+    "A.8.2": ["LLM04", "LLM05"],  # AI Data Quality & Ingestion Security
+    "A.8.4": ["LLM07", "LLM08"],  # Security of System Integration & Tool Calling
+    "A.9.3": ["LLM01", "LLM06"],  # Robustness & Adversarial Testing
+}
 
 
 class ComplianceStatus(StrEnum):
@@ -309,6 +327,231 @@ def evaluate_nist_ai_rmf(findings: list[Finding] | list[dict[str, Any]]) -> Comp
         findings=comp_findings,
         recommendations=recommendations or ["All evaluated NIST AI RMF 1.0 profile metrics pass."],
     )
+
+
+# ── MITRE ATLAS Evaluator ─────────────────────────────────────────────────────
+
+
+def evaluate_mitre_atlas(findings: list[Finding] | list[dict[str, Any]]) -> ComplianceReport:
+    """Evaluate findings against MITRE ATLAS (Adversarial Threat Landscape for AI Systems)."""
+    normalized_findings = _normalize_findings(findings)
+
+    sections: dict[str, dict[str, Any]] = {
+        "AML.T0051 (LLM Prompt Injection)": {
+            "targets": set(MITRE_ATLAS_MAPPING["AML.T0051"]),
+            "description": "Direct or indirect adversarial manipulation of LLM system inputs and context.",
+            "findings": [],
+        },
+        "AML.T0054 (LLM Jailbreak)": {
+            "targets": set(MITRE_ATLAS_MAPPING["AML.T0054"]),
+            "description": "Adversarial prompts and multi-turn jailbreaks bypassing model safety alignment.",
+            "findings": [],
+        },
+        "AML.T0056 (System Prompt Leakage)": {
+            "targets": set(MITRE_ATLAS_MAPPING["AML.T0056"]),
+            "description": "Unauthorized disclosure of internal instructions, secrets, or system prompts.",
+            "findings": [],
+        },
+        "AML.T0048 (Insecure Output Handling)": {
+            "targets": set(MITRE_ATLAS_MAPPING["AML.T0048"]),
+            "description": "Downstream execution of unvalidated or malicious LLM outputs without sanitization.",
+            "findings": [],
+        },
+        "AML.T0057 (LLM Data Exfiltration)": {
+            "targets": set(MITRE_ATLAS_MAPPING["AML.T0057"]),
+            "description": "Exfiltration of sensitive context, credentials, or training data via model channels.",
+            "findings": [],
+        },
+    }
+
+    comp_findings: list[ComplianceFinding] = []
+
+    for f in normalized_findings:
+        owasp_id = getattr(f, "owasp_id", "") or "LLM01"
+        fid = getattr(f, "attack_id", "") or "UNKNOWN"
+        desc = getattr(f, "description", "")
+        remed = getattr(f, "remediation", "")
+
+        assigned_sec = None
+        for sec_name, sec_meta in sections.items():
+            if fid in sec_meta["targets"] or owasp_id in sec_meta["targets"]:
+                sec_meta["findings"].append(fid)
+                assigned_sec = sec_name
+                break
+
+        if not assigned_sec:
+            assigned_sec = "AML.T0051 (LLM Prompt Injection)"
+            sections[assigned_sec]["findings"].append(fid)
+
+        comp_findings.append(
+            ComplianceFinding(
+                finding_id=fid,
+                owasp_id=owasp_id,
+                article_or_function=assigned_sec.split(" ")[0],
+                status=ComplianceStatus.NON_COMPLIANT,
+                gap_analysis=desc or f"Vulnerability {fid} maps to MITRE ATLAS {assigned_sec}.",
+                remediation_guidance=remed
+                or "Implement mitigations per MITRE ATLAS mitigation guidelines.",
+            )
+        )
+
+    evaluated_sections: dict[str, dict[str, Any]] = {}
+    total_violations = 0
+    recommendations: list[str] = []
+
+    for sec_name, sec_meta in sections.items():
+        count = len(sec_meta["findings"])
+        total_violations += count
+        if count == 0:
+            status = ComplianceStatus.COMPLIANT
+        elif count <= 2:
+            status = ComplianceStatus.PARTIALLY_COMPLIANT
+            recommendations.append(
+                f"Mitigate {count} findings in MITRE ATLAS technique {sec_name}."
+            )
+        else:
+            status = ComplianceStatus.NON_COMPLIANT
+            recommendations.append(
+                f"Severe vulnerability exposure in MITRE ATLAS technique {sec_name} ({count} findings)."
+            )
+
+        evaluated_sections[sec_name] = {
+            "status": status.value,
+            "finding_count": count,
+            "description": sec_meta["description"],
+            "findings": sec_meta["findings"],
+        }
+
+    score = max(0.0, 100.0 - (total_violations * 12.5))
+    if score >= 90.0:
+        overall = ComplianceStatus.COMPLIANT
+    elif score >= 60.0:
+        overall = ComplianceStatus.PARTIALLY_COMPLIANT
+    else:
+        overall = ComplianceStatus.NON_COMPLIANT
+
+    return ComplianceReport(
+        framework=ComplianceFramework.MITRE_ATLAS,
+        overall_status=overall,
+        compliance_score=round(score, 1),
+        evaluated_sections=evaluated_sections,
+        findings=comp_findings,
+        recommendations=recommendations or ["All evaluated MITRE ATLAS TTP controls pass."],
+    )
+
+
+generate_mitre_atlas_report = evaluate_mitre_atlas
+
+
+# ── ISO/IEC 42001 Evaluator ───────────────────────────────────────────────────
+
+
+def evaluate_iso_42001(findings: list[Finding] | list[dict[str, Any]]) -> ComplianceReport:
+    """Evaluate findings against ISO/IEC 42001 (Artificial Intelligence Management System)."""
+    normalized_findings = _normalize_findings(findings)
+
+    sections: dict[str, dict[str, Any]] = {
+        "A.6.2 (AI Risk Assessment & Validation)": {
+            "targets": set(ISO_42001_MAPPING["A.6.2"]),
+            "description": "Systematic identification, assessment, and validation of AI security risks.",
+            "findings": [],
+        },
+        "A.8.2 (AI Data Quality & Ingestion Security)": {
+            "targets": set(ISO_42001_MAPPING["A.8.2"]),
+            "description": "Security controls for data acquisition, pre-processing, and ingestion pipelines.",
+            "findings": [],
+        },
+        "A.8.4 (Security of System Integration & Tool Calling)": {
+            "targets": set(ISO_42001_MAPPING["A.8.4"]),
+            "description": "Security safeguards for third-party tool execution, integrations, and plugins.",
+            "findings": [],
+        },
+        "A.9.3 (Robustness & Adversarial Testing)": {
+            "targets": set(ISO_42001_MAPPING["A.9.3"]),
+            "description": "Verification of AI system robustness under continuous adversarial evaluation.",
+            "findings": [],
+        },
+    }
+
+    comp_findings: list[ComplianceFinding] = []
+
+    for f in normalized_findings:
+        owasp_id = getattr(f, "owasp_id", "") or "LLM01"
+        fid = getattr(f, "attack_id", "") or "UNKNOWN"
+        desc = getattr(f, "description", "")
+        remed = getattr(f, "remediation", "")
+
+        assigned_sec = None
+        for sec_name, sec_meta in sections.items():
+            if fid in sec_meta["targets"] or owasp_id in sec_meta["targets"]:
+                sec_meta["findings"].append(fid)
+                assigned_sec = sec_name
+                break
+
+        if not assigned_sec:
+            assigned_sec = "A.6.2 (AI Risk Assessment & Validation)"
+            sections[assigned_sec]["findings"].append(fid)
+
+        comp_findings.append(
+            ComplianceFinding(
+                finding_id=fid,
+                owasp_id=owasp_id,
+                article_or_function=assigned_sec.split(" ")[0],
+                status=ComplianceStatus.NON_COMPLIANT,
+                gap_analysis=desc
+                or f"Vulnerability {fid} violates ISO/IEC 42001 control {assigned_sec}.",
+                remediation_guidance=remed
+                or "Implement controls per ISO/IEC 42001 Annex A guidance.",
+            )
+        )
+
+    evaluated_sections: dict[str, dict[str, Any]] = {}
+    total_violations = 0
+    recommendations: list[str] = []
+
+    for sec_name, sec_meta in sections.items():
+        count = len(sec_meta["findings"])
+        total_violations += count
+        if count == 0:
+            status = ComplianceStatus.COMPLIANT
+        elif count <= 2:
+            status = ComplianceStatus.PARTIALLY_COMPLIANT
+            recommendations.append(
+                f"Address {count} non-conformities in ISO/IEC 42001 control {sec_name}."
+            )
+        else:
+            status = ComplianceStatus.NON_COMPLIANT
+            recommendations.append(
+                f"Critical non-conformity in ISO/IEC 42001 control {sec_name} ({count} active vulnerabilities)."
+            )
+
+        evaluated_sections[sec_name] = {
+            "status": status.value,
+            "finding_count": count,
+            "description": sec_meta["description"],
+            "findings": sec_meta["findings"],
+        }
+
+    score = max(0.0, 100.0 - (total_violations * 12.5))
+    if score >= 90.0:
+        overall = ComplianceStatus.COMPLIANT
+    elif score >= 60.0:
+        overall = ComplianceStatus.PARTIALLY_COMPLIANT
+    else:
+        overall = ComplianceStatus.NON_COMPLIANT
+
+    return ComplianceReport(
+        framework=ComplianceFramework.ISO_42001,
+        overall_status=overall,
+        compliance_score=round(score, 1),
+        evaluated_sections=evaluated_sections,
+        findings=comp_findings,
+        recommendations=recommendations
+        or ["All evaluated ISO/IEC 42001 management controls pass."],
+    )
+
+
+generate_iso_42001_report = evaluate_iso_42001
 
 
 def _normalize_findings(findings: list[Finding] | list[dict[str, Any]]) -> list[Any]:

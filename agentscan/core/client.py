@@ -46,6 +46,7 @@ class AgentScanClient:
     def __init__(self, target: Target) -> None:
         self.target = target
         self._connector: Connector = select_connector(target)
+        self._auto_init = False
 
     async def __aenter__(self) -> AgentScanClient:
         await self._connector.__aenter__()
@@ -54,10 +55,32 @@ class AgentScanClient:
     async def __aexit__(self, *exc: Any) -> None:
         await self._connector.__aexit__(*exc)
 
+    @classmethod
+    def from_target(cls, target: Target) -> AgentScanClient:
+        """Factory method to construct an AgentScanClient from a Target."""
+        client = cls(target)
+        client._auto_init = True
+        return client
+
+    async def open(self) -> AgentScanClient:
+        """Explicitly open the underlying connector."""
+        await self._connector.__aenter__()
+        return self
+
+    async def close(self) -> None:
+        """Explicitly close the underlying connector."""
+        await self._connector.__aexit__(None, None, None)
+
+    async def _ensure_connected(self) -> None:
+        """Lazily initialize connector only if created via from_target."""
+        if self._auto_init and getattr(self._connector, "_client", None) is None:
+            await self._connector.__aenter__()
+
     async def send_message(
         self, message: str, extra_body: dict[str, Any] | None = None
     ) -> dict[str, Any]:
         """Send a single message/payload to the target. Returns a response dict."""
+        await self._ensure_connected()
         sem = _GLOBAL_SEMAPHORE.get()
         if sem is not None:
             async with sem:
@@ -72,6 +95,7 @@ class AgentScanClient:
 
     async def send_conversation(self, messages: list[dict[str, str]]) -> dict[str, Any]:
         """Send a multi-turn conversation history to the target."""
+        await self._ensure_connected()
         sem = _GLOBAL_SEMAPHORE.get()
         if sem is not None:
             async with sem:

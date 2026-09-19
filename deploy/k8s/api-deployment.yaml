@@ -1,0 +1,68 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agentscan-api
+  labels:
+    app: agentscan-api
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: agentscan-api
+  template:
+    metadata:
+      labels:
+        app: agentscan-api
+    spec:
+      containers:
+        - name: agentscan-api
+          image: agentscan:latest
+          command: ["agentscan", "api", "serve", "--host", "0.0.0.0", "--port", "8080"]
+          ports:
+            - containerPort: 8080
+          env:
+            - name: AGENTSCAN_REDIS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: agentscan-secrets
+                  key: redis-url
+            - name: AGENTSCAN_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: agentscan-secrets
+                  key: database-url
+            - name: AGENTSCAN_JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: agentscan-secrets
+                  key: jwt-secret
+            - name: AGENTSCAN_TOKEN_PSK
+              valueFrom:
+                secretKeyRef:
+                  name: agentscan-secrets
+                  key: token-psk
+          readinessProbe:
+            httpGet:
+              path: /docs
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "1"
+              memory: "1Gi"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: agentscan-api
+spec:
+  selector:
+    app: agentscan-api
+  ports:
+    - port: 80
+      targetPort: 8080
+  type: ClusterIP

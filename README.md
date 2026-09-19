@@ -455,3 +455,32 @@ The registry auto-discovers any `AttackModule` subclass placed in `agentscan/att
 Distributed under the **Apache 2.0 License**. See [`LICENSE`](LICENSE) for details.
 
 Authored and maintained by [Prathamesh](https://github.com/PrathaMesh3056).
+
+---
+
+## REST API (Multi-Tenant)
+
+```bash
+# 1. Start the local dev stack
+docker compose -f docker-compose.api.yml up
+
+# 2. Get a JWT token
+curl -X POST http://localhost:8080/token \
+  -H "Content-Type: application/json" \
+  -d '{"tenant_id": "my-org", "secret": "dev-psk"}'
+
+# 3. Run a scan (returns immediately with scan_id)
+curl -X POST http://localhost:8080/scans \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{"target_url": "http://my-agent:8000/chat", "scan_mode": "SCAN"}'
+
+# 4. Poll for results
+curl http://localhost:8080/scans/<scan_id> \
+  -H "Authorization: Bearer <token>"
+
+# 5. Stream live progress (SSE)
+curl -N http://localhost:8080/scans/<scan_id>/stream \
+  -H "Authorization: Bearer <token>"
+```
+

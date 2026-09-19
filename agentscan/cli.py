@@ -24,6 +24,7 @@ from typing import Any
 
 import typer
 from dotenv import load_dotenv
+from rich import print as rprint
 from rich.console import Console
 from rich.table import Table
 
@@ -52,6 +53,9 @@ app = typer.Typer(
     help="Open-source security scanner for AI agents.",
     add_completion=False,
 )
+
+api_app = typer.Typer(help="AgentScan REST API server commands.")
+app.add_typer(api_app, name="api")
 
 console = Console()
 
@@ -1422,7 +1426,12 @@ def compliance_command(
 
     from rich.panel import Panel
 
-    from agentscan.reporting.compliance_pack import evaluate_eu_ai_act, evaluate_nist_ai_rmf
+    from agentscan.reporting.compliance_pack import (
+        evaluate_eu_ai_act,
+        evaluate_iso_42001,
+        evaluate_mitre_atlas,
+        evaluate_nist_ai_rmf,
+    )
 
     if not report_file.exists():
         console.print(f"[bold red]Error: Report file not found:[/bold red] {report_file}")
@@ -1445,9 +1454,14 @@ def compliance_command(
         comp_report = evaluate_eu_ai_act(raw_findings)
     elif norm_fw in ("nist-ai-rmf", "nist_ai_rmf", "nist"):
         comp_report = evaluate_nist_ai_rmf(raw_findings)
+    elif norm_fw in ("mitre-atlas", "mitre_atlas", "mitre", "atlas"):
+        comp_report = evaluate_mitre_atlas(raw_findings)
+    elif norm_fw in ("iso-42001", "iso_42001", "iso"):
+        comp_report = evaluate_iso_42001(raw_findings)
     else:
         console.print(
-            f"[bold red]Unsupported compliance framework:[/bold red] {framework}. Choose 'eu-ai-act' or 'nist-ai-rmf'."
+            f"[bold red]Unsupported compliance framework:[/bold red] {framework}. "
+            "Choose 'eu-ai-act', 'nist-ai-rmf', 'mitre-atlas', or 'iso-42001'."
         )
         raise typer.Exit(code=1)
 
@@ -1622,6 +1636,45 @@ def verify_command(
             )
         )
         raise typer.Exit(code=1)
+
+
+@api_app.command("serve")
+def api_serve(
+    host: str = typer.Option("0.0.0.0", help="Bind host"),
+    port: int = typer.Option(8080, help="Bind port"),
+    workers: int = typer.Option(1, help="Number of uvicorn workers"),
+    reload: bool = typer.Option(False, help="Enable hot reload (dev only)"),
+) -> None:
+    """Start the AgentScan REST API server."""
+    try:
+        import uvicorn
+    except ImportError:
+        rprint("[red]uvicorn is not installed. Run: uv sync --extra api[/red]")
+        raise SystemExit(1) from None
+    rprint(f"[green]Starting AgentScan API on {host}:{port}[/green]")
+    uvicorn.run(
+        "agentscan.api.server:app",
+        host=host,
+        port=port,
+        workers=workers,
+        reload=reload,
+    )
+
+
+@api_app.command("worker")
+def api_worker(
+    deep: bool = typer.Option(False, help="Run as a DEEP (GPU) worker"),
+) -> None:
+    """Start a background scan worker that processes jobs from Redis Streams."""
+    import asyncio as _asyncio
+    import os as _os
+
+    if deep:
+        _os.environ["AGENTSCAN_DEEP_WORKER"] = "true"
+    rprint("[green]Starting AgentScan scan worker...[/green]")
+    from agentscan.api.worker import worker_loop
+
+    _asyncio.run(worker_loop())
 
 
 if __name__ == "__main__":

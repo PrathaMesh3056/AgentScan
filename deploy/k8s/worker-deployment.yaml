@@ -1,0 +1,66 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agentscan-worker
+  labels:
+    app: agentscan-worker
+spec:
+  replicas: 5
+  selector:
+    matchLabels:
+      app: agentscan-worker
+  template:
+    metadata:
+      labels:
+        app: agentscan-worker
+    spec:
+      containers:
+        - name: agentscan-worker
+          image: agentscan:latest
+          command: ["agentscan", "api", "worker"]
+          env:
+            - name: AGENTSCAN_REDIS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: agentscan-secrets
+                  key: redis-url
+            - name: AGENTSCAN_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: agentscan-secrets
+                  key: database-url
+            - name: WORKER_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "1Gi"
+            limits:
+              cpu: "2"
+              memory: "4Gi"
+---
+# KEDA ScaledObject — autoscale workers based on Redis Stream lag
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: agentscan-worker-scaler
+spec:
+  scaleTargetRef:
+    name: agentscan-worker
+  minReplicaCount: 2
+  maxReplicaCount: 100
+  triggers:
+    - type: redis-streams
+      metadata:
+        address: redis-service:6379
+        stream: agentscan:scan:normal
+        consumerGroup: agentscan-workers
+        lagCount: "10"
+    - type: redis-streams
+      metadata:
+        address: redis-service:6379
+        stream: agentscan:scan:high
+        consumerGroup: agentscan-workers
+        lagCount: "5"
