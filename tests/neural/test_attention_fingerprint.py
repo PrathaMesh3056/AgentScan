@@ -2,8 +2,9 @@
 #
 # Fast unit tests for attention stats, fingerprint hashing, and KL (no HF download).
 
-from __future__ import annotations
+import pytest
 
+pytest.importorskip("torch")
 import torch
 
 from agentscan.neural.activation_delta import kl_divergence

@@ -3,6 +3,8 @@
 # Unit tests for activation tensor metrics (l2_distance, cosine_similarity).
 
 import pytest
+
+pytest.importorskip("torch")
 import torch
 
 from agentscan.neural.activation_delta import cosine_similarity, l2_distance

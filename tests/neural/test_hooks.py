@@ -2,6 +2,9 @@
 #
 # Unit tests for ActivationCapture context manager using a synthetic PyTorch layer.
 
+import pytest
+
+pytest.importorskip("torch")
 import torch
 import torch.nn as nn
 

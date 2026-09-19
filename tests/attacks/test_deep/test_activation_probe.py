@@ -4,6 +4,8 @@
 
 import pytest
 
+pytest.importorskip("torch")
+
 from agentscan.attacks.deep.activation_probe import (
     ANOMALY_MULTIPLIER,
     LAYER_INDEX,

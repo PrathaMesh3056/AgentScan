@@ -5,6 +5,8 @@ from __future__ import annotations
 from unittest.mock import patch
 
 import pytest
+
+pytest.importorskip("torch")
 import torch
 
 from agentscan.attacks.deep.attention_probe import AttentionAnalyzerModule
