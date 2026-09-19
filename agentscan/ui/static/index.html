@@ -5,6 +5,7 @@
   <meta charset="utf-8">
   <title>AgentScan — AI Agent Security Platform</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" type="image/svg+xml" href="/static/logo.svg">
   <link rel="preload" href="/static/fonts/Geist_Pixel/GeistPixel-Regular-VariableFont_ELSH.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -885,11 +886,14 @@
       color: #000000 !important;
     }
 
+    .brand-logo {
+      width: 28px !important;
+      height: 28px !important;
+      object-fit: contain;
+    }
+
     .brand-collapsed-mark {
-      font-family: 'Geist Pixel', monospace, sans-serif !important;
-      font-size: 20px !important;
-      font-weight: 900 !important;
-      color: #000000 !important;
+      display: none !important;
     }
 
     .sidebar-collapsed {
@@ -903,33 +907,38 @@
       display: none !important;
     }
 
-    .sidebar-collapsed .brand-collapsed-mark {
-      display: block !important;
-    }
-
     .sidebar-collapsed .brand-header {
       padding: 0.75rem 0.5rem !important;
       justify-content: center !important;
       position: relative;
     }
 
-    .sidebar-collapsed #btn-toggle-sidebar {
-      position: absolute;
-      right: -10px;
-      top: 50%;
-      transform: translateY(-50%);
-      background: #1A1A1A;
-      color: #FFFFFF;
-      border: 2px solid #F7F5EE;
-      border-radius: 9999px;
-      width: 20px;
-      height: 20px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      padding: 0;
-      z-index: 50;
-      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
+    .sidebar-collapsed .brand-link {
+      padding-left: 0 !important;
+      justify-content: center !important;
+    }
+
+    .sidebar-collapsed .brand-logo {
+      width: 32px !important;
+      height: 32px !important;
+    }
+
+    .sidebar-collapse-btn {
+      transition: all 0.2s ease;
+    }
+
+    .sidebar-collapsed .sidebar-collapse-btn {
+      width: 36px !important;
+      height: 36px !important;
+      margin: 4px auto 0 auto !important;
+      padding: 0 !important;
+      justify-content: center !important;
+      display: flex !important;
+      border-radius: 0.75rem !important;
+    }
+
+    .sidebar-collapsed .sidebar-collapse-btn .sidebar-label {
+      display: none !important;
     }
 
     .sidebar-collapsed .sidebar-nav-item {
@@ -1036,20 +1045,12 @@
     style="border-color: var(--border)">
 
     <div>
-      <div class="brand-header flex items-center justify-between px-3.5 border-b h-16 transition-all"
+      <div class="brand-header flex items-center px-3.5 border-b h-16 transition-all"
         style="border-color: var(--border)">
-        <a href="#overview" onclick="switchTab('overview')" class="select-none cursor-pointer flex items-center pl-1" title="AgentScan">
+        <a href="#overview" onclick="handleBrandClick()" class="brand-link select-none cursor-pointer flex items-center gap-2.5 pl-0.5 group" title="AgentScan — Click to open Overview">
+          <img src="/static/logo.svg" alt="AgentScan" class="brand-logo rounded-lg shrink-0 object-contain shadow-xs transition-transform duration-200 group-hover:scale-105 border border-[#1A1A1A]/10 dark:border-white/15" />
           <h1 class="brand-expanded-text leading-none m-0 p-0 inline">AgentScan</h1>
-          <span class="brand-collapsed-mark hidden leading-none">A</span>
         </a>
-
-        <button id="btn-toggle-sidebar" onclick="handleSidebarToggleBtn()" aria-label="Toggle Sidebar"
-          class="w-6.5 h-6.5 rounded-full flex items-center justify-center text-[#1A1A1A] bg-white hover:bg-[#EDE9DE] transition-all cursor-pointer border border-[#1A1A1A]/20 shadow-xs shrink-0">
-          <svg id="sidebar-toggle-icon" class="w-3.5 h-3.5 transition-transform duration-200" viewBox="0 0 24 24"
-            fill="none" stroke="currentColor" stroke-width="2.5">
-            <polyline points="15 18 9 12 15 6"></polyline>
-          </svg>
-        </button>
       </div>
 
       <nav class="px-2 py-2 space-y-1 overflow-y-auto max-h-[calc(100vh-8rem)]">
@@ -1182,8 +1183,8 @@
       </nav>
     </div>
 
-    <!-- Sidebar Footer: Claude-Style Operator Profile -->
-    <div class="border-t shrink-0 select-none p-2" style="border-color: var(--border); background: #F7F5EE">
+    <!-- Sidebar Footer: Claude-Style Operator Profile & Collapse Control -->
+    <div class="border-t shrink-0 select-none p-2 space-y-1.5" style="border-color: var(--border); background: #F7F5EE">
       <div id="profile-trigger" onclick="openProfileModal()"
         class="sidebar-profile-card flex items-center gap-2 px-2 py-1.5 rounded-xl cursor-pointer hover:bg-[#EDE9DE] transition-all group"
         title="SecOps Lead — Click for Profile & Clearance">
@@ -1202,6 +1203,18 @@
           <polyline points="6 9 12 15 18 9"></polyline>
         </svg>
       </div>
+
+      <!-- Collapse / Expand Sidebar Button -->
+      <button id="btn-toggle-sidebar" onclick="handleSidebarToggleBtn()" aria-label="Toggle Sidebar"
+        class="sidebar-collapse-btn w-full flex items-center justify-between px-2.5 py-1.5 rounded-xl text-xs font-bold text-[#666666] hover:text-[#1A1A1A] hover:bg-[#EDE9DE] dark:text-[#888888] dark:hover:text-white dark:hover:bg-[#242424] transition-all cursor-pointer border border-[#1A1A1A]/10 dark:border-white/10 shadow-2xs">
+        <span class="flex items-center gap-2">
+          <svg id="sidebar-toggle-icon" class="w-3.5 h-3.5 transition-transform duration-200" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+            <polyline points="15 18 9 12 15 6"></polyline>
+          </svg>
+          <span class="sidebar-label tracking-wide uppercase text-[10px]">Collapse</span>
+        </span>
+        <kbd class="sidebar-label text-[9px] font-mono opacity-50 bg-[#1A1A1A]/5 dark:bg-white/10 px-1.5 py-0.5 rounded">Ctrl+[</kbd>
+      </button>
     </div>
   </aside>
 
