@@ -58,7 +58,7 @@ semantic = [
     "sentence-transformers>=5.7.0",
 ]
 browser = [
-    "playwright>=1.62.0",
+    "playwright>=1.63.0",
 ]
 pdf = [
     "weasyprint>=69.0",
