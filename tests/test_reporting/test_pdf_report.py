@@ -1,3 +1,7 @@
+import pytest
+
+pytest.importorskip("weasyprint")
+
 from agentscan.core.models import Framework, ScanMode, ScanReport
 from agentscan.reporting.pdf_report import render_pdf_report
 

@@ -7,6 +7,8 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+pytest.importorskip("litellm")
+
 from agentscan.core.ai_client import AIClient, AIClientError
 
 

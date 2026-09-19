@@ -417,6 +417,7 @@ class TestListAttacks:
         assert "Crescendo Multi-Turn Escalation" in result.output
 
     def test_list_attacks_shows_deep_trojan_scanner(self) -> None:
+        pytest.importorskip("torch")
         result = runner.invoke(app, ["list-attacks"])
         assert result.exit_code == 0
         assert "ATK-024" in result.output
