@@ -428,6 +428,14 @@ class Finding(BaseModel):
         pattern=r"^LLM\d{2}$",
     )
 
+    atlas_id: str | None = Field(
+        default=None,
+        description=(
+            "MITRE ATLAS technique ID, e.g. 'AML.T0051' (LLM Prompt Injection). "
+            "None if no ATLAS mapping exists for this finding type."
+        ),
+    )
+
     description: str = Field(
         ...,
         min_length=10,

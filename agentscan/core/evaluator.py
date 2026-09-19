@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import json
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -63,11 +64,20 @@ class LLMJudge:
 
     def __init__(self, client: AIClient) -> None:
         self.client = client
+        self._verdict_cache: dict[tuple[str, str], Any] = {}
 
     async def judge(self, objective: str, response: str) -> Judgment:
         prompt = f"ATTACK OBJECTIVE:\n{objective}\n\nAGENT RESPONSE:\n{response}\n\nJSON verdict:"
         try:
-            raw = await self.client.complete(prompt, system=_JUDGE_SYSTEM)
+            try:
+                raw = await self.client.complete(
+                    prompt,
+                    system=_JUDGE_SYSTEM,
+                    temperature=0.0,
+                    seed=0,
+                )
+            except TypeError:
+                raw = await self.client.complete(prompt, system=_JUDGE_SYSTEM)
         except AIClientError:
             return Judgment(success=False, reason="judge unavailable")
         return _parse_judgment(raw)

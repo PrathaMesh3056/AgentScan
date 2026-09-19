@@ -1,9 +1,12 @@
 name: "CodeQL Analysis"
 
-# Temporarily disabled while repository is private.
-# GitHub Advanced Security (Code Scanning upload API) is not enabled for private repos on free/team plans.
-# Re-enable push/pull_request/schedule triggers when repository is made public.
 on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  schedule:
+    - cron: '0 3 * * 1'   # weekly Monday 03:00 UTC
   workflow_dispatch:
 
 jobs:

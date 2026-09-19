@@ -29,7 +29,7 @@ from urllib.parse import parse_qs, unquote, urlparse, urlunparse
 import httpx
 from loguru import logger
 
-from agentscan.core.models import Target
+from agentscan.core.models import Target, _installed_version
 
 # ── Retry configuration (shared) ──────────────────────────────────────────────
 
@@ -187,7 +187,7 @@ class HttpJsonConnector(Connector):
     def _build_headers(self) -> dict[str, str]:
         headers: dict[str, str] = {
             "Content-Type": "application/json",
-            "User-Agent": "AgentScan/0.1.0 (security-scanner)",
+            "User-Agent": f"AgentScan/{_installed_version()} (security-scanner)",
         }
         if self.target.auth_header:
             if ":" in self.target.auth_header:
@@ -581,10 +581,16 @@ class _McpClientMixin:
     _resources: list[dict[str, Any]]
 
     async def _rpc(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
-        raise NotImplementedError
+        raise NotImplementedError(
+            f"{type(self).__name__} must implement _rpc(). "
+            "Did you forget to subclass McpStdioConnector or McpSseConnector?"
+        )
 
     async def _notify(self, method: str, params: dict[str, Any] | None = None) -> None:
-        raise NotImplementedError
+        raise NotImplementedError(
+            f"{type(self).__name__} must implement _notify(). "
+            "Did you forget to subclass McpStdioConnector or McpSseConnector?"
+        )
 
     async def _handshake(self) -> None:
         self._rpc_id = 0
@@ -666,6 +672,8 @@ class McpStdioConnector(_McpClientMixin, Connector):
         )
         try:
             await asyncio.wait_for(self._handshake(), timeout=self.target.timeout)
+        except NotImplementedError:
+            raise
         except Exception as e:  # noqa: BLE001
             logger.error(f"MCP stdio handshake failed: {e}")
         return self
@@ -765,6 +773,8 @@ class McpSseConnector(_McpClientMixin, Connector):
         )
         try:
             await self._handshake()
+        except NotImplementedError:
+            raise
         except Exception as e:  # noqa: BLE001
             logger.error(f"MCP SSE handshake failed: {e}")
         return self

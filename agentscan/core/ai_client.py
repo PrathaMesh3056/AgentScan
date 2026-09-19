@@ -90,7 +90,14 @@ class AIClient:
         self.timeout = timeout
         self.num_retries = num_retries
 
-    async def complete(self, prompt: str, system: str | None = None) -> str:
+    async def complete(
+        self,
+        prompt: str,
+        *,
+        system: str | None = None,
+        temperature: float | None = None,
+        seed: int | None = None,
+    ) -> str:
         """
         Single-shot completion: optional system prompt + one user message.
 
@@ -100,9 +107,15 @@ class AIClient:
         if system:
             messages.append({"role": "system", "content": system})
         messages.append({"role": "user", "content": prompt})
-        return await self.chat(messages)
+        return await self.chat(messages, temperature=temperature, seed=seed)
 
-    async def chat(self, messages: list[dict[str, str]]) -> str:
+    async def chat(
+        self,
+        messages: list[dict[str, str]],
+        *,
+        temperature: float | None = None,
+        seed: int | None = None,
+    ) -> str:
         """
         Multi-turn chat completion.
 
@@ -118,15 +131,18 @@ class AIClient:
             response. Callers decide whether to skip the module or abort.
         """
         litellm = _get_litellm()
+        kwargs: dict[str, Any] = {
+            "model": self.model,
+            "messages": messages,
+            "temperature": self.temperature if temperature is None else temperature,
+            "max_tokens": self.max_tokens,
+            "timeout": self.timeout,
+            "num_retries": self.num_retries,
+        }
+        if seed is not None:
+            kwargs["seed"] = seed
         try:
-            response = await litellm.acompletion(
-                model=self.model,
-                messages=messages,
-                temperature=self.temperature,
-                max_tokens=self.max_tokens,
-                timeout=self.timeout,
-                num_retries=self.num_retries,
-            )
+            response = await litellm.acompletion(**kwargs)
         except Exception as e:  # noqa: BLE001 - normalise every provider error to one type
             logger.error(f"LLM request to {self.model!r} failed: {e}")
             raise AIClientError(f"LLM request to {self.model!r} failed: {e}") from e

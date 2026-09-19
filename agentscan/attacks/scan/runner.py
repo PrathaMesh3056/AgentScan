@@ -237,8 +237,6 @@ class YamlScanRunner(AttackModule, ABC):
         """Evaluate response with judge, optionally caching verdicts by (objective, response)."""
         if not use_cache:
             return await judge.judge(objective, response_text)
-        if not hasattr(judge, "_verdict_cache"):
-            judge._verdict_cache = {}  # type: ignore[attr-defined]
         cache_key = (objective, response_text)
         if cache_key in judge._verdict_cache:  # type: ignore[attr-defined]
             return judge._verdict_cache[cache_key]  # type: ignore[attr-defined]
@@ -461,12 +459,16 @@ class YamlScanRunner(AttackModule, ABC):
             raise ValueError(f"{cls.__name__} has not configured payload_file properly.")
         if path is None:
             raise ValueError(f"{cls.__name__} must define a payload_file attribute.")
-        return cls._cached_load_yaml(str(path))
+        try:
+            mtime = Path(str(path)).stat().st_mtime
+        except OSError:
+            mtime = 0.0
+        return cls._cached_load_yaml(str(path), mtime)
 
     @staticmethod
-    @functools.lru_cache(maxsize=16)
-    def _cached_load_yaml(filepath: str) -> tuple[dict[str, Any], ...]:
-        """Load and cache YAML payload file by path string."""
+    @functools.lru_cache(maxsize=32)
+    def _cached_load_yaml(filepath: str, mtime: float = 0.0) -> tuple[dict[str, Any], ...]:
+        """Load and cache YAML payload file, keyed on path + modification time."""
         path_obj = Path(filepath)
         logger.debug(f"Loading payload variants from {path_obj}")
         with open(path_obj, encoding="utf-8") as f:

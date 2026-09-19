@@ -23,8 +23,8 @@ This document provides the exhaustive architectural breakdown of all engineering
 | **6B** | Live OSV.dev CVE Ingestion | ✅ | Real-time batch vulnerability querying (`querybatch`) with exact PyPI pin resolution; offline vulnerability database fallback |
 | **6C** | Graph-Based RBAC Audit | ✅ | NetworkX multi-hop privilege escalation graph modeling (`ID-010`), cross-agent calling edges, shared credential discovery |
 | **6D** | Trajectory & SSP Analysis | ✅ | Autonomous agent trajectory tracing, Servant / Stalker / Predator behavioral classification engine |
-| **6E** | OWASP LLM Closeout | ✅ | Insecure output handling (`ATK-007` / LLM02), RAG context poisoning (`ATK-008` / LLM03), agent overreliance (`ATK-009` / LLM09), Crescendo multi-turn attack module (`ATK-010`) |
-| **7A** | Advanced Neural Probing | ✅ | Rare-token trojan detection (`ATK-024`), attention sink concentration (`ATK-025`), neural activation fingerprinting (`ATK-026`) |
+| **6E** | OWASP LLM Closeout | ✅ | Insecure output handling (`ATK-007` / LLM02), RAG context poisoning (`ATK-008` / LLM03), agent overreliance (`ATK-009` / LLM09), Crescendo multi-turn attack module (`ATK-010`), Model Theft & IP Exfiltration (`ATK-025` / LLM10) |
+| **7A** | Advanced Neural Probing | ✅ | Rare-token trojan detection (`ATK-024`), attention sink concentration (`ATK-026`), neural activation fingerprinting (`ATK-027`) |
 | **7B** | Real-Time Agent Transports | ✅ | MCP stdio/SSE connector (`mcp://`), WebSocket streaming connector (`ws://`, `wss://`) |
 | **7C** | Supply-Chain Standards | ✅ | CycloneDX 1.6 AIBOM generation (`audit --aibom`), Composite GitHub Action (`action.yml`) |
 | **7D** | Interactive Web Dashboard | ✅ | FastAPI local control center (`agentscan ui`), dynamic RBAC graph visualization, live traffic inspector, attack suite launcher |

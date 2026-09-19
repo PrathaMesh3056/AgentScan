@@ -51,8 +51,8 @@ Issues = "https://github.com/PrathaMesh3056/AgentScan/issues"
 
 [project.optional-dependencies]
 deep = [
-    "torch>=2.13.0",
-    "transformers>=5.14.1",
+    "torch>=2.1.0",
+    "transformers>=4.40.0",
 ]
 semantic = [
     "sentence-transformers>=5.7.0",

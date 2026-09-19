@@ -53,8 +53,10 @@ uv sync
 > [!TIP]
 > For DEEP mode neural activation probing, install the CPU PyTorch build and transformers dependencies via:
 > ```bash
-> uv add torch --extra-index-url https://download.pytorch.org/whl/cpu
-> uv add transformers
+> uv add torch>=2.1.0 --extra-index-url https://download.pytorch.org/whl/cpu
+> uv add "transformers>=4.40.0"
+> # Or install the optional dependency group:
+> uv sync --extra deep
 > ```
 
 ### Quickstart
@@ -103,6 +105,11 @@ agentscan scan http://localhost:8000/chat \
 | `--verbose` / `-v` | Prints every payload sent and the agent's reply live, plus findings as they occur. |
 | `--transcript [file]` | Writes the **full transcript** — every payload + reply + findings — to a file. The `--output` report shows only findings; the transcript shows everything. |
 | `--trajectory-log [file]` | Writes structured multi-turn attack trajectories and traces (JSON/JSONL) for offline compliance audits and RLHF safety tuning. |
+
+> [!WARNING]
+> **Interactive Safety Confirmation Gate (`--exploit` & `--deep`)**
+> When invoking `agentscan scan --exploit` or `agentscan scan --deep`, AgentScan displays an explicit warning and prompts for user confirmation before executing destructive-grade payloads (such as system command injection, privilege escalation, or data exfiltration).
+> In automated CI/CD pipelines or headless test runners where standard input is not an interactive terminal (`not sys.stdin.isatty()`), this prompt is automatically bypassed to allow unattended execution.
 
 #### Zero setup: auto-discover with `init`
 
@@ -455,6 +462,10 @@ agentscan swarm http://localhost:8000/chat --team agency --offline --output swar
 agentscan swarm http://localhost:8000/chat --model ollama/llama3 --rounds 3 --verbose
 ```
 
+> [!WARNING]
+> **Safety Confirmation Gate for Swarms**
+> `agentscan swarm` executes autonomous offensive agents capable of discovering and escalating destructive actions. An interactive confirmation prompt requires explicit user consent before dispatching the swarm. In non-interactive environments (`sys.stdin.isatty() == False`), the gate allows automated execution.
+
 #### Swarm Team Presets:
 1. `trio`: Default offensive team combining `Recon-Alpha` (boundary & system prompt discovery), `Bypass-Echo` (evasion & simulation framing), `Exploit-Omega` (privileged action escalation), and `Judge-Delta` (compromise evaluation).
 2. `agency`: Excessive agency hunter focusing on unconfirmed destructive commands (`rm -rf`, `DROP TABLE`, unverified wire transfers).
@@ -576,6 +587,7 @@ Located in `agentscan/core/`, the attack engine is built for extreme concurrency
 > - **Multilingual Alignment Bypass (`ATK-011`)**: Tests cross-lingual prompt injection and safety boundary drift across Chinese, Russian, Arabic, Hindi, and Spanish (`LLM01`).
 > - **System Prompt Leakage (`ATK-012`)**: Evaluates system prompt extraction, meta-instruction leaks, and confidential operational rules across 10 targeted vectors with optional ground-truth verification against `Target.system_prompt` (`LLM07`).
 > - **Excessive Agency & Unauthorized Actions (`ATK-013`)**: Probes autonomous agents for unconfirmed file system purges, destructive database DDL (DROP TABLE), rogue external network requests, unconfirmed financial transfers, cloud resource terminations, and unauthorized privilege escalation (`LLM06`).
+> - **Model Theft & Intellectual Property Exfiltration (`ATK-025`)**: Probes target agents for unauthorized disclosure of internal model architecture details, training data memorisation, system prompt exfiltration via repetition, model weight/checkpoint storage URIs, and fine-tuning instruction recovery (`LLM10`).
 
 > [!TIP]
 > **EXPLOIT Mode Modules**
@@ -759,7 +771,7 @@ All structured data is strongly validated using Pydantic v2 `BaseModel` classes,
 | Model | Purpose | Immutability |
 | :--- | :--- | :--- |
 | **`Target`** | Live endpoint. HTTP(S), `ws(s)://`, `mcp://stdio`, `mcp+sse://`. | Mutable |
-| **`Finding`** | Immutable evidence object. Includes `attack_id`, `severity`, etc. | **Frozen** |
+| **`Finding`** | Immutable forensic evidence object. Includes `attack_id`, `severity`, `owasp_id`, `atlas_id` (MITRE ATLAS TTP ID, e.g. `AML.T0051`), etc. | **Frozen** |
 | **`ScanReport`** | Mutable container that accumulates `Finding` objects. | Mutable |
 | **`StrEnum`** | Used for enums like `Severity`. Serializes directly to JSON strings. | N/A |
 

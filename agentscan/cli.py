@@ -127,6 +127,34 @@ def write_report(report: ScanReport | IdentityReport, output_path: Path) -> None
         raise typer.BadParameter(f"Unsupported output format: {ext}")
 
 
+def _confirm_exploit_mode() -> None:
+    """Require explicit consent before running exploit-grade attack payloads."""
+    import sys
+
+    from rich import print as rprint
+    from rich.prompt import Confirm
+
+    if not sys.stdin.isatty():
+        return
+
+    rprint(
+        "\n[bold red]⚠  EXPLOIT / DEEP MODE WARNING[/bold red]\n"
+        "This scan will send destructive-grade payloads (privilege escalation,\n"
+        "data exfiltration, system command injection) to the target agent.\n"
+        "[bold]Only run this against systems you own or have written permission to test.[/bold]\n"
+    )
+    try:
+        confirmed = Confirm.ask(
+            "I confirm this is an authorized security test and I accept full responsibility",
+            default=False,
+        )
+    except (EOFError, KeyboardInterrupt):
+        confirmed = False
+    if not confirmed:
+        rprint("[yellow]Scan cancelled.[/yellow]")
+        raise SystemExit(0)
+
+
 @app.command()
 def scan(  # noqa: PLR0913
     target: str | None = typer.Argument(
@@ -398,6 +426,9 @@ def scan(  # noqa: PLR0913
         + ([ScanMode.EXPLOIT] if exploit else [])
         + ([ScanMode.DEEP] if deep else [])
     )
+
+    if exploit or deep:
+        _confirm_exploit_mode()
 
     # Optional positive control: verify the attacker/judge can detect a jailbreak
     # BEFORE the scan, so a "resisted" verdict isn't a silent failure.
@@ -1143,6 +1174,7 @@ def swarm(  # noqa: PLR0913
     ),
 ) -> None:
     """Run collaborative multi-agent red-team swarms against an AI agent."""
+    _confirm_exploit_mode()
     import asyncio
     import json
 
@@ -1328,7 +1360,7 @@ def heal_command(
         table.add_row(
             action.finding_id,
             action.kind,
-            str(action.path),
+            action.path,
             diff_status,
         )
     console.print(table)
