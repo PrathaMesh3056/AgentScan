@@ -847,17 +847,31 @@ def ui(
     ),
     host: str = typer.Option("127.0.0.1", "--host", help="Bind address."),
     port: int = typer.Option(8765, "--port", help="Bind port."),
+    token: str | None = typer.Option(
+        None,
+        "--token",
+        envvar="AGENTSCAN_UI_TOKEN",
+        help="Security token required to access the dashboard and APIs.",
+    ),
 ) -> None:
     """Serve a local dashboard for graphs, trajectory/SSP, and traffic (no SaaS)."""
     from agentscan.ui.app import create_app, serve_app
 
+    if host == "0.0.0.0":
+        console.print(
+            "[bold yellow]WARNING: Binding to 0.0.0.0 exposes the dashboard to all network interfaces. "
+            "Ensure firewall rules or --token authentication are configured.[/bold yellow]"
+        )
+
     try:
-        dashboard = create_app(report, identity)
+        dashboard = create_app(report, identity, token=token)
     except RuntimeError as e:
         console.print(f"[red]{e}[/red]")
         raise typer.Exit(1) from None
 
     console.print(f"AgentScan UI: [cyan]http://{host}:{port}[/cyan]")
+    if token:
+        console.print("[dim]Authentication token enabled for dashboard access.[/dim]")
     try:
         serve_app(dashboard, host=host, port=port)
     except RuntimeError as e:

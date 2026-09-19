@@ -372,6 +372,11 @@ class Target(BaseModel):
         description="Number of turns allocated to the escalation model.",
     )
 
+    include_sensitive_data: bool = Field(
+        default=False,
+        description="When True, allows raw credentials and secrets in traces without redaction.",
+    )
+
     @field_validator("url")
     @classmethod
     def url_must_be_supported_scheme(cls, v: str) -> str:
@@ -586,6 +591,11 @@ class ScanReport(BaseModel):
         default=0,
         ge=0,
         description="Attack variants executed. Failed modules are excluded.",
+    )
+
+    module_errors: list[dict[str, str]] = Field(
+        default_factory=list,
+        description="Execution errors encountered per module (e.g. timeout, unhandled exception).",
     )
 
     agentscan_version: str = Field(

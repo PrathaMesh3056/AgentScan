@@ -1,0 +1,58 @@
+name: Bug Report
+description: Report a reproducible bug or issue in AgentScan
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report an issue! Please ensure that:
+        - You have searched existing issues to verify this is not a duplicate.
+        - You are not reporting a security vulnerability here (report security issues via [SECURITY.md](https://github.com/PrathaMesh3056/AgentScan/blob/main/SECURITY.md)).
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Bug Description
+      description: A clear and concise description of what the bug is.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to Reproduce
+      description: Exact CLI command, Python script, or configuration used.
+      placeholder: |
+        1. Run `uv run agentscan scan http://localhost:8000/chat`
+        2. Provide target configuration ...
+        3. See error
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Behavior
+      description: What you expected to happen.
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment & Versions
+      description: Operating system, Python version, AgentScan version.
+      value: |
+        - OS: [e.g. Ubuntu 22.04 / macOS 14 / Windows 11]
+        - Python version: [e.g. 3.12.3]
+        - AgentScan version / commit: [e.g. 0.1.0 or commit hash]
+        - Target framework (if applicable): [e.g. LangChain, LlamaIndex, Custom]
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant Logs or Error Output
+      description: Paste any stack traces or terminal output (sanitize any API keys or confidential data).
+      render: shell

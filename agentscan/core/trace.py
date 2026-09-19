@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import re
 import sys
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -18,6 +19,37 @@ from typing import Any
 from rich.console import Console
 
 _console = Console()
+
+_REDACTION_PATTERNS: list[tuple[re.Pattern[str], str]] = [
+    # Bearer tokens
+    (re.compile(r"(?i)\b(Bearer\s+)[A-Za-z0-9_\-\.]{10,}"), r"\1[REDACTED]"),
+    # OpenAI & generic sk- keys
+    (re.compile(r"\bsk-[A-Za-z0-9_\-]{20,}\b"), "[REDACTED]"),
+    # Anthropic keys
+    (re.compile(r"\bsk-ant-[A-Za-z0-9_\-]{20,}\b"), "[REDACTED]"),
+    # Common JSON / query / header secret fields
+    (
+        re.compile(
+            r'(?i)("?(?:api_key|apikey|secret|password|access_token|refresh_token|auth_token|secret_key)"?\s*[:=]\s*["\']?)[^"\'\s&,;]{6,}(["\']?)'
+        ),
+        r"\1[REDACTED]\2",
+    ),
+    # HTTP Authorization header
+    (re.compile(r"(?i)(Authorization:\s*)[^\r\n]+"), r"\1[REDACTED]"),
+]
+
+
+def redact_sensitive_data(text: str) -> str:
+    """
+    Redact API keys, tokens, passwords, and authorization headers from text.
+    Safe to call with any string; non-matching strings are returned unchanged.
+    """
+    if not text:
+        return text
+    result = text
+    for pattern, replacement in _REDACTION_PATTERNS:
+        result = pattern.sub(replacement, result)
+    return result
 
 
 def _safe(text: str) -> str:
@@ -66,9 +98,10 @@ class LLMCall:
 class TrafficRecorder:
     """Process-wide singleton (one scan per CLI process). Use the module-level `recorder`."""
 
-    def __init__(self) -> None:
+    def __init__(self, redact: bool = True) -> None:
         self.enabled = False
         self.live = False
+        self.redact = redact
         self.entries: list[TrafficEntry] = []
         self.findings: list[tuple[str, str, str]] = []  # (module_id, severity, description)
         self.llm_calls: list[LLMCall] = []
@@ -89,55 +122,91 @@ class TrafficRecorder:
         if self.live:
             _console.print(f"\n[bold cyan]== {module_id} - {_safe(module_name)} ==[/bold cyan]")
 
-    def record(self, kind: str, request: str, response: dict[str, Any]) -> None:
+    def record(
+        self,
+        kind: str,
+        request: str,
+        response: dict[str, Any],
+        redact: bool | None = None,
+    ) -> None:
         if not self.enabled:
             return
         self._seq += 1
+        do_redact = self.redact if redact is None else redact
         reply = extract_reply_text(response)
+        req_text = redact_sensitive_data(request) if do_redact else request
+        reply_text = redact_sensitive_data(reply) if do_redact else reply
         entry = TrafficEntry(
             seq=self._seq,
             module_id=self._module[0],
             module_name=self._module[1],
             kind=kind,
-            request=request,
-            response=reply,
+            request=req_text,
+            response=reply_text,
             timestamp=datetime.now(UTC).isoformat(),
         )
         self.entries.append(entry)
         if self.live:
             _console.print(
-                f"[dim][{entry.seq}][/dim] [yellow]>> payload:[/yellow] {_safe(request.strip()[:400])}"
+                f"[dim][{entry.seq}][/dim] [yellow]>> payload:[/yellow] {_safe(req_text.strip()[:400])}"
             )
             _console.print(
-                f"[dim][{entry.seq}][/dim] [green]<< reply  :[/green] {_safe(reply.strip()[:400])}"
+                f"[dim][{entry.seq}][/dim] [green]<< reply  :[/green] {_safe(reply_text.strip()[:400])}"
             )
 
-    def record_finding(self, module_id: str, severity: str, description: str) -> None:
+    def record_finding(
+        self,
+        module_id: str,
+        severity: str,
+        description: str,
+        redact: bool | None = None,
+    ) -> None:
         if not self.enabled:
             return
-        self.findings.append((module_id, severity, description))
+        do_redact = self.redact if redact is None else redact
+        desc = redact_sensitive_data(description) if do_redact else description
+        self.findings.append((module_id, severity, desc))
         if self.live:
-            _console.print(f"   [bold red]!! FINDING [{severity}][/bold red] {_safe(description)}")
+            _console.print(f"   [bold red]!! FINDING [{severity}][/bold red] {_safe(desc)}")
 
-    def record_llm(self, model: str, messages: list[dict[str, str]], output: str) -> None:
+    def record_llm(
+        self,
+        model: str,
+        messages: list[dict[str, str]],
+        output: str,
+        redact: bool | None = None,
+    ) -> None:
         """Record one attacker/judge LLM call — the input prompts and the raw output."""
         if not self.enabled:
             return
         self._llm_seq += 1
+        do_redact = self.redact if redact is None else redact
+        if do_redact:
+            sanitized_messages = [
+                {k: redact_sensitive_data(v) if isinstance(v, str) else v for k, v in m.items()}
+                for m in messages
+            ]
+            sanitized_output = redact_sensitive_data(output)
+        else:
+            sanitized_messages = [dict(m) for m in messages]
+            sanitized_output = output
+
         call = LLMCall(
             seq=self._llm_seq,
             model=model,
-            messages=[dict(m) for m in messages],
-            output=output,
+            messages=sanitized_messages,
+            output=sanitized_output,
             timestamp=datetime.now(UTC).isoformat(),
         )
         self.llm_calls.append(call)
         if self.live:
-            sys = " ".join(m.get("content", "") for m in messages if m.get("role") == "system")
+            sys = " ".join(
+                m.get("content", "") for m in sanitized_messages if m.get("role") == "system"
+            )
             role = "attacker" if "red-teamer" in sys else "judge" if "evaluator" in sys else "llm"
             _console.print(
                 f"[magenta][LLM {call.seq}] {model} ({role})[/magenta] "
-                f"[dim]→[/dim] {_safe(output.strip()[:300])}"
+                f"[dim]→[/dim] {_safe(sanitized_output.strip()[:300])}"
             )
 
     def write_llm_log(self, path: Path) -> None:
@@ -156,8 +225,9 @@ class TrafficRecorder:
             out += ["----- OUTPUT · MODEL -----", c.output]
         Path(path).write_text("\n".join(out), encoding="utf-8")
 
-    def write_transcript(self, path: Path, report: Any) -> None:
+    def write_transcript(self, path: Path, report: Any, redact: bool | None = None) -> None:
         """Write the full transcript (all traffic + a findings summary) to a file."""
+        do_redact = self.redact if redact is None else redact
         out: list[str] = [
             "# AgentScan Transcript",
             "",
@@ -186,18 +256,21 @@ class TrafficRecorder:
         out += ["", "=" * 72, f"FINDINGS ({len(report.findings)})", "=" * 72]
         if report.findings:
             for f in report.findings:
-                out.append(f"- {f.attack_id} [{f.severity}] {f.attack_name}: {f.description}")
+                desc = redact_sensitive_data(f.description) if do_redact else f.description
+                out.append(f"- {f.attack_id} [{f.severity}] {f.attack_name}: {desc}")
                 if f.evidence:
-                    out.append(f"    evidence: {f.evidence}")
+                    ev = redact_sensitive_data(f.evidence) if do_redact else f.evidence
+                    out.append(f"    evidence: {ev}")
         else:
             out.append("(no findings — the target resisted every payload)")
 
         Path(path).write_text("\n".join(out), encoding="utf-8")
 
-    def write_trajectory_log(self, path: Path, report: Any) -> None:
+    def write_trajectory_log(self, path: Path, report: Any, redact: bool | None = None) -> None:
         """Write structured multi-turn attack execution trajectory as JSON or JSONL."""
         import json
 
+        do_redact = self.redact if redact is None else redact
         trajectories = [
             {
                 "seq": entry.seq,
@@ -210,6 +283,19 @@ class TrafficRecorder:
             }
             for entry in self.entries
         ]
+        findings_data = []
+        for f in getattr(report, "findings", []):
+            sev = f.severity.value if hasattr(f.severity, "value") else str(f.severity)
+            desc = redact_sensitive_data(f.description) if do_redact else f.description
+            ev = redact_sensitive_data(f.evidence) if (do_redact and f.evidence) else f.evidence
+            findings_data.append(
+                {
+                    "attack_id": f.attack_id,
+                    "severity": sev,
+                    "description": desc,
+                    "evidence": ev,
+                }
+            )
         data = {
             "target_url": getattr(report, "target_url", ""),
             "score": getattr(report, "score", None),
@@ -217,17 +303,7 @@ class TrafficRecorder:
             "generated_at": datetime.now(UTC).isoformat(),
             "total_turns": len(self.entries),
             "trajectories": trajectories,
-            "findings": [
-                {
-                    "attack_id": f.attack_id,
-                    "severity": f.severity.value
-                    if hasattr(f.severity, "value")
-                    else str(f.severity),
-                    "description": f.description,
-                    "evidence": f.evidence,
-                }
-                for f in getattr(report, "findings", [])
-            ],
+            "findings": findings_data,
         }
         ext = Path(path).suffix.lower()
         if ext == ".jsonl":

@@ -34,16 +34,20 @@ AgentScan operates in both **Live Target Modes** (firing payloads over the netwo
 > [!IMPORTANT]
 > **Requirements**
 > - Python 3.12 or higher.
-> - A virtual environment (recommended: `poetry` or `uv`).
+> - A virtual environment (recommended: `uv`).
 
 ### Installation
 
-AgentScan can be installed directly from source or via PyPI (once published).
+AgentScan can be installed directly from source or via PyPI:
 
 ```bash
-git clone https://github.com/PrathaMesh3056/AgentScan
-cd agentscan
-pip install -e .
+# Install via uv (recommended)
+uv tool install agentscan
+
+# Or install from source:
+git clone https://github.com/PrathaMesh3056/AgentScan.git
+cd AgentScan
+uv sync
 ```
 
 > [!TIP]
@@ -475,22 +479,22 @@ agents:
 
 ---
 
-### 3.11. Automated Self-Healing & Webhook Ingestion (`heal`, `heal-server`)
+### 3.11. Automated Self-Healing & Webhook Ingestion (`fix` / `heal`, `heal-server`)
 
-AgentScan closes the loop between vulnerability discovery and remediation through its autonomous **Self-Healing Engine**:
+AgentScan closes the loop between vulnerability discovery and remediation through its autonomous **Self-Healing Engine** (`agentscan fix`, with `agentscan heal` supported as an alias):
 
 ```bash
 # 1. Inspect and preview fixes in safe dry-run mode
-agentscan heal ./my-agent-repo
+agentscan fix ./my-agent-repo
 
 # 2. Export a standard unified git patch ready for CI review or `git apply`
-agentscan heal ./my-agent-repo --patch-out remediation.patch
+agentscan fix ./my-agent-repo --patch-out remediation.patch
 
 # 3. Apply fixes directly to source files
-agentscan heal ./my-agent-repo --apply
+agentscan fix ./my-agent-repo --apply
 
 # 4. Heal directly from an existing scan or audit JSON report
-agentscan heal ./my-agent-repo --report scan_report.json --apply
+agentscan fix ./my-agent-repo --report scan_report.json --apply
 ```
 
 #### Self-Healing Webhook Receiver (`heal-server`)

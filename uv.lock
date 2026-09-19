@@ -19,23 +19,44 @@ source = { editable = "." }
 dependencies = [
     { name = "httpx" },
     { name = "jinja2" },
-    { name = "litellm" },
     { name = "loguru" },
     { name = "networkx" },
-    { name = "playwright" },
     { name = "pydantic" },
     { name = "python-dotenv" },
     { name = "pyyaml" },
     { name = "rich" },
-    { name = "sentence-transformers" },
-    { name = "torch" },
-    { name = "transformers" },
     { name = "typer" },
-    { name = "weasyprint" },
     { name = "websockets" },
 ]
 
 [package.optional-dependencies]
+browser = [
+    { name = "playwright" },
+]
+deep = [
+    { name = "torch" },
+    { name = "transformers" },
+]
+full = [
+    { name = "fastapi" },
+    { name = "litellm" },
+    { name = "playwright" },
+    { name = "semgrep" },
+    { name = "sentence-transformers" },
+    { name = "torch" },
+    { name = "transformers" },
+    { name = "uvicorn", extra = ["standard"] },
+    { name = "weasyprint" },
+]
+llm = [
+    { name = "litellm" },
+]
+pdf = [
+    { name = "weasyprint" },
+]
+semantic = [
+    { name = "sentence-transformers" },
+]
 semgrep = [
     { name = "semgrep" },
 ]
@@ -60,27 +81,28 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "agentscan", extras = ["deep", "semantic", "browser", "pdf", "llm", "ui", "semgrep"], marker = "extra == 'full'" },
     { name = "fastapi", marker = "extra == 'ui'", specifier = ">=0.115.0" },
     { name = "httpx", specifier = ">=0.27" },
     { name = "jinja2", specifier = ">=3.1.6" },
-    { name = "litellm", specifier = ">=1.96.2" },
+    { name = "litellm", marker = "extra == 'llm'", specifier = ">=1.96.2" },
     { name = "loguru", specifier = ">=0.7" },
     { name = "networkx", specifier = ">=3.2" },
-    { name = "playwright", specifier = ">=1.62.0" },
+    { name = "playwright", marker = "extra == 'browser'", specifier = ">=1.62.0" },
     { name = "pydantic", specifier = ">=2.0" },
     { name = "python-dotenv", specifier = ">=1.2.2" },
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "rich", specifier = ">=13.0" },
     { name = "semgrep", marker = "extra == 'semgrep'", specifier = ">=1.80.0" },
-    { name = "sentence-transformers", specifier = ">=5.7.0" },
-    { name = "torch", specifier = ">=2.13.0" },
-    { name = "transformers", specifier = ">=5.14.1" },
+    { name = "sentence-transformers", marker = "extra == 'semantic'", specifier = ">=5.7.0" },
+    { name = "torch", marker = "extra == 'deep'", specifier = ">=2.13.0" },
+    { name = "transformers", marker = "extra == 'deep'", specifier = ">=5.14.1" },
     { name = "typer", extras = ["all"], specifier = ">=0.12" },
     { name = "uvicorn", extras = ["standard"], marker = "extra == 'ui'", specifier = ">=0.32.0" },
-    { name = "weasyprint", specifier = ">=69.0" },
+    { name = "weasyprint", marker = "extra == 'pdf'", specifier = ">=69.0" },
     { name = "websockets", specifier = ">=14.0" },
 ]
-provides-extras = ["semgrep", "ui"]
+provides-extras = ["deep", "semantic", "browser", "pdf", "llm", "ui", "semgrep", "full"]
 
 [package.metadata.requires-dev]
 dev = [

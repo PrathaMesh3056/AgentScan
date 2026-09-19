@@ -107,11 +107,20 @@ async def run_scan(target: Target, *, reset_trajectory: bool = True) -> ScanRepo
     # 4. Collect findings and compute total_tests_run
     all_findings: list[Finding] = []
     total_tests_run = 0
+    module_errors: list[dict[str, str]] = []
 
     for module, result in zip(modules, results, strict=True):
         if isinstance(result, BaseException):
-            # Module raised — log and exclude from totals
-            logger.error(f"Module {module.attack_id} ({module.attack_name}) failed: {result}")
+            # Module raised — log and track error
+            err_msg = str(result) or type(result).__name__
+            logger.error(f"Module {module.attack_id} ({module.attack_name}) failed: {err_msg}")
+            module_errors.append(
+                {
+                    "module_id": module.attack_id,
+                    "module_name": module.attack_name,
+                    "error": err_msg,
+                }
+            )
             continue
 
         # result is list[Finding]
@@ -124,6 +133,7 @@ async def run_scan(target: Target, *, reset_trajectory: bool = True) -> ScanRepo
         scan_mode=target.mode,
         framework=target.framework,
         findings=all_findings,
+        module_errors=module_errors,
     )
 
     # 6. Score and complete
@@ -134,7 +144,8 @@ async def run_scan(target: Target, *, reset_trajectory: bool = True) -> ScanRepo
 
     logger.info(
         f"Scan complete: {len(all_findings)} findings, "
-        f"score {score}/100, {total_tests_run} tests run"
+        f"score {score}/100, {total_tests_run} tests run, "
+        f"{len(module_errors)} module errors"
     )
 
     return report
@@ -148,6 +159,7 @@ async def run_scan_multi(target: Target, modes: list[ScanMode]) -> ScanReport:
 
     all_findings = []
     total_tests_run = 0
+    all_errors: list[dict[str, str]] = []
 
     # Open ONE shared browser for the entire multi-mode scan (SCAN + EXPLOIT + …),
     # so the whole run uses a single Chromium instead of one per mode. run_scan()
@@ -163,6 +175,7 @@ async def run_scan_multi(target: Target, modes: list[ScanMode]) -> ScanReport:
             report = await run_scan(mode_target, reset_trajectory=False)
             all_findings.extend(report.findings)
             total_tests_run += report.tests_run
+            all_errors.extend(report.module_errors)
     finally:
         if own_session:
             await close_browser_session()
@@ -173,6 +186,7 @@ async def run_scan_multi(target: Target, modes: list[ScanMode]) -> ScanReport:
         scan_mode=modes[0] if modes else target.mode,
         framework=target.framework,
         findings=all_findings,
+        module_errors=all_errors,
     )
     score = calculate_score(all_findings, total_tests_run)
     merged_report.complete(score, tests_run=total_tests_run)

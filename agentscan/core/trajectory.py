@@ -8,7 +8,7 @@ from __future__ import annotations
 from typing import Any
 
 from agentscan.core.models import TurnRecord
-from agentscan.core.trace import extract_reply_text
+from agentscan.core.trace import extract_reply_text, redact_sensitive_data
 
 
 def extract_tool_names(response: dict[str, Any]) -> list[str]:
@@ -59,13 +59,16 @@ class TrajectoryRecorder:
     def reset(self) -> None:
         self._turns.clear()
 
-    def record(self, payload: str, response: dict[str, Any]) -> None:
+    def record(self, payload: str, response: dict[str, Any], redact: bool = True) -> None:
         turn = len(self._turns) + 1
+        safe_payload = redact_sensitive_data(payload) if redact else payload
+        reply = extract_reply_text(response)
+        safe_response = redact_sensitive_data(reply) if redact else reply
         self._turns.append(
             TurnRecord(
                 turn=turn,
-                payload=payload,
-                response=extract_reply_text(response),
+                payload=safe_payload,
+                response=safe_response,
                 tool_calls=extract_tool_names(response),
             )
         )

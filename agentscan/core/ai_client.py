@@ -43,7 +43,12 @@ def _get_litellm() -> Any:
     not pull in litellm's heavy import graph.
     """
     global _litellm_configured
-    import litellm
+    try:
+        import litellm
+    except ImportError as e:
+        raise AIClientError(
+            "AI-driven testing requires the 'llm' extra: pip install 'agentscan[llm]'"
+        ) from e
 
     if not _litellm_configured:
         # Drop provider-unsupported params instead of erroring (e.g. a model that

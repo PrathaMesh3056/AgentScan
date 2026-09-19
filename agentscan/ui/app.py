@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 import io
 import json
+import os
 import re
 import zipfile
 from collections.abc import AsyncGenerator
@@ -118,6 +119,7 @@ event_bus = EventBus()
 def create_app(
     report_path: Path | None = None,
     identity_path: Path | None = None,
+    token: str | None = None,
 ) -> Any:
     try:
         from fastapi import FastAPI, Query
@@ -142,13 +144,40 @@ def create_app(
         allow_headers=["*"],
     )
 
-    @app.middleware("http")
-    async def _localhost_only(request, call_next):
-        host = getattr(request.client, "host", "127.0.0.1") if request.client else "127.0.0.1"
-        if host not in ("127.0.0.1", "::1", "localhost", "testclient"):
-            from fastapi.responses import JSONResponse as _JR
+    active_token = token or os.environ.get("AGENTSCAN_UI_TOKEN")
 
+    @app.middleware("http")
+    async def _auth_and_host_guard(request, call_next):
+        from fastapi.responses import JSONResponse as _JR
+
+        # 1. Token authentication if configured
+        if active_token:
+            auth_header = request.headers.get("Authorization", "")
+            req_token = None
+            if auth_header.startswith("Bearer "):
+                req_token = auth_header[7:].strip()
+            elif "token" in request.query_params:
+                req_token = request.query_params["token"]
+
+            path = request.url.path
+            protected_paths = (
+                "/",
+                "/report",
+                "/overview",
+                "/findings",
+                "/mcp",
+                "/heal",
+                "/healing",
+                "/sentinel",
+            )
+            if (path.startswith("/api/") or path in protected_paths) and req_token != active_token:
+                return _JR({"error": "Unauthorized: invalid or missing token"}, status_code=401)
+
+        # 2. Localhost-only check (unless token is configured)
+        host = getattr(request.client, "host", "127.0.0.1") if request.client else "127.0.0.1"
+        if host not in ("127.0.0.1", "::1", "localhost", "testclient") and not active_token:
             return _JR({"error": "AgentScan dashboard is localhost-only"}, status_code=403)
+
         return await call_next(request)
 
     state.identity_path = identity_path
@@ -404,12 +433,30 @@ def create_app(
             }
         )
 
+    @app.post("/api/certificate")
+    async def api_certificate_post(payload: dict[str, Any] | None = None) -> Any:
+        from agentscan.reporting.audit_verifier import sign_audit_report
+
+        if state.report is None:
+            return JSONResponse({"error": "no report loaded", "certificate": None}, status_code=200)
+        secret_key = payload.get("secret_key") if payload else None
+        cert = sign_audit_report(state.report.to_dict(), secret_key=secret_key)
+        return JSONResponse(cert)
+
     @app.get("/api/certificate")
     async def api_certificate(
-        secret_key: str | None = Query(default=None, description="Optional HMAC key"),
+        secret_key: str | None = Query(
+            default=None,
+            description="Optional HMAC key (deprecated: use POST /api/certificate with JSON body)",
+        ),
     ) -> Any:
         from agentscan.reporting.audit_verifier import sign_audit_report
 
+        if secret_key:
+            logger.warning(
+                "Passing secret_key via query parameter is deprecated for security. "
+                "Use POST /api/certificate with a JSON body instead."
+            )
         if state.report is None:
             return JSONResponse({"error": "no report loaded", "certificate": None}, status_code=200)
         cert = sign_audit_report(state.report.to_dict(), secret_key=secret_key)

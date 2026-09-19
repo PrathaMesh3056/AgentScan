@@ -2,61 +2,199 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>AgentScan Report</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}AgentScan Executive Security Report{% endblock %}</title>
     <style>
         :root {
-            --color-critical: #C0392B;
-            --color-high: #D68910;
-            --color-medium: #D4AC0D;
-            --color-low: #1E8449;
-            --color-info: #7F8C8D;
-            --color-pass: #27AE60;
-            --bg-color: #F8F9F9;
-            --text-color: #2C3E50;
-            --border-color: #BDC3C7;
+            --primary: #0f172a;
+            --primary-light: #1e293b;
+            --secondary: #334155;
+            --accent-blue: #0284c7;
+            --border: #e2e8f0;
+            --border-subtle: #cbd5e1;
+            --bg-page: #f8fafc;
+            --bg-card: #ffffff;
+            --text-main: #0f172a;
+            --text-muted: #64748b;
+            --text-dim: #94a3b8;
+
+            /* Severity Colors */
+            --sev-critical: #dc2626;
+            --sev-critical-bg: #fef2f2;
+            --sev-high: #ea580c;
+            --sev-high-bg: #fff7ed;
+            --sev-medium: #d97706;
+            --sev-medium-bg: #fffbeb;
+            --sev-low: #16a34a;
+            --sev-low-bg: #f0fdf4;
+            --sev-info: #0284c7;
+            --sev-info-bg: #f0f9ff;
+            --sev-pass: #15803d;
+            --sev-pass-bg: #f0fdf4;
         }
-        @page { margin: 20mm; }
+
+        @page {
+            size: A4 portrait;
+            margin: 18mm 16mm 22mm 16mm;
+            @top-left {
+                content: "AgentScan · AI Agent Security Assurance Report";
+                font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+                font-size: 8pt;
+                color: #94a3b8;
+                font-weight: 500;
+                text-transform: uppercase;
+                letter-spacing: 0.5px;
+            }
+            @top-right {
+                content: "{{ generated_at }}";
+                font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+                font-size: 8pt;
+                color: #94a3b8;
+            }
+            @bottom-left {
+                content: "CONFIDENTIAL · PREPARED FOR AUTHORIZED ENTERPRISE USE ONLY";
+                font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+                font-size: 8pt;
+                color: #94a3b8;
+                font-weight: 600;
+                letter-spacing: 0.5px;
+            }
+            @bottom-right {
+                content: "Page " counter(page) " of " counter(pages);
+                font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+                font-size: 8pt;
+                color: #64748b;
+                font-weight: 600;
+            }
+        }
+
+        * {
+            box-sizing: border-box;
+            -webkit-print-color-adjust: exact;
+            print-color-adjust: exact;
+        }
+
         body {
-            font-family: Arial, sans-serif;
-            background-color: var(--bg-color);
-            color: var(--text-color);
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: var(--bg-page);
+            color: var(--text-main);
             margin: 0;
-            padding: 20px;
+            padding: 0;
+            font-size: 10pt;
+            line-height: 1.5;
         }
-        .container {
-            max-width: 1200px;
+
+        .report-wrapper {
+            max-width: 100%;
             margin: 0 auto;
         }
-        h1, h2, h3 {
-            color: #2C3E50;
-        }
-        .severity-CRITICAL { color: var(--color-critical); font-weight: bold; }
-        .severity-HIGH { color: var(--color-high); font-weight: bold; }
-        .severity-MEDIUM { color: var(--color-medium); font-weight: bold; }
-        .severity-LOW { color: var(--color-low); font-weight: bold; }
-        .severity-INFO { color: var(--color-info); font-weight: bold; }
-        .severity-PASS { color: var(--color-pass); font-weight: bold; }
 
-        .findings-table {
-            display: grid;
-            grid-template-columns: 1fr 1fr 3fr;
-            gap: 1px;
-            background-color: var(--border-color);
-            border: 1px solid var(--border-color);
-            margin-top: 20px;
+        /* Typography */
+        h1, h2, h3, h4 {
+            color: var(--primary);
+            margin: 0;
+            font-weight: 700;
+            line-height: 1.25;
         }
-        .findings-table > div {
-            background-color: #FFFFFF;
-            padding: 10px;
+
+        h1 { font-size: 20pt; }
+        h2 { font-size: 14pt; margin-bottom: 8px; }
+        h3 { font-size: 11pt; margin-bottom: 6px; }
+
+        p {
+            margin: 0 0 8px 0;
         }
-        .table-header {
-            font-weight: bold;
-            background-color: #EAECEE !important;
+
+        /* Utility Cards & Sections */
+        .card {
+            background-color: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 16px;
+            margin-bottom: 16px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.03);
+            page-break-inside: avoid;
+        }
+
+        .badge {
+            display: inline-block;
+            font-size: 7.5pt;
+            font-weight: 700;
+            padding: 3px 8px;
+            border-radius: 9999px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            line-height: 1;
+        }
+
+        .badge-critical { background-color: var(--sev-critical-bg); color: var(--sev-critical); border: 1px solid #fca5a5; }
+        .badge-high     { background-color: var(--sev-high-bg); color: var(--sev-high); border: 1px solid #fdba74; }
+        .badge-medium   { background-color: var(--sev-medium-bg); color: var(--sev-medium); border: 1px solid #fde68a; }
+        .badge-low      { background-color: var(--sev-low-bg); color: var(--sev-low); border: 1px solid #86efac; }
+        .badge-info     { background-color: var(--sev-info-bg); color: var(--sev-info); border: 1px solid #7dd3fc; }
+        .badge-pass     { background-color: var(--sev-pass-bg); color: var(--sev-pass); border: 1px solid #86efac; }
+
+        .badge-neutral  { background-color: #f1f5f9; color: var(--secondary); border: 1px solid var(--border); }
+        .badge-primary  { background-color: #e0f2fe; color: var(--accent-blue); border: 1px solid #bae6fd; }
+
+        .page-break {
+            page-break-before: always;
+        }
+
+        .avoid-break {
+            page-break-inside: avoid;
+        }
+
+        /* Table styles */
+        table.data-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 9pt;
+            margin-top: 8px;
+        }
+
+        table.data-table th {
+            background-color: #f1f5f9;
+            color: var(--secondary);
+            text-align: left;
+            padding: 8px 10px;
+            font-weight: 600;
+            border-bottom: 2px solid var(--border);
+            text-transform: uppercase;
+            font-size: 7.5pt;
+            letter-spacing: 0.5px;
+        }
+
+        table.data-table td {
+            padding: 8px 10px;
+            border-bottom: 1px solid var(--border);
+            vertical-align: top;
+        }
+
+        table.data-table tr:nth-child(even) td {
+            background-color: #fafbfc;
+        }
+
+        code, pre {
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+            font-size: 8.5pt;
+        }
+
+        pre.code-block {
+            background-color: #0f172a;
+            color: #f8fafc;
+            padding: 10px 12px;
+            border-radius: 6px;
+            overflow-x: auto;
+            white-space: pre-wrap;
+            word-break: break-all;
+            margin: 6px 0;
+            border: 1px solid #334155;
         }
     </style>
 </head>
 <body>
-    <div class="container">
+    <div class="report-wrapper">
         {% block content %}{% endblock %}
     </div>
 </body>
