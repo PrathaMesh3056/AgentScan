@@ -67,7 +67,7 @@ llm = [
     "litellm>=1.96.2",
 ]
 ui = [
-    "fastapi>=0.115.0",
+    "fastapi>=0.141.1",
     "uvicorn[standard]>=0.32.0",
 ]
 semgrep = [
@@ -90,7 +90,7 @@ dev = [
     "pre-commit>=3.7",
     "types-PyYAML>=6.0.0",
     "pytest-cov>=6.0",
-    "fastapi>=0.115.0",
+    "fastapi>=0.141.1",
     "uvicorn[standard]>=0.32.0",
 ]
 
