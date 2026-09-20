@@ -9,7 +9,6 @@
 [![CI](https://github.com/PrathaMesh3056/AgentScan/actions/workflows/ci.yml/badge.svg)](https://github.com/PrathaMesh3056/AgentScan/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-Apache%202.0-green.svg)](LICENSE)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg?logo=python&logoColor=white)](https://www.python.org/)
-[![Version](https://img.shields.io/badge/version-0.1.0--alpha-orange.svg)](https://github.com/PrathaMesh3056/AgentScan/releases)
 
 <br>
 
@@ -25,12 +24,12 @@ AgentScan helps developers and security teams evaluate AI agents before deployme
 
 ## Key Features
 
-- **Prompt injection and jailbreak testing**: Evaluate resistance against direct and indirect prompt injection, system prompt leakage, and multi-turn escalation.
-- **Tool-use and agent behavior testing**: Verify tool authorization boundaries, detect unsolicited command execution, and test for privilege escalation.
-- **Static source and dependency auditing**: Identify vulnerable AI packages via OSV.dev and detect dangerous Python calls (`eval`, `exec`, unpinned deserialization) using AST inspection.
-- **Multiple target interfaces**: Scan HTTP endpoints, cURL replays, headless browser chat widgets, WebSocket streams, and Model Context Protocol (MCP) servers.
-- **Standardized reporting**: Export findings to JSON, self-contained HTML, print-ready PDF, and OASIS SARIF 2.1.0 for GitHub Code Scanning.
-- **CLI and optional web/API interfaces**: Run scans from the command line, explore results in an interactive local dashboard (`agentscan ui`), or dispatch jobs through an optional REST API.
+- **Adversarial testing**: Evaluate resistance against prompt injection, jailbreaks, and multi-turn escalation.
+- **Tool-use and authorization testing**: Verify tool authorization boundaries and test for unsolicited actions.
+- **Static auditing**: Scan AI dependencies for known CVEs via OSV.dev and inspect Python AST for dangerous calls.
+- **Flexible target interfaces**: Probe HTTP endpoints, cURL replays, browser widgets, WebSocket streams, and MCP servers.
+- **Security reporting**: Export findings to JSON, HTML, PDF, and SARIF 2.1.0 for GitHub Code Scanning.
+- **Modular workflows**: Run scans via CLI, explore results in a local web dashboard (`agentscan ui`), or integrate with an optional REST API.
 
 ---
 
@@ -55,15 +54,18 @@ uv sync
 
 ### 2. Run a Security Scan
 
-Run a scan against a local or staging agent endpoint:
+Run a scan against a running agent endpoint:
 
 ```bash
 uv run agentscan scan http://localhost:8000/chat --output report.json
 ```
 
+> [!NOTE]
+> The target endpoint must be a running service that accepts JSON chat requests (e.g., `{"message": "..."}`). To test AgentScan without a live server, run the local benchmark below or run a static audit on a local directory (`uv run agentscan audit .`).
+
 ### 3. Run the Local Benchmark
 
-Verify the scoring engine locally against reference agents without needing external network access or API keys:
+Verify the detection and scoring engine locally against reference agents without needing a running server, network access, or API keys:
 
 ```bash
 uv run agentscan benchmark
@@ -89,33 +91,34 @@ uv run agentscan benchmark
 
 ## CI/CD Integration
 
-AgentScan can run as a quality and security gate in GitHub Actions workflows:
+AgentScan can run as an automated security audit in GitHub Actions workflows without needing an external service:
 
 ```yaml
-name: Agent Security Scan
+name: Agent Security Audit
 on: [pull_request]
 
 jobs:
-  security-scan:
+  security-audit:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Run AgentScan
-        uses: PrathaMesh3056/AgentScan@v1
+      - name: Run AgentScan Static Audit
+        uses: PrathaMesh3056/AgentScan@main
         with:
-          command: scan
-          target-url: http://localhost:8000/chat
+          command: audit
+          path: .
           fail-on: HIGH
-          sarif-output: report.sarif
+          sarif-output: agentscan-results.sarif
 
       - name: Upload SARIF to GitHub Code Scanning
         uses: github/codeql-action/upload-sarif@v3
         with:
-          sarif_file: report.sarif
+          sarif_file: agentscan-results.sarif
 ```
 
-See [`action.yml`](action.yml) and the [Project Manual](docs/AgentScan_Manual.md) for full configuration options, failure thresholds, and local action usage.
+> [!TIP]
+> To scan a live agent endpoint in CI/CD, start your agent service in a background step first, then set `command: scan` and `target-url: http://localhost:8000/chat`. See [`action.yml`](action.yml) and the [Project Manual](docs/AgentScan_Manual.md) for all options and local usage.
 
 ---
 
@@ -137,7 +140,7 @@ Findings can be exported as JSON, HTML, PDF, and SARIF. For detailed configurati
 
 ## Project Status
 
-AgentScan is currently in alpha (`v0.1.0-alpha`). Core scanning, static auditing, reporting, and CLI workflows are under active development. Interfaces and output formats may change between releases.
+AgentScan is currently experimental software in active development. It is suitable for evaluation and development workflows, but interfaces and report formats may change before the first stable release.
 
 See [ROADMAP.md](ROADMAP.md) for completed milestones and planned features.
 
