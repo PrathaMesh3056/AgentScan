@@ -17,16 +17,17 @@ We provide security updates and bug fixes for the following versions:
 
 If you believe you have discovered a security vulnerability in AgentScan, **please do not open a public GitHub issue**. Instead, follow our responsible disclosure process:
 
-### 1. Preferred Method: GitHub Private Vulnerability Reporting
-Submit a report through GitHub's Private Vulnerability Reporting feature:
-1. Navigate to the [AgentScan Security Advisories](https://github.com/PrathaMesh3056/AgentScan/security/advisories) page.
-2. Click **"Report a vulnerability"**.
-3. Provide a clear description, reproduction steps, proof-of-concept, and potential impact.
+### 1. Direct Email (Recommended)
+Email our security team directly:
+- **Email**: `security@agentscan.dev` or `prathameshpatil300804@gmail.com`
+- **Maintainer**: Contact the maintainer directly via [GitHub Profile](https://github.com/PrathaMesh3056).
+- If desired, you may encrypt sensitive vulnerability details using PGP.
 
-### 2. Alternative Method: Email
-If GitHub Private Vulnerability Reporting is unavailable, email our security team directly at:
-- **Email**: `security@agentscan.dev` (or reach out to the project maintainer via [GitHub profile](https://github.com/PrathaMesh3056)).
-- If possible, encrypt sensitive details using PGP.
+### 2. GitHub Private Vulnerability Reporting
+You can also submit an advisory draft directly through GitHub:
+1. Navigate to the repository's **[Security](https://github.com/PrathaMesh3056/AgentScan/security)** tab.
+2. If Private Vulnerability Reporting is enabled, click **"Report a vulnerability"** under the Advisories section to open a confidential report.
+3. If the button is not visible or the page is unavailable, please use the direct email contact above.
 
 ---
 

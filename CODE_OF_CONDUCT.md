@@ -60,7 +60,7 @@ representative at an online or offline event.
 
 Instances of abusive, harassing, or otherwise unacceptable behavior may be
 reported to the community leaders responsible for enforcement at
-`security@agentscan.dev` or directly to the project maintainers.
+`security@agentscan.dev` or directly to the project maintainer via [GitHub](https://github.com/PrathaMesh3056).
 All complaints will be reviewed and investigated promptly and fairly.
 
 All community leaders are obligated to respect the privacy and security of the

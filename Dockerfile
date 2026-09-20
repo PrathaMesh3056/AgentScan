@@ -39,7 +39,7 @@ WORKDIR /workspace
 
 # Install wheel from builder stage
 COPY --from=builder /dist/*.whl /tmp/
-RUN pip install --no-cache-dir /tmp/*.whl[ui] && rm -rf /tmp/*.whl
+RUN for f in /tmp/*.whl; do pip install --no-cache-dir "${f}[ui,api,telemetry]"; done && rm -rf /tmp/*.whl
 
 USER agentscan
 

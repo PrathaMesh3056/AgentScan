@@ -37,7 +37,7 @@ async def get_redis():
     """Return an async Redis client. Import here to keep it optional."""
     import redis.asyncio as aioredis  # type: ignore[import-untyped]
 
-    return await aioredis.from_url(REDIS_URL, decode_responses=True)
+    return await aioredis.from_url(REDIS_URL, decode_responses=True, socket_timeout=15.0)
 
 
 async def enqueue_scan(job: dict[str, Any], scan_mode: str = "SCAN") -> str:
@@ -96,6 +96,8 @@ async def claim_job(
         entry_id, fields = entries[0]
         job = json.loads(fields["payload"])
         return stream_name, entry_id, job
+    except TimeoutError:
+        return None
     finally:
         await r.aclose()
 

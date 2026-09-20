@@ -24,7 +24,7 @@ from typing import Any
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import RedirectResponse, StreamingResponse
 from loguru import logger
 from pydantic import BaseModel, Field
 
@@ -114,6 +114,11 @@ def create_api_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    @app.get("/", include_in_schema=False)
+    async def root() -> RedirectResponse:
+        """Redirect root path to interactive Swagger UI documentation."""
+        return RedirectResponse(url="/docs")
 
     # ── Auth ──────────────────────────────────────────────────────────────────
 

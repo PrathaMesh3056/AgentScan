@@ -24,6 +24,8 @@
   <a href="#installation">Installation</a> •
   <a href="#quick-start">Quick Start</a> •
   <a href="#architecture--workflow">Architecture</a> •
+  <a href="#common-workflows">Workflows</a> •
+  <a href="#rest-api-multi-tenant">REST API</a> •
   <a href="#benchmarks--performance">Benchmarks</a> •
   <a href="#documentation">Docs</a> •
   <a href="#contributing">Contributing</a>
@@ -92,6 +94,12 @@ The platform produces standardized security reports in multiple formats (JSON, i
 - **GitHub Actions Integration**: Official composite action (`action.yml`) with automated SARIF upload to GitHub Code Scanning.
 - **Configurable Failure Thresholds**: Enforce CI/CD policy gates using `--fail-on` (e.g., `--fail-on HIGH` or `--fail-on CRITICAL`).
 
+### Enterprise REST API & Distributed Queue
+- **Multi-Tenant REST API**: FastAPI server with JWT authentication, tenant isolation, and interactive OpenAPI documentation (`/docs`).
+- **Asynchronous Task Queue**: Background scan worker dispatch via Redis Streams with configurable worker concurrency.
+- **Real-Time Progress Streaming**: SSE endpoint (`/scans/{id}/stream`) for live scan progress events.
+- **Durable Persistence**: PostgreSQL storage for tenant scans, historical audits, and full report JSON documents.
+
 ### Advanced Analysis
 - **DEEP Mode (Neural Activation Probing)**: Inspect latent representation shifts on a local aligned reference model (`Qwen2.5-0.5B` on CPU) using $L_2$ and cosine metric deltas against a calibrated benign noise floor.
 - **EXPLOIT Mode (Blast Radius Proofs)**: Simulate active downstream exploits including data exfiltration (`ATK-014`), tool hijacking (`ATK-015`), and memory poisoning (`ATK-016`).
@@ -102,11 +110,11 @@ The platform produces standardized security reports in multiple formats (JSON, i
 
 ## Supported Targets
 
-| Target Type | Command Flag / Input | Description |
+| Target Type | Command / Input Syntax | Description |
 | :--- | :--- | :--- |
 | **HTTP REST** | `agentscan scan <url>` | Probes standard JSON chat endpoints (`{"message": ...}`, `{"prompt": ...}`, etc.). |
-| **cURL Replay** | `--curl <file>` | Replays captured browser network requests with headers, tokens, and cookies intact. |
-| **Browser Widget** | `--browser-url <url>` | Drives headless Playwright browsers to locate inputs, send payloads, and capture reply elements. |
+| **cURL Replay** | `agentscan scan --curl <file>` | Replays captured browser network requests with headers, tokens, and cookies intact. |
+| **Browser Widget** | `agentscan scan --browser-url <url>` | Drives headless Playwright browsers to locate inputs, send payloads, and capture reply elements. |
 | **WebSocket** | `agentscan scan ws://<host>/<path>` | Connects to persistent bidirectional WebSocket streaming agents. |
 | **MCP Server** | `agentscan scan mcp+sse://<host>/<path>` | Connects to Model Context Protocol servers over SSE or stdio to audit exposed tools. |
 | **Source Directory** | `agentscan audit <path>` | Scans local repositories, manifests, lockfiles, and codebases without running live targets. |
@@ -115,14 +123,14 @@ The platform produces standardized security reports in multiple formats (JSON, i
 
 ## Output Formats
 
-| Format | Option / Command | Purpose |
+| Format | Command Example | Purpose |
 | :--- | :--- | :--- |
-| **JSON** | `--output report.json` | Complete machine-readable findings, severity ratings, and SSP metadata. |
-| **HTML** | `--output report.html` | Self-contained, styled visual security report for review and sharing. |
-| **PDF** | `--output report.pdf` | Executive print-ready report generated via WeasyPrint. |
-| **SARIF 2.1.0** | `--output report.sarif` | Standardized format for native integration into GitHub Code Scanning. |
-| **CycloneDX 1.6** | `audit --aibom -o aibom.cdx.json` | Industry-standard AI Bill of Materials capturing packages and model metadata. |
-| **Session Transcript**| `--transcript session.txt` | Chronological record of every request payload and target reply. |
+| **JSON** | `agentscan scan <target> --output report.json` | Complete machine-readable findings, severity ratings, and SSP metadata. |
+| **HTML** | `agentscan scan <target> --output report.html` | Self-contained, styled visual security report for review and sharing. |
+| **PDF** | `agentscan scan <target> --output report.pdf` | Executive print-ready report generated via WeasyPrint. |
+| **SARIF 2.1.0** | `agentscan scan <target> --output report.sarif` | Standardized format for native integration into GitHub Code Scanning. |
+| **CycloneDX 1.6** | `agentscan audit <path> --aibom -o aibom.cdx.json` | Industry-standard AI Bill of Materials capturing packages and model metadata. |
+| **Session Transcript** | `agentscan scan <target> --transcript session.txt` | Chronological record of every request payload and target reply. |
 | **Interactive UI** | `agentscan ui --report report.json` | Real-time web dashboard with filtering, search, and defense grid inspection. |
 
 ---
@@ -146,15 +154,25 @@ uv sync
 
 *(Alternatively with pip: `pip install -e .`)*
 
-### 2. Optional Dependencies (DEEP Mode Neural Probing)
+### 2. Optional Dependencies & Feature Extras
 
-To run DEEP mode neural activation probing locally on CPU:
+Install optional dependencies depending on the features you want to run:
 
 ```bash
-# Install PyTorch CPU build and HuggingFace transformers
-uv add torch --extra-index-url https://download.pytorch.org/whl/cpu
-uv add transformers
+# Neural activation probing (DEEP mode with PyTorch CPU & Transformers)
+uv sync --extra deep
+
+# Multi-tenant REST API & asynchronous background worker queue
+uv sync --extra api
+
+# Local interactive web dashboard & UI
+uv sync --extra ui
+
+# All optional components (deep, semantic, browser, pdf, llm, ui, semgrep, api, telemetry)
+uv sync --extra full
 ```
+
+*(Alternatively with pip: `pip install -e ".[full]"`)*
 
 ---
 
@@ -326,6 +344,55 @@ jobs:
 
 ---
 
+## REST API (Multi-Tenant)
+
+AgentScan includes a multi-tenant REST API and background worker service backed by FastAPI, Redis Streams, and PostgreSQL.
+
+### 1. Start the Local Service Stack
+
+```bash
+docker compose -f docker-compose.api.yml up
+```
+
+The API service starts on `http://localhost:8080`. Interactive OpenAPI documentation is accessible at [`http://localhost:8080/docs`](http://localhost:8080/docs).
+
+### 2. Issue a Tenant JWT Token
+
+```bash
+# Obtain a bearer token for your tenant (using the development PSK)
+TOKEN=$(curl -s -X POST http://localhost:8080/token \
+  -H "Content-Type: application/json" \
+  -d '{"tenant_id": "my-org", "secret": "dev-psk"}' | jq -r .access_token)
+
+echo "Bearer Token: $TOKEN"
+```
+
+### 3. Enqueue a Scan Job
+
+```bash
+# Submit a scan job to the queue (returns immediately with a scan_id)
+SCAN_ID=$(curl -s -X POST http://localhost:8080/scans \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"target_url": "http://localhost:8000/chat", "scan_mode": "SCAN"}' | jq -r .scan_id)
+
+echo "Enqueued Scan ID: $SCAN_ID"
+```
+
+### 4. Stream Live Progress (SSE) or Poll Status
+
+```bash
+# Stream real-time scan progress events via Server-Sent Events (SSE)
+curl -N http://localhost:8080/scans/$SCAN_ID/stream \
+  -H "Authorization: Bearer $TOKEN"
+
+# Or poll the final scan results and report
+curl -s http://localhost:8080/scans/$SCAN_ID \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+---
+
 ## Benchmarks & Performance
 
 Execution speed in security scanning is fundamentally determined by evaluation architecture:
@@ -364,6 +431,7 @@ uv run agentscan benchmark
 | Document | Description |
 | :--- | :--- |
 | 📖 [**Project Manual**](docs/AgentScan_Manual.md) | Complete guide covering threat models, CLI usage, connectors, and configuration options. |
+| 🛡️ [**Threat Model**](docs/threat_model.md) | Security assumptions, detection boundaries, and limitations across OWASP Top 10 for LLMs. |
 | 🥊 [**Comparison Guide**](docs/comparison.md) | Detailed technical and architectural comparison with Garak, Promptfoo, PyRIT, and Snyk. |
 | 🔬 [**DEEP Mode Guide**](docs/deep_mode.md) | Mathematical formulation and usage for latent activation and cosine divergence probing. |
 | 🧩 [**Module Matrix**](docs/module_matrix.md) | Comprehensive status matrix covering all 24 engineering modules and deliverables. |
@@ -387,7 +455,8 @@ AgentScan is actively maintained and under continuous development.
 - [x] Neural activation probing on local CPU (`Qwen2.5-0.5B`)
 - [x] Automated self-healing with unified git diff generation (`agentscan fix`)
 - [x] Real-time SSE dashboard and interactive defense grid
-- [ ] **Distributed Swarm Red-Teaming**: Multi-agent adversarial teams (Recon, Bypass, Exploit, Judge)
+- [x] Multi-tenant REST API with JWT authentication & Redis Streams queue
+- [x] Distributed Swarm Red-Teaming (Recon, Bypass, Exploit, Judge)
 - [ ] **eBPF Agent Sandbox**: Real-time syscall inspection for tool-executing agents
 - [ ] **Live AI Gateway Exporters**: Native rule exports for LiteLLM Proxy, Cloudflare AI Gateway, and AWS Bedrock
 
@@ -398,19 +467,19 @@ AgentScan is actively maintained and under continuous development.
 AgentScan is an offensive and defensive security evaluation toolkit created to help developers and security teams build safer AI systems.
 
 - **Authorized Testing Only**: AgentScan should only be run against agents, endpoints, and systems that you own or have explicit, documented permission to test. Unauthorized security testing against third-party systems may violate applicable laws and terms of service.
-- **Reporting Vulnerabilities in AgentScan**: If you discover a security vulnerability within AgentScan itself, please disclose it responsibly. Do not open public GitHub issues for security vulnerabilities. Instead, submit a report via GitHub Private Vulnerability Reporting or contact the maintainers directly.
+- **Reporting Vulnerabilities in AgentScan**: If you discover a security vulnerability within AgentScan itself, please disclose it responsibly. Do not open public GitHub issues for security vulnerabilities. Instead, refer to our [Security Policy](SECURITY.md) or contact the security team directly.
 
 ---
 
 ## Contributing
 
-We welcome contributions from the community!
+We welcome contributions from the community! Please review our [Contributing Guidelines](CONTRIBUTING.md) and [Code of Conduct](CODE_OF_CONDUCT.md) before submitting pull requests.
 
 ### 1. Development Setup
 ```bash
 git clone https://github.com/PrathaMesh3056/AgentScan.git
 cd AgentScan
-uv sync
+uv sync --extra full
 ```
 
 ### 2. Running Quality Checks
@@ -444,7 +513,15 @@ class CustomAuditModule(AttackModule):
 
     async def run(self, target: Target) -> list[Finding]:
         # Implement async probing logic here
-        return []
+        # Return detected findings with severity and remediation guidance:
+        return [
+            self.make_finding(
+                severity=Severity.HIGH,
+                description="Vulnerability detected: custom probe succeeded.",
+                evidence="Target returned unvalidated sensitive information.",
+                remediation="Apply input sanitization and system prompt boundaries.",
+            )
+        ]
 ```
 The registry auto-discovers any `AttackModule` subclass placed in `agentscan/attacks/scan/`, `exploit/`, or `deep/`.
 
@@ -455,32 +532,4 @@ The registry auto-discovers any `AttackModule` subclass placed in `agentscan/att
 Distributed under the **Apache 2.0 License**. See [`LICENSE`](LICENSE) for details.
 
 Authored and maintained by [Prathamesh](https://github.com/PrathaMesh3056).
-
----
-
-## REST API (Multi-Tenant)
-
-```bash
-# 1. Start the local dev stack
-docker compose -f docker-compose.api.yml up
-
-# 2. Get a JWT token
-curl -X POST http://localhost:8080/token \
-  -H "Content-Type: application/json" \
-  -d '{"tenant_id": "my-org", "secret": "dev-psk"}'
-
-# 3. Run a scan (returns immediately with scan_id)
-curl -X POST http://localhost:8080/scans \
-  -H "Authorization: Bearer <token>" \
-  -H "Content-Type: application/json" \
-  -d '{"target_url": "http://my-agent:8000/chat", "scan_mode": "SCAN"}'
-
-# 4. Poll for results
-curl http://localhost:8080/scans/<scan_id> \
-  -H "Authorization: Bearer <token>"
-
-# 5. Stream live progress (SSE)
-curl -N http://localhost:8080/scans/<scan_id>/stream \
-  -H "Authorization: Bearer <token>"
-```
 

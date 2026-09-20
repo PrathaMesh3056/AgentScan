@@ -59,6 +59,34 @@ app.add_typer(api_app, name="api")
 
 console = Console()
 
+
+def _version_callback(value: bool) -> None:
+    if value:
+        import importlib.metadata
+
+        try:
+            ver = importlib.metadata.version("agentscan")
+        except Exception:
+            ver = "0.1.0-alpha"
+        console.print(f"AgentScan v{ver}")
+        raise typer.Exit()
+
+
+@app.callback()
+def main(
+    version: bool | None = typer.Option(
+        None,
+        "--version",
+        "-v",
+        help="Show AgentScan version and exit.",
+        callback=_version_callback,
+        is_eager=True,
+    ),
+) -> None:
+    """AgentScan — Open-source security scanner for AI agents."""
+    pass
+
+
 # ── Severity display colours ──────────────────────────────────────────────────
 
 _SEVERITY_COLOURS: dict[str, str] = {
