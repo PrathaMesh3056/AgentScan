@@ -57,7 +57,7 @@ class TestOutputHandlingIntegration:
         assert len(findings) >= 1
         finding = findings[0]
         assert finding.attack_id == "ATK-007"
-        assert finding.owasp_id == "LLM02"
+        assert finding.owasp_id == "LLM05"
         assert finding.severity in (Severity.HIGH, Severity.MEDIUM, Severity.CRITICAL)
         assert "yaml_variant_id" in finding.metadata
 

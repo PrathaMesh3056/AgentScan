@@ -1,6 +1,6 @@
 # agentscan/reporting/compliance_pack.py
 #
-# Enterprise Compliance Pack Generator.
+# Security finding reference pack generator; this is not a compliance assessment.
 # Formulates comprehensive compliance assessments for the EU AI Act (Article 15, Article 50, Annex IV)
 # and the NIST AI Risk Management Framework (AI RMF 1.0).
 
@@ -12,6 +12,7 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from agentscan.core.models import Finding
+from agentscan.core.taxonomy import ATLAS_TECHNIQUES, ATLAS_VERSION, atlas_for_finding
 
 
 class ComplianceFramework(StrEnum):
@@ -21,13 +22,7 @@ class ComplianceFramework(StrEnum):
     ISO_42001 = "iso-42001"
 
 
-MITRE_ATLAS_MAPPING: dict[str, list[str]] = {
-    "AML.T0051": ["LLM01", "ATK-001", "ATK-002", "ATK-003", "ATK-004"],  # LLM Prompt Injection
-    "AML.T0054": ["LLM01", "ATK-SOC-001", "ATK-005", "ATK-006"],  # LLM Jailbreak
-    "AML.T0056": ["LLM06", "ATK-010", "ATK-011"],  # System Prompt Leakage
-    "AML.T0048": ["LLM02", "ATK-020", "ATK-021"],  # Insecure Output Handling
-    "AML.T0057": ["LLM07", "ATK-030"],  # LLM Data Exfiltration
-}
+MITRE_ATLAS_MAPPING: dict[str, list[str]] = {key: [] for key in ATLAS_TECHNIQUES}
 
 ISO_42001_MAPPING: dict[str, list[str]] = {
     "A.6.2": ["LLM01", "LLM02", "LLM03"],  # AI Risk Assessment & Validation
@@ -38,6 +33,8 @@ ISO_42001_MAPPING: dict[str, list[str]] = {
 
 
 class ComplianceStatus(StrEnum):
+    NOT_ASSESSED = "NOT_ASSESSED"
+    FINDINGS_MAPPED = "FINDINGS_MAPPED"
     COMPLIANT = "COMPLIANT"
     PARTIALLY_COMPLIANT = "PARTIALLY_COMPLIANT"
     NON_COMPLIANT = "NON_COMPLIANT"
@@ -55,7 +52,7 @@ class ComplianceFinding(BaseModel):
 class ComplianceReport(BaseModel):
     framework: ComplianceFramework
     overall_status: ComplianceStatus
-    compliance_score: float = Field(..., ge=0.0, le=100.0)
+    compliance_score: float | None = Field(default=None, ge=0.0, le=100.0)
     evaluated_sections: dict[str, dict[str, Any]] = Field(default_factory=dict)
     findings: list[ComplianceFinding] = Field(default_factory=list)
     recommendations: list[str] = Field(default_factory=list)
@@ -65,7 +62,7 @@ class ComplianceReport(BaseModel):
             f"# Enterprise Compliance Assessment: {self.framework.value.upper()}",
             "",
             f"**Overall Compliance Status**: `{self.overall_status.value}`  ",
-            f"**Compliance Score**: `{self.compliance_score:.1f}/100`  ",
+            f"**Compliance Score**: `{self.compliance_score if self.compliance_score is not None else 'N/A'}`  ",
             "",
             "## Evaluated Framework Sections",
             "",
@@ -74,7 +71,7 @@ class ComplianceReport(BaseModel):
         ]
 
         for sec_id, sec_data in self.evaluated_sections.items():
-            st = sec_data.get("status", "COMPLIANT")
+            st = sec_data.get("status", "NOT_ASSESSED")
             cnt = sec_data.get("finding_count", 0)
             desc = sec_data.get("description", "")
             lines.append(f"| **{sec_id}** | `{st}` | {cnt} | {desc} |")
@@ -169,7 +166,7 @@ def evaluate_eu_ai_act(findings: list[Finding] | list[dict[str, Any]]) -> Compli
                 article_or_function=assigned_section.split(" ")[0]
                 + " "
                 + assigned_section.split(" ")[1],
-                status=ComplianceStatus.NON_COMPLIANT,
+                status=ComplianceStatus.FINDINGS_MAPPED,
                 gap_analysis=desc
                 or f"Vulnerability {fid} violates {assigned_section} requirements.",
                 remediation_guidance=remed
@@ -186,14 +183,14 @@ def evaluate_eu_ai_act(findings: list[Finding] | list[dict[str, Any]]) -> Compli
         count = len(sec_meta["findings"])
         total_violations += count
         if count == 0:
-            status = ComplianceStatus.COMPLIANT
+            status = ComplianceStatus.NOT_ASSESSED
         elif count <= 2:
-            status = ComplianceStatus.PARTIALLY_COMPLIANT
+            status = ComplianceStatus.FINDINGS_MAPPED
             recommendations.append(
                 f"Remediate {count} issues in {sec_name} to attain full compliance."
             )
         else:
-            status = ComplianceStatus.NON_COMPLIANT
+            status = ComplianceStatus.FINDINGS_MAPPED
             recommendations.append(
                 f"Critical non-compliance in {sec_name} ({count} active vulnerabilities)."
             )
@@ -206,22 +203,19 @@ def evaluate_eu_ai_act(findings: list[Finding] | list[dict[str, Any]]) -> Compli
         }
 
     # Score calculation (starts at 100, drops per violation)
-    score = max(0.0, 100.0 - (total_violations * 12.5))
-    if score >= 90.0:
-        overall = ComplianceStatus.COMPLIANT
-    elif score >= 60.0:
-        overall = ComplianceStatus.PARTIALLY_COMPLIANT
-    else:
-        overall = ComplianceStatus.NON_COMPLIANT
 
     return ComplianceReport(
         framework=ComplianceFramework.EU_AI_ACT,
-        overall_status=overall,
-        compliance_score=round(score, 1),
+        overall_status=ComplianceStatus.FINDINGS_MAPPED
+        if comp_findings
+        else ComplianceStatus.NOT_ASSESSED,
+        compliance_score=None,
         evaluated_sections=evaluated_sections,
         findings=comp_findings,
         recommendations=recommendations
-        or ["All evaluated EU AI Act cybersecurity and transparency controls pass."],
+        or [
+            "No compliance assessment was performed. These heuristic references organize scan evidence and require deployment evidence and mapping review."
+        ],
     )
 
 
@@ -279,7 +273,7 @@ def evaluate_nist_ai_rmf(findings: list[Finding] | list[dict[str, Any]]) -> Comp
                 finding_id=fid,
                 owasp_id=owasp_id,
                 article_or_function=assigned_fn.split(" ")[0],
-                status=ComplianceStatus.NON_COMPLIANT,
+                status=ComplianceStatus.FINDINGS_MAPPED,
                 gap_analysis=desc or f"Vulnerability {fid} violates NIST AI RMF {assigned_fn}.",
                 remediation_guidance=remed
                 or "Implement mitigations per NIST AI RMF action profile.",
@@ -294,12 +288,12 @@ def evaluate_nist_ai_rmf(findings: list[Finding] | list[dict[str, Any]]) -> Comp
         count = len(fn_meta["findings"])
         total_violations += count
         if count == 0:
-            status = ComplianceStatus.COMPLIANT
+            status = ComplianceStatus.NOT_ASSESSED
         elif count <= 2:
-            status = ComplianceStatus.PARTIALLY_COMPLIANT
+            status = ComplianceStatus.FINDINGS_MAPPED
             recommendations.append(f"Address {count} risks mapped to NIST AI RMF {fn_name}.")
         else:
-            status = ComplianceStatus.NON_COMPLIANT
+            status = ComplianceStatus.FINDINGS_MAPPED
             recommendations.append(
                 f"Substantial exposure in NIST AI RMF {fn_name} ({count} active vulnerabilities)."
             )
@@ -311,21 +305,18 @@ def evaluate_nist_ai_rmf(findings: list[Finding] | list[dict[str, Any]]) -> Comp
             "findings": fn_meta["findings"],
         }
 
-    score = max(0.0, 100.0 - (total_violations * 12.5))
-    if score >= 90.0:
-        overall = ComplianceStatus.COMPLIANT
-    elif score >= 60.0:
-        overall = ComplianceStatus.PARTIALLY_COMPLIANT
-    else:
-        overall = ComplianceStatus.NON_COMPLIANT
-
     return ComplianceReport(
         framework=ComplianceFramework.NIST_AI_RMF,
-        overall_status=overall,
-        compliance_score=round(score, 1),
+        overall_status=ComplianceStatus.FINDINGS_MAPPED
+        if comp_findings
+        else ComplianceStatus.NOT_ASSESSED,
+        compliance_score=None,
         evaluated_sections=evaluated_sections,
         findings=comp_findings,
-        recommendations=recommendations or ["All evaluated NIST AI RMF 1.0 profile metrics pass."],
+        recommendations=recommendations
+        or [
+            "No compliance assessment was performed. These heuristic references organize scan evidence and require deployment evidence and mapping review."
+        ],
     )
 
 
@@ -337,31 +328,15 @@ def evaluate_mitre_atlas(findings: list[Finding] | list[dict[str, Any]]) -> Comp
     normalized_findings = _normalize_findings(findings)
 
     sections: dict[str, dict[str, Any]] = {
-        "AML.T0051 (LLM Prompt Injection)": {
-            "targets": set(MITRE_ATLAS_MAPPING["AML.T0051"]),
-            "description": "Direct or indirect adversarial manipulation of LLM system inputs and context.",
+        f"{key} ({name})": {
+            "description": f"ATLAS {ATLAS_VERSION}: {name}; scenario reference, not action proof.",
             "findings": [],
-        },
-        "AML.T0054 (LLM Jailbreak)": {
-            "targets": set(MITRE_ATLAS_MAPPING["AML.T0054"]),
-            "description": "Adversarial prompts and multi-turn jailbreaks bypassing model safety alignment.",
-            "findings": [],
-        },
-        "AML.T0056 (System Prompt Leakage)": {
-            "targets": set(MITRE_ATLAS_MAPPING["AML.T0056"]),
-            "description": "Unauthorized disclosure of internal instructions, secrets, or system prompts.",
-            "findings": [],
-        },
-        "AML.T0048 (Insecure Output Handling)": {
-            "targets": set(MITRE_ATLAS_MAPPING["AML.T0048"]),
-            "description": "Downstream execution of unvalidated or malicious LLM outputs without sanitization.",
-            "findings": [],
-        },
-        "AML.T0057 (LLM Data Exfiltration)": {
-            "targets": set(MITRE_ATLAS_MAPPING["AML.T0057"]),
-            "description": "Exfiltration of sensitive context, credentials, or training data via model channels.",
-            "findings": [],
-        },
+        }
+        for key, name in ATLAS_TECHNIQUES.items()
+    }
+    sections["UNMAPPED"] = {
+        "description": "No reviewed scenario-level ATLAS mapping.",
+        "findings": [],
     }
 
     comp_findings: list[ComplianceFinding] = []
@@ -372,23 +347,16 @@ def evaluate_mitre_atlas(findings: list[Finding] | list[dict[str, Any]]) -> Comp
         desc = getattr(f, "description", "")
         remed = getattr(f, "remediation", "")
 
-        assigned_sec = None
-        for sec_name, sec_meta in sections.items():
-            if fid in sec_meta["targets"] or owasp_id in sec_meta["targets"]:
-                sec_meta["findings"].append(fid)
-                assigned_sec = sec_name
-                break
-
-        if not assigned_sec:
-            assigned_sec = "AML.T0051 (LLM Prompt Injection)"
-            sections[assigned_sec]["findings"].append(fid)
+        technique = atlas_for_finding(f)
+        assigned_sec = f"{technique} ({ATLAS_TECHNIQUES[technique]})" if technique else "UNMAPPED"
+        sections[assigned_sec]["findings"].append(fid)
 
         comp_findings.append(
             ComplianceFinding(
                 finding_id=fid,
                 owasp_id=owasp_id,
                 article_or_function=assigned_sec.split(" ")[0],
-                status=ComplianceStatus.NON_COMPLIANT,
+                status=ComplianceStatus.FINDINGS_MAPPED,
                 gap_analysis=desc or f"Vulnerability {fid} maps to MITRE ATLAS {assigned_sec}.",
                 remediation_guidance=remed
                 or "Implement mitigations per MITRE ATLAS mitigation guidelines.",
@@ -403,14 +371,14 @@ def evaluate_mitre_atlas(findings: list[Finding] | list[dict[str, Any]]) -> Comp
         count = len(sec_meta["findings"])
         total_violations += count
         if count == 0:
-            status = ComplianceStatus.COMPLIANT
+            status = ComplianceStatus.NOT_ASSESSED
         elif count <= 2:
-            status = ComplianceStatus.PARTIALLY_COMPLIANT
+            status = ComplianceStatus.FINDINGS_MAPPED
             recommendations.append(
                 f"Mitigate {count} findings in MITRE ATLAS technique {sec_name}."
             )
         else:
-            status = ComplianceStatus.NON_COMPLIANT
+            status = ComplianceStatus.FINDINGS_MAPPED
             recommendations.append(
                 f"Severe vulnerability exposure in MITRE ATLAS technique {sec_name} ({count} findings)."
             )
@@ -422,21 +390,18 @@ def evaluate_mitre_atlas(findings: list[Finding] | list[dict[str, Any]]) -> Comp
             "findings": sec_meta["findings"],
         }
 
-    score = max(0.0, 100.0 - (total_violations * 12.5))
-    if score >= 90.0:
-        overall = ComplianceStatus.COMPLIANT
-    elif score >= 60.0:
-        overall = ComplianceStatus.PARTIALLY_COMPLIANT
-    else:
-        overall = ComplianceStatus.NON_COMPLIANT
-
     return ComplianceReport(
         framework=ComplianceFramework.MITRE_ATLAS,
-        overall_status=overall,
-        compliance_score=round(score, 1),
+        overall_status=ComplianceStatus.FINDINGS_MAPPED
+        if comp_findings
+        else ComplianceStatus.NOT_ASSESSED,
+        compliance_score=None,
         evaluated_sections=evaluated_sections,
         findings=comp_findings,
-        recommendations=recommendations or ["All evaluated MITRE ATLAS TTP controls pass."],
+        recommendations=recommendations
+        or [
+            "No compliance assessment was performed. These heuristic references organize scan evidence and require deployment evidence and mapping review."
+        ],
     )
 
 
@@ -497,7 +462,7 @@ def evaluate_iso_42001(findings: list[Finding] | list[dict[str, Any]]) -> Compli
                 finding_id=fid,
                 owasp_id=owasp_id,
                 article_or_function=assigned_sec.split(" ")[0],
-                status=ComplianceStatus.NON_COMPLIANT,
+                status=ComplianceStatus.FINDINGS_MAPPED,
                 gap_analysis=desc
                 or f"Vulnerability {fid} violates ISO/IEC 42001 control {assigned_sec}.",
                 remediation_guidance=remed
@@ -513,14 +478,14 @@ def evaluate_iso_42001(findings: list[Finding] | list[dict[str, Any]]) -> Compli
         count = len(sec_meta["findings"])
         total_violations += count
         if count == 0:
-            status = ComplianceStatus.COMPLIANT
+            status = ComplianceStatus.NOT_ASSESSED
         elif count <= 2:
-            status = ComplianceStatus.PARTIALLY_COMPLIANT
+            status = ComplianceStatus.FINDINGS_MAPPED
             recommendations.append(
                 f"Address {count} non-conformities in ISO/IEC 42001 control {sec_name}."
             )
         else:
-            status = ComplianceStatus.NON_COMPLIANT
+            status = ComplianceStatus.FINDINGS_MAPPED
             recommendations.append(
                 f"Critical non-conformity in ISO/IEC 42001 control {sec_name} ({count} active vulnerabilities)."
             )
@@ -532,22 +497,18 @@ def evaluate_iso_42001(findings: list[Finding] | list[dict[str, Any]]) -> Compli
             "findings": sec_meta["findings"],
         }
 
-    score = max(0.0, 100.0 - (total_violations * 12.5))
-    if score >= 90.0:
-        overall = ComplianceStatus.COMPLIANT
-    elif score >= 60.0:
-        overall = ComplianceStatus.PARTIALLY_COMPLIANT
-    else:
-        overall = ComplianceStatus.NON_COMPLIANT
-
     return ComplianceReport(
         framework=ComplianceFramework.ISO_42001,
-        overall_status=overall,
-        compliance_score=round(score, 1),
+        overall_status=ComplianceStatus.FINDINGS_MAPPED
+        if comp_findings
+        else ComplianceStatus.NOT_ASSESSED,
+        compliance_score=None,
         evaluated_sections=evaluated_sections,
         findings=comp_findings,
         recommendations=recommendations
-        or ["All evaluated ISO/IEC 42001 management controls pass."],
+        or [
+            "No compliance assessment was performed. These heuristic references organize scan evidence and require deployment evidence and mapping review."
+        ],
     )
 
 

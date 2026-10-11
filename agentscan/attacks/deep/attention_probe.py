@@ -10,7 +10,9 @@ from loguru import logger
 
 from agentscan.attacks.base import AttackModule
 from agentscan.core.models import Finding, ScanMode, Severity, Target
+from agentscan.core.outcomes import ModuleUnavailableError
 from agentscan.neural.attention_analyzer import run_attention_analysis
+from agentscan.neural.execution import serialized_reference_call
 
 
 class AttentionAnalyzerModule(AttackModule):
@@ -18,8 +20,9 @@ class AttentionAnalyzerModule(AttackModule):
 
     attack_id = "ATK-025"
     attack_name = "Attention Diversion Analyzer"
-    owasp_id = "LLM10"
+    owasp_id = "UNMAPPED"
     supported_modes = [ScanMode.DEEP]
+    assessment_scope = "local_reference_model"
 
     def variant_count(self) -> int:
         return 3
@@ -28,11 +31,12 @@ class AttentionAnalyzerModule(AttackModule):
         del target
         return await asyncio.to_thread(self._probe)
 
+    @serialized_reference_call
     def _probe(self) -> list[Finding]:
         rows = run_attention_analysis()
         if rows is None:
             logger.info("ATK-025 skipped: DEEP reference model unavailable.")
-            return []
+            raise ModuleUnavailableError("Local reference model or neural baseline unavailable")
         findings: list[Finding] = []
         for row in rows:
             if not row.get("diverted"):
@@ -43,7 +47,7 @@ class AttentionAnalyzerModule(AttackModule):
                     description=(
                         "Probe prompt diverted middle-layer attention away from the benign "
                         "baseline (entropy collapse and/or attention-sink concentration), "
-                        "indicating instruction-overriding focus (LLM10)."
+                        "indicating instruction-overriding focus (UNMAPPED)."
                     ),
                     evidence=(
                         f"entropy {row['probe_entropy']} vs benign {row['benign_entropy']} "

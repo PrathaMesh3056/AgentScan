@@ -13,9 +13,10 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-from loguru import logger
+import yaml
 
 from agentscan.core.models import Finding, Severity
+from agentscan.supply_chain.coverage import record_coverage
 
 _SEVERITY_MAP: dict[str, Severity] = {
     "ERROR": Severity.CRITICAL,
@@ -24,8 +25,8 @@ _SEVERITY_MAP: dict[str, Severity] = {
 }
 
 _CHECK_DEFAULTS: dict[str, tuple[str, str, str]] = {
-    "agentscan.unsafe-pickle-loads": ("SC-015", "Unsafe pickle deserialisation", "LLM05"),
-    "agentscan.unsafe-torch-load": ("SC-011", "Unsafe model deserialisation", "LLM05"),
+    "agentscan.unsafe-pickle-loads": ("SC-015", "Unsafe pickle deserialisation", "LLM03"),
+    "agentscan.unsafe-torch-load": ("SC-011", "Unsafe model deserialisation", "LLM03"),
     "agentscan.subprocess-popen-shell": ("SC-016", "Unsafe shell subprocess", "LLM05"),
     "agentscan.os-system": ("SC-016", "Unsafe os.system call", "LLM05"),
     "agentscan.prompt-fstring-user-input": (
@@ -46,12 +47,12 @@ _CHECK_DEFAULTS: dict[str, tuple[str, str, str]] = {
     "agentscan.unsafe-numpy-load": (
         "SC-011",
         "Unsafe numpy model deserialisation with pickle",
-        "LLM05",
+        "LLM03",
     ),
     "agentscan.unsafe-joblib-load": (
         "SC-011",
         "Unsafe joblib model deserialisation",
-        "LLM05",
+        "LLM03",
     ),
     "agentscan.insecure-sqlite-tool": (
         "SC-020",
@@ -81,104 +82,116 @@ def scan_semgrep(
     rules_path: Path | str | None = None,
     semgrep_bin: str | None = None,
     fallback_to_native: bool = False,
+    coverage: list[dict] | None = None,
 ) -> tuple[list[Finding], int]:
-    """
-    Run Semgrep against `path` using AgentScan AI rules.
+    """Run Semgrep and retain explicit failed, partial and fallback coverage."""
 
-    Returns (findings, checks_run). checks_run is the number of files Semgrep
-    reported as scanned, or 0 when the binary/rules are unavailable.
-    If `fallback_to_native` is True and the binary is missing, delegates to the
-    native Python AST rule engine.
-    """
-    binary = semgrep_bin or shutil.which("semgrep")
-    if not binary:
-        if fallback_to_native:
-            logger.info(
-                "semgrep not found on PATH; falling back to native AgentScan AST rule engine."
-            )
+    def unavailable(reason: str, *, fallback: bool = False) -> tuple[list[Finding], int]:
+        record_coverage(coverage, "semgrep", 0, source="semgrep", issues=[reason])
+        if fallback and fallback_to_native:
             from agentscan.supply_chain.native_semgrep import scan_native_rules
 
-            return scan_native_rules(path, rules_path=rules_path)
-
-        logger.warning(
-            "semgrep not found on PATH; skipping Semgrep audit. "
-            "Install with: pip install 'agentscan[semgrep]'"
-        )
-        return [], 0
-
-    rules = Path(rules_path) if rules_path is not None else default_rules_path()
-    if not rules.is_file():
-        if fallback_to_native:
-            from agentscan.supply_chain.native_semgrep import scan_native_rules
-
-            return scan_native_rules(path, rules_path=rules_path)
-        logger.warning(f"Semgrep rules file not found at {rules}; skipping Semgrep audit.")
+            findings, checks = scan_native_rules(path, rules_path=rules_path, coverage=coverage)
+            if coverage is not None and coverage[-1]["module"] == "native_rules":
+                coverage[-1]["status"] = "INCONCLUSIVE"
+                coverage[-1]["limitations"].append(
+                    "Native fallback is a heuristic subset and does not establish Semgrep equivalence."
+                )
+            return findings, checks
         return [], 0
 
     target = Path(path)
-    cmd = [
-        binary,
-        "--config",
-        str(rules),
-        "--json",
-        "--quiet",
-        str(target),
-    ]
+    if not target.exists():
+        return unavailable("Selected audit path does not exist.")
+    rules = Path(rules_path) if rules_path is not None else default_rules_path()
     try:
-        completed = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=180,
-            check=False,
-        )
+        rule_data = yaml.safe_load(rules.read_text(encoding="utf-8"))
+        if (
+            not isinstance(rule_data, dict)
+            or not isinstance(rule_data.get("rules"), list)
+            or not rule_data["rules"]
+            or any(not isinstance(rule, dict) or not rule.get("id") for rule in rule_data["rules"])
+        ):
+            return unavailable("Rules are empty or malformed.")
+    except (OSError, UnicodeError, yaml.YAMLError) as exc:
+        return unavailable(f"Rules are unavailable: {type(exc).__name__}.")
+
+    binary = semgrep_bin or shutil.which("semgrep")
+    if not binary:
+        return unavailable("Semgrep is not installed.", fallback=True)
+    cmd = [binary, "--config", str(rules), "--json", "--quiet", str(target)]
+    try:
+        completed = subprocess.run(cmd, capture_output=True, text=True, timeout=180, check=False)
     except (OSError, subprocess.TimeoutExpired) as exc:
-        if fallback_to_native:
-            logger.info(
-                f"Semgrep invocation failed ({exc}); falling back to native AgentScan AST rule engine."
-            )
-            from agentscan.supply_chain.native_semgrep import scan_native_rules
-
-            return scan_native_rules(path, rules_path=rules_path)
-        logger.warning(f"Semgrep invocation failed ({exc}); skipping Semgrep audit.")
-        return [], 0
-
-    # Semgrep: 0 = clean, 1 = findings, 2+ = error
+        return unavailable(f"Semgrep invocation failed: {type(exc).__name__}.", fallback=True)
     if completed.returncode not in (0, 1):
-        if fallback_to_native:
-            from agentscan.supply_chain.native_semgrep import scan_native_rules
-
-            return scan_native_rules(path, rules_path=rules_path)
-        err = (completed.stderr or completed.stdout or "").strip()[:400]
-        logger.warning(f"Semgrep exited {completed.returncode}; skipping. {err}")
-        return [], 0
-
-    payload = (completed.stdout or "").strip()
-    if not payload:
-        return [], 0
-
+        return unavailable(
+            f"Semgrep exited unsuccessfully ({completed.returncode}).", fallback=True
+        )
     try:
-        data = json.loads(payload)
-    except json.JSONDecodeError as exc:
-        logger.warning(f"Semgrep returned invalid JSON ({exc}); skipping.")
-        return [], 0
+        data = json.loads(completed.stdout or "")
+    except (json.JSONDecodeError, TypeError):
+        return unavailable("Semgrep returned invalid JSON.", fallback=True)
+    if not isinstance(data, dict):
+        return unavailable("Semgrep returned an unsupported result structure.", fallback=True)
 
-    scanned = data.get("paths", {}).get("scanned") or []
-    checks_run = len(scanned) if isinstance(scanned, list) else 0
-    findings = [_finding_from_result(item) for item in data.get("results") or [] if item]
-    return findings, checks_run
+    issues: list[str] = []
+    paths = data.get("paths")
+    scanned = paths.get("scanned") if isinstance(paths, dict) else None
+    if not isinstance(scanned, list) or any(
+        not isinstance(item, str) or not item for item in scanned
+    ):
+        scanned = []
+        issues.append("Semgrep did not provide valid scanned-file coverage.")
+    errors = data.get("errors", [])
+    if not isinstance(errors, list):
+        issues.append("Semgrep returned malformed error metadata.")
+    elif errors:
+        issues.append(f"Semgrep reported {len(errors)} scan or rule errors.")
+    skipped = paths.get("skipped", []) if isinstance(paths, dict) else []
+    if not isinstance(skipped, list):
+        issues.append("Semgrep returned malformed skipped-file metadata.")
+    elif skipped:
+        issues.append(f"Semgrep reported {len(skipped)} skipped inputs.")
+
+    results = data.get("results")
+    findings: list[Finding] = []
+    if not isinstance(results, list):
+        issues.append("Semgrep did not provide a valid results list.")
+    else:
+        for item in results:
+            if (
+                not isinstance(item, dict)
+                or not isinstance(item.get("check_id"), str)
+                or not isinstance(item.get("path"), str)
+                or not isinstance(item.get("extra", {}), dict)
+                or not isinstance(item.get("start", {}), dict)
+                or not isinstance(item.get("extra", {}).get("metadata", {}), dict)
+            ):
+                issues.append("A malformed Semgrep finding was not assessed.")
+                continue
+            try:
+                finding = _finding_from_result(item)
+                findings.append(finding)
+                if not finding.metadata["severity_assessed"]:
+                    issues.append("A Semgrep finding has an unavailable severity.")
+            except (TypeError, ValueError):
+                issues.append("A Semgrep finding failed validation.")
+    checks = len(set(scanned))
+    record_coverage(coverage, "semgrep", checks, source="semgrep", issues=issues, selected=checks)
+    return findings, checks
 
 
 def _finding_from_result(item: dict[str, Any]) -> Finding:
     check_id = str(item.get("check_id") or "agentscan.unknown")
     extra = item.get("extra") or {}
     metadata = extra.get("metadata") or {}
-    defaults = _CHECK_DEFAULTS.get(check_id, ("SC-018", "Semgrep AI rule match", "LLM05"))
+    defaults = _CHECK_DEFAULTS.get(check_id, ("SC-018", "Semgrep AI rule match", "UNMAPPED"))
     attack_id = str(metadata.get("agentscan_id") or defaults[0])
     owasp_id = str(metadata.get("owasp_id") or defaults[2])
     name = defaults[1]
-    semgrep_sev = str(extra.get("severity") or "WARNING").upper()
-    severity = _SEVERITY_MAP.get(semgrep_sev, Severity.HIGH)
+    semgrep_sev = str(extra.get("severity") or "").upper()
+    severity = _SEVERITY_MAP.get(semgrep_sev, Severity.INFO)
     path = item.get("path") or ""
     line = (item.get("start") or {}).get("line")
     message = str(extra.get("message") or check_id).strip()
@@ -198,5 +211,6 @@ def _finding_from_result(item: dict[str, Any]) -> Finding:
             "file": str(path),
             "line": line,
             "semgrep_check_id": check_id,
+            "severity_assessed": semgrep_sev in _SEVERITY_MAP,
         },
     )

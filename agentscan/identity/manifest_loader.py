@@ -36,11 +36,12 @@ from pathlib import Path
 from loguru import logger
 
 from agentscan.identity.models import AgentIdentity, ToolPermission
+from agentscan.supply_chain.coverage import collect_inputs, record_coverage
 
 MANIFEST_SUFFIX = ".agent.json"
 
 
-def load_manifests(path: str | Path) -> list[AgentIdentity]:
+def load_manifests(path: str | Path, *, coverage: list[dict] | None = None) -> list[AgentIdentity]:
     """
     Walk `path` recursively, parse every *.agent.json file found into an
     AgentIdentity. Files that fail to parse are logged and skipped —
@@ -54,7 +55,14 @@ def load_manifests(path: str | Path) -> list[AgentIdentity]:
         raise FileNotFoundError(f"Audit path does not exist: {root}")
 
     identities: list[AgentIdentity] = []
-    manifest_files = sorted(root.rglob(f"*{MANIFEST_SUFFIX}"))
+    issues: list[str] = []
+    manifest_files = collect_inputs(
+        root,
+        f"*{MANIFEST_SUFFIX}",
+        issues,
+        ignored_dirs={".git", ".venv", "venv", "node_modules", "__pycache__"},
+    )
+    seen_ids: set[str] = set()
 
     if not manifest_files:
         logger.warning(f"No *{MANIFEST_SUFFIX} manifest files found under {root}")
@@ -62,10 +70,27 @@ def load_manifests(path: str | Path) -> list[AgentIdentity]:
     for manifest_file in manifest_files:
         try:
             identity = _parse_manifest_file(manifest_file)
+            if identity.agent_id in seen_ids:
+                raise ValueError("Duplicate agent identifier")
             identities.append(identity)
+            seen_ids.add(identity.agent_id)
         except Exception as e:
-            logger.error(f"Failed to parse manifest {manifest_file}: {e}")
+            issues.append(f"{manifest_file.name}: {type(e).__name__}; manifest was not assessed.")
+            logger.error(f"Failed to parse manifest {manifest_file}: {type(e).__name__}")
 
+    record_coverage(
+        coverage,
+        "identity",
+        len(identities),
+        source="agent_manifest_declarations",
+        issues=issues,
+        selected=len(manifest_files),
+    )
+    if coverage is not None:
+        coverage[-1]["runtime_permissions_verified"] = False
+        coverage[-1]["scope"] = (
+            "AgentScan .agent.json declarations only; deployed entitlements are not verified."
+        )
     return identities
 
 
@@ -74,8 +99,12 @@ def _parse_manifest_file(manifest_file: Path) -> AgentIdentity:
     raw = manifest_file.read_text(encoding="utf-8")
     data = json.loads(raw)
 
+    if not isinstance(data, dict) or not isinstance(data.get("tools", []), list):
+        raise ValueError("Unsupported agent manifest structure")
+    if any(not isinstance(tool, dict) for tool in data.get("tools", [])):
+        raise ValueError("Manifest tools must be objects")
     agent_id = data.get("agent_id")
-    if not agent_id:
+    if not isinstance(agent_id, str) or not agent_id.strip():
         raise ValueError(f"Manifest missing required 'agent_id': {manifest_file}")
 
     tools = [

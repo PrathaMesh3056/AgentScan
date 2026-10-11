@@ -12,6 +12,13 @@ from typing import Any
 
 from agentscan.attacks.scan.runner import YamlScanRunner
 from agentscan.core.ai_client import AIClient  # noqa: F401 - preserved for test patch compatibility
+from agentscan.core.evidence import (
+    complete_known_prompt_present,
+    known_private_disclosure,
+    known_private_values,
+    known_prompt_reference_available,
+)
+from agentscan.core.outcomes import AssessmentInconclusiveError
 
 PAYLOAD_FILE = Path(__file__).resolve().parent.parent / "payloads" / "system_prompt_leak.yaml"
 
@@ -40,30 +47,14 @@ class SystemPromptLeakModule(YamlScanRunner):
         "Implement output filtering to redact leaked meta-instructions, strengthen "
         "system prompt delimiters, and apply post-generation compliance checks."
     )
+    deterministic_evidence_method = "known_private_reference"
 
     def _check_known_system_prompt(self, response_text: str) -> bool:
         """Check if response contains substantial fragments of the known system prompt."""
-        target = getattr(self, "_current_target", None)
-        if not target or not target.system_prompt:
-            return False
-
-        known = target.system_prompt.strip()
-        if len(known) < 10:
-            return known.lower() in response_text.lower()
-
-        # Check for direct substring match
-        if known.lower() in response_text.lower():
-            return True
-
-        # Check for significant n-gram overlap (chunks of 4+ words)
-        words = known.split()
-        if len(words) >= 4:
-            for i in range(len(words) - 3):
-                phrase = " ".join(words[i : i + 4]).lower()
-                if phrase in response_text.lower():
-                    return True
-
-        return False
+        configured = getattr(self, "_current_target", None)
+        return known_private_disclosure(response_text, configured) or complete_known_prompt_present(
+            response_text, configured
+        )
 
     def _check_detection(
         self,
@@ -74,7 +65,13 @@ class SystemPromptLeakModule(YamlScanRunner):
     ) -> bool:
         if self._check_known_system_prompt(response_text):
             return True
-        return super()._check_detection(method, response_text, target, response=response)
+        configured = self._current_target
+        if known_prompt_reference_available(configured) or known_private_values(configured):
+            return False
+        raise AssessmentInconclusiveError(
+            "Prompt confidentiality cannot be verified from category words alone. "
+            "Provide the known prompt or an out-of-band private canary, or select a permitted judge."
+        )
 
     def build_finding_description(
         self, variant: dict[str, Any], detection_method: str, response_text: str

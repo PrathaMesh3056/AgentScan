@@ -24,8 +24,8 @@ runner = CliRunner()
 def test_eu_ai_act_clean_assessment():
     report = evaluate_eu_ai_act([])
     assert report.framework == ComplianceFramework.EU_AI_ACT
-    assert report.overall_status == ComplianceStatus.COMPLIANT
-    assert report.compliance_score == 100.0
+    assert report.overall_status == ComplianceStatus.NOT_ASSESSED
+    assert report.compliance_score is None
     assert len(report.findings) == 0
     assert "Article 15 (Cybersecurity & Robustness)" in report.evaluated_sections
 
@@ -54,18 +54,18 @@ def test_eu_ai_act_with_cybersecurity_and_transparency_gaps():
 
     report = evaluate_eu_ai_act(findings)
     assert report.overall_status in (
-        ComplianceStatus.NON_COMPLIANT,
-        ComplianceStatus.PARTIALLY_COMPLIANT,
+        ComplianceStatus.FINDINGS_MAPPED,
+        ComplianceStatus.FINDINGS_MAPPED,
     )
-    assert report.compliance_score < 100.0
+    assert report.compliance_score is None
     assert len(report.findings) == 2
 
     # Check article mappings
     art15 = report.evaluated_sections["Article 15 (Cybersecurity & Robustness)"]
     assert art15["finding_count"] >= 1
     assert art15["status"] in (
-        ComplianceStatus.PARTIALLY_COMPLIANT.value,
-        ComplianceStatus.NON_COMPLIANT.value,
+        ComplianceStatus.FINDINGS_MAPPED.value,
+        ComplianceStatus.FINDINGS_MAPPED.value,
     )
 
     # Markdown export check
@@ -99,7 +99,7 @@ def test_nist_ai_rmf_profile_evaluation():
 
     report = evaluate_nist_ai_rmf(findings)
     assert report.framework == ComplianceFramework.NIST_AI_RMF
-    assert report.compliance_score < 100.0
+    assert report.compliance_score is None
     assert len(report.findings) == 2
 
     # Check NIST functional functions
@@ -162,3 +162,19 @@ def test_cli_compliance_command(tmp_path: Path):
     assert out_json.exists()
     json_content = json.loads(out_json.read_text(encoding="utf-8"))
     assert json_content["framework"] == "nist-ai-rmf"
+
+
+def test_every_reference_pack_is_unscored_without_compliance_evidence():
+    from agentscan.reporting.compliance_pack import evaluate_iso_42001, evaluate_mitre_atlas
+
+    for evaluate in (
+        evaluate_eu_ai_act,
+        evaluate_nist_ai_rmf,
+        evaluate_iso_42001,
+        evaluate_mitre_atlas,
+    ):
+        result = evaluate([])
+        assert result.overall_status == ComplianceStatus.NOT_ASSESSED
+        assert result.compliance_score is None
+        assert all(v["status"] == "NOT_ASSESSED" for v in result.evaluated_sections.values())
+        assert "N/A" in result.to_markdown()

@@ -12,6 +12,7 @@ from typing import Any
 
 from agentscan.core.models import Finding
 from agentscan.remediation.models import FixAction
+from agentscan.remediation.paths import contained_path
 
 
 def _shrink_agent_manifest(
@@ -108,6 +109,7 @@ def plan_identity_shrinks(findings: list[Finding], root_path: Path) -> list[FixA
     )
 
     for m_path in manifest_files:
+        m_path = contained_path(root_path, m_path)
         try:
             original = m_path.read_text(encoding="utf-8")
         except Exception:
@@ -133,6 +135,7 @@ def plan_identity_shrinks(findings: list[Finding], root_path: Path) -> list[FixA
     )
 
     for m_path in mcp_files:
+        m_path = contained_path(root_path, m_path)
         try:
             original = m_path.read_text(encoding="utf-8")
         except Exception:

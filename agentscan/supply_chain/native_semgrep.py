@@ -15,6 +15,7 @@ import yaml
 from loguru import logger
 
 from agentscan.core.models import Finding, Severity
+from agentscan.supply_chain.coverage import collect_inputs, record_coverage
 
 _SEVERITY_MAP: dict[str, Severity] = {
     "ERROR": Severity.CRITICAL,
@@ -113,35 +114,59 @@ def _detect_pattern_kind(rule_id: str, item: dict[str, Any]) -> str:
     return "generic"
 
 
-def load_rules(rules_path: Path | str | None = None) -> dict[str, SemgrepRule]:
+def load_rules(
+    rules_path: Path | str | None = None, *, issues: list[str] | None = None
+) -> dict[str, SemgrepRule]:
     """Load and index Semgrep rules from YAML file."""
     path = Path(rules_path) if rules_path is not None else default_rules_path()
     if not path.is_file():
+        if issues is not None:
+            issues.append("Rules file is unavailable.")
         logger.warning(f"Semgrep rules file not found at {path}; using empty rule set.")
         return {}
 
     try:
         data = yaml.safe_load(path.read_text(encoding="utf-8"))
     except Exception as exc:
+        if issues is not None:
+            issues.append(f"Rules could not be read: {type(exc).__name__}.")
         logger.warning(f"Failed to parse Semgrep rules YAML from {path}: {exc}")
         return {}
 
+    if not isinstance(data, dict) or not isinstance(data.get("rules"), list):
+        if issues is not None:
+            issues.append("Rules must contain a list of rule definitions.")
+        return {}
     rules: dict[str, SemgrepRule] = {}
-    for item in data.get("rules", []) if isinstance(data, dict) else []:
+    for item in data["rules"]:
+        if not isinstance(item, dict) or not isinstance(item.get("metadata", {}), dict):
+            if issues is not None:
+                issues.append("Malformed rule definition was not assessed.")
+            continue
         rule_id = str(item.get("id") or "").strip()
         if not rule_id:
+            if issues is not None:
+                issues.append("Rule without an identifier was not assessed.")
             continue
-        sev_str = str(item.get("severity") or "WARNING").upper()
-        severity = _SEVERITY_MAP.get(sev_str, Severity.HIGH)
+        sev_str = str(item.get("severity") or "").upper()
+        if sev_str not in _SEVERITY_MAP:
+            if issues is not None:
+                issues.append(f"Rule {rule_id} has an unsupported severity.")
+            continue
+        severity = _SEVERITY_MAP[sev_str]
         message = str(item.get("message") or rule_id).strip()
         metadata = item.get("metadata") or {}
         kind = _detect_pattern_kind(rule_id, item)
+        if kind == "generic":
+            if issues is not None:
+                issues.append(f"Rule {rule_id} has no supported native interpretation.")
+            continue
         rules[rule_id] = SemgrepRule(
             id=rule_id,
             severity=severity,
             message=message,
             agentscan_id=str(metadata.get("agentscan_id") or "SC-018"),
-            owasp_id=str(metadata.get("owasp_id") or "LLM05"),
+            owasp_id=str(metadata.get("owasp_id") or "UNMAPPED"),
             category=str(metadata.get("category") or "security"),
             pattern_kind=kind,
         )
@@ -263,7 +288,9 @@ class NativeSemgrepEngine:
     """Inspects Python source AST using Semgrep rule definitions."""
 
     def __init__(self, rules_path: Path | str | None = None) -> None:
-        self.rules = load_rules(rules_path)
+        self.errors: list[str] = []
+        self.rule_issues: list[str] = []
+        self.rules = load_rules(rules_path, issues=self.rule_issues)
         self._rules_by_kind: dict[str, list[SemgrepRule]] = {}
         for rule in self.rules.values():
             self._rules_by_kind.setdefault(rule.pattern_kind, []).append(rule)
@@ -275,12 +302,14 @@ class NativeSemgrepEngine:
         """Scan a single Python file against all registered rules."""
         findings: list[Finding] = []
         try:
-            source = filepath.read_text(encoding="utf-8", errors="replace")
+            source = filepath.read_text(encoding="utf-8")
             tree = ast.parse(source, filename=str(filepath))
         except SyntaxError as exc:
+            self.errors.append(f"{filepath.name}: SyntaxError")
             logger.warning(f"Syntax error parsing {filepath}: {exc}")
             return []
         except Exception as exc:
+            self.errors.append(f"{filepath.name}: {type(exc).__name__}")
             logger.error(f"Failed to read {filepath}: {exc}")
             return []
 
@@ -485,6 +514,8 @@ class NativeSemgrepEngine:
 def scan_native_rules(
     path: str,
     rules_path: Path | str | None = None,
+    *,
+    coverage: list[dict] | None = None,
 ) -> tuple[list[Finding], int]:
     """
     Run the native AST Semgrep rule engine against a file or directory tree.
@@ -494,13 +525,26 @@ def scan_native_rules(
     """
     engine = NativeSemgrepEngine(rules_path)
     target = Path(path)
+    limitations = list(engine.rule_issues)
+    selection_issues: list[str] = []
+    if not engine.rules:
+        limitations.append("Rules unavailable, empty or malformed.")
+    if rules_path is not None:
+        limitations.append(
+            "Native custom-rule interpretation is a heuristic subset, not Semgrep equivalence."
+        )
 
-    if target.is_file() and target.suffix == ".py":
-        findings = engine.scan_file(target)
-        return findings, 1
-
-    if not target.is_dir():
-        return [], 0
+    def finish(findings, selected):
+        checks = max(0, selected - len(engine.errors)) if engine.rules else 0
+        record_coverage(
+            coverage,
+            "native_rules",
+            checks,
+            source="native_ast_subset",
+            issues=[*limitations, *selection_issues, *engine.errors],
+            selected=selected,
+        )
+        return findings, checks
 
     ignored_dirs = {
         ".git",
@@ -512,11 +556,9 @@ def scan_native_rules(
         "build",
         "dist",
     }
-    py_files = sorted(
-        p for p in target.rglob("*.py") if not any(part in ignored_dirs for part in p.parts)
-    )
+    py_files = collect_inputs(target, "*.py", selection_issues, ignored_dirs=ignored_dirs)
     all_findings: list[Finding] = []
     for py_file in py_files:
         all_findings.extend(engine.scan_file(py_file))
 
-    return all_findings, len(py_files)
+    return finish(all_findings, len(py_files))

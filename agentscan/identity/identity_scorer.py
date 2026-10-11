@@ -19,9 +19,8 @@
 
 from __future__ import annotations
 
-import math
-
 from agentscan.core.models import Finding, Severity
+from agentscan.core.scorer import calculate_score
 
 SEVERITY_WEIGHTS: dict[Severity, float] = {
     Severity.CRITICAL: 10,
@@ -36,7 +35,7 @@ SEVERITY_WEIGHTS: dict[Severity, float] = {
 def calculate_identity_score(
     findings: list[Finding],
     total_agents_audited: int,
-) -> int:
+) -> int | None:
     """
     identity_score = 100 - ceil(
         (critical*10 + high*5 + medium*2 + low*0.5) / total_agents_audited * 100
@@ -48,21 +47,16 @@ def calculate_identity_score(
         50-69   HIGH RISK      fix high findings, do not deploy to production
         0-49    CRITICAL RISK  do not deploy under any circumstances
 
-    An audit with zero agents found returns 100 (nothing to be unsafe about,
-    not the same as "safe" — callers should surface the zero-agents case
-    separately in the report).
+    Zero assessed agents yield no score. Critical findings cap the score at 49,
+    so increasing the agent count cannot hide a critical credential boundary.
     """
-    if total_agents_audited <= 0:
-        return 100
-
-    weighted_sum = sum(SEVERITY_WEIGHTS.get(f.severity, 0) for f in findings)
-    raw_score = 100 - math.ceil(weighted_sum / total_agents_audited * 100)
-
-    return max(0, min(100, raw_score))
+    return calculate_score(findings, total_agents_audited)
 
 
-def score_band(score: int) -> str:
+def score_band(score: int | None) -> str:
     """Human-readable risk band for a given score, matching the thresholds above."""
+    if score is None:
+        return "INCONCLUSIVE"
     if score >= 90:
         return "SAFE"
     if score >= 70:

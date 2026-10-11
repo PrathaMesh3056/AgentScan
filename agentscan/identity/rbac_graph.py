@@ -226,7 +226,7 @@ def _escalation_finding(source_agent: AgentIdentity, scope: str, path: Iterable[
         attack_id="ID-010",
         attack_name="Multi-hop privilege escalation",
         severity=Severity.CRITICAL,
-        owasp_id="LLM08",
+        owasp_id="LLM06",
         description=(
             f"Low-trust agent '{source_agent.agent_id}' can reach dangerous scope "
             f"'{scope}' through another agent or a shared credential "

@@ -9,7 +9,13 @@ import pytest
 import respx
 
 from agentscan.core.models import Severity
-from agentscan.supply_chain.osv_client import OsvUnavailableError, query, querybatch
+from agentscan.supply_chain.osv_client import (
+    OsvUnavailableError,
+    _extract_fix_version,
+    _parse_vuln,
+    query,
+    querybatch,
+)
 
 _OSV_BASE = "https://api.osv.dev"
 
@@ -95,3 +101,83 @@ class TestOsvUnavailable:
         )
         with pytest.raises(OsvUnavailableError):
             await querybatch([("langchain", "0.0.154")])
+
+
+def test_cvss_vectors_unknown_and_moderate_severity_are_distinct():
+    critical = _parse_vuln(
+        {"severity": [{"score": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"}]}
+    )
+    low = _parse_vuln({"severity": [{"score": "CVSS:3.1/AV:P/AC:H/PR:H/UI:R/S:U/C:L/I:N/A:N"}]})
+    unknown = _parse_vuln({"severity": [{"score": "CVSS:3.1/INVALID"}]})
+    moderate = _parse_vuln({"database_specific": {"severity": "MODERATE"}})
+    assert critical.severity == Severity.CRITICAL and low.severity == Severity.LOW
+    assert unknown.severity == Severity.INFO and unknown.severity_known is False
+    assert moderate.severity == Severity.MEDIUM
+
+
+def test_fix_version_matches_package_and_installed_release_branch():
+    record = {
+        "affected": [
+            {
+                "package": {"name": "unrelated", "ecosystem": "PyPI"},
+                "ranges": [
+                    {"type": "ECOSYSTEM", "events": [{"introduced": "0"}, {"fixed": "9.0"}]}
+                ],
+            },
+            {
+                "package": {"name": "owned", "ecosystem": "PyPI"},
+                "ranges": [
+                    {
+                        "type": "ECOSYSTEM",
+                        "events": [
+                            {"introduced": "1.0"},
+                            {"fixed": "1.5"},
+                            {"introduced": "2.0"},
+                            {"fixed": "2.5"},
+                        ],
+                    }
+                ],
+            },
+        ]
+    }
+    assert _extract_fix_version(record, "owned", "2.2") == "2.5"
+    assert _extract_fix_version(record, "owned", "1.2") == "1.5"
+    assert _extract_fix_version(record, "owned", "1.8") == "unknown"
+    assert _extract_fix_version(record, "missing", "1.2") == "unknown"
+
+
+async def test_all_1001_packages_and_paginated_batch_hits_are_assessed():
+    import json
+
+    batches, pages = [], []
+
+    def response(request):
+        body = json.loads(request.content) if request.method == "POST" else {}
+        if request.url.path.endswith("querybatch"):
+            count = len(body["queries"])
+            batches.append(count)
+            results = [{} for _ in range(count)]
+            if count == 1:
+                results[0] = {"next_page_token": "more", "vulns": [{"id": "stub"}]}
+            return httpx.Response(200, json={"results": results})
+        pages.append(body.get("page_token"))
+        return httpx.Response(
+            200,
+            json={
+                "vulns": [{"id": "page-two" if body.get("page_token") else "page-one"}],
+                **({} if body.get("page_token") else {"next_page_token": "more"}),
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(response)) as client:
+        hits = await querybatch([(f"owned-{i}", "1.0") for i in range(1001)], client)
+    assert batches == [1000, 1] and pages == [None, "more"]
+    assert {hit[2].osv_id for hit in hits} == {"page-one", "page-two"}
+
+
+async def test_incomplete_batch_is_an_error_instead_of_a_clean_result():
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda req: httpx.Response(200, json={"results": []}))
+    ) as client:
+        with pytest.raises(OsvUnavailableError, match="coverage"):
+            await querybatch([("owned", "1.0")], client)

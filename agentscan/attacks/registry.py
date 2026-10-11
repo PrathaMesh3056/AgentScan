@@ -12,8 +12,10 @@
 
 from __future__ import annotations
 
+import copy
 import importlib
 import pkgutil
+from types import ModuleType
 
 from loguru import logger
 
@@ -33,15 +35,12 @@ class AttackRegistry:
     def __init__(self) -> None:
         self._modules: dict[str, AttackModule] = {}
         self._loaded = False
+        self.load_errors: list[dict[str, str]] = []
 
     def register(self, module: AttackModule) -> None:
         """Manually register an attack module instance."""
         if module.attack_id in self._modules:
-            logger.warning(
-                f"Attack ID {module.attack_id!r} already registered. "
-                f"Overwriting {self._modules[module.attack_id].__class__.__name__} "
-                f"with {module.__class__.__name__}."
-            )
+            raise ValueError(f"Duplicate attack ID {module.attack_id!r}")
         self._modules[module.attack_id] = module
         logger.debug(f"Registered: {module!r}")
 
@@ -60,11 +59,11 @@ class AttackRegistry:
         self._loaded = True
         logger.info(f"Registry loaded: {len(self._modules)} attack modules registered.")
 
-    def _load_package(self, package: object) -> None:
+    def _load_package(self, package: ModuleType) -> None:
         """Import every module in a subpackage, triggering class registration."""
         for _, module_name, _ in pkgutil.walk_packages(
-            path=package.__path__,  # type: ignore[attr-defined]
-            prefix=package.__name__ + ".",  # type: ignore[attr-defined]
+            path=package.__path__,
+            prefix=package.__name__ + ".",
         ):
             try:
                 imported = importlib.import_module(module_name)
@@ -80,7 +79,22 @@ class AttackRegistry:
                     ):
                         self.register(attr())
             except Exception as e:
-                logger.error(f"Failed to load module {module_name!r}: {e}")
+                if package is deep_pkg and isinstance(e, ModuleNotFoundError) and e.name == "torch":
+                    logger.warning(
+                        "Optional DEEP module {} is unavailable: torch is not installed. "
+                        "Standard scans remain available; install the deep extra for neural checks.",
+                        module_name,
+                    )
+                else:
+                    logger.error(f"Failed to load module {module_name!r}: {e}")
+                self.load_errors.append(
+                    {
+                        "module_id": module_name,
+                        "module_name": module_name,
+                        "error": str(e),
+                        "mode": package.__name__.rsplit(".", 1)[-1],
+                    }
+                )
 
     def get(self, attack_id: str) -> AttackModule | None:
         """Return a specific module by ID, or None if not found."""
@@ -95,7 +109,27 @@ class AttackRegistry:
         Return only modules applicable to this target.
         Respects is_applicable() and supported_modes on each module.
         """
-        return [m for m in self._modules.values() if m.is_applicable(target)]
+        # Constructors create independent mutable state; deepcopy preserves
+        # explicitly configured plugin instances supplied by callers.
+        return self.select_for_target(target)[0]
+
+    def select_for_target(self, target: Target) -> tuple[list[AttackModule], list[dict[str, str]]]:
+        """Select independent plugins while retaining individual selection failures."""
+        modules = []
+        errors = []
+        for module in self._modules.values():
+            try:
+                if module.is_applicable(target):
+                    modules.append(copy.deepcopy(module))
+            except Exception as exc:
+                errors.append(
+                    {
+                        "module_id": module.attack_id,
+                        "module_name": module.attack_name,
+                        "error": str(exc) or type(exc).__name__,
+                    }
+                )
+        return modules, errors
 
     def get_by_mode(self, mode: ScanMode) -> list[AttackModule]:
         """Return all modules that support a specific scan mode."""

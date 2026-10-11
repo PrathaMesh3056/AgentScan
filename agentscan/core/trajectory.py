@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from agentscan.core.context import ContextLocal
 from agentscan.core.models import TurnRecord
 from agentscan.core.trace import extract_reply_text, redact_sensitive_data
 
@@ -77,4 +78,4 @@ class TrajectoryRecorder:
         return list(self._turns)
 
 
-trajectory_recorder = TrajectoryRecorder()
+trajectory_recorder = ContextLocal("trajectory", TrajectoryRecorder)

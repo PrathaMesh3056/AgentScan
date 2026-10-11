@@ -58,15 +58,15 @@
      ========================================== -->
 <div style="display: table; width: 100%; margin-bottom: 20px;">
     <div style="display: table-cell; width: 36%; vertical-align: top; padding-right: 12px;">
-        <div class="card" style="height: 100%; margin-bottom: 0; text-align: center; padding: 22px 16px; border-left: 5px solid {% if report.identity_score >= 80 %}#16a34a{% elif report.identity_score >= 50 %}#d97706{% else %}#dc2626{% endif %};">
+        <div class="card" style="height: 100%; margin-bottom: 0; text-align: center; padding: 22px 16px; border-left: 5px solid {% if report.identity_score is none %}#64748b{% elif report.identity_score >= 80 %}#16a34a{% elif report.identity_score >= 50 %}#d97706{% else %}#dc2626{% endif %};">
             <div style="font-size: 8.5pt; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; color: #64748b;">
                 Identity Score
             </div>
-            <div style="font-size: 42pt; font-weight: 900; line-height: 1; margin: 10px 0; color: {% if report.identity_score >= 80 %}#16a34a{% elif report.identity_score >= 50 %}#d97706{% else %}#dc2626{% endif %};">
-                {{ report.identity_score }}<span style="font-size: 16pt; font-weight: 600; color: #94a3b8;">/100</span>
+            <div style="font-size: 42pt; font-weight: 900; line-height: 1; margin: 10px 0; color: {% if report.identity_score is none %}#64748b{% elif report.identity_score >= 80 %}#16a34a{% elif report.identity_score >= 50 %}#d97706{% else %}#dc2626{% endif %};">
+                {{ report.identity_score if report.identity_score is not none else "N/A" }}{% if report.identity_score is not none %}<span style="font-size: 16pt; font-weight: 600; color: #94a3b8;">/100</span>{% endif %}
             </div>
             <div>
-                <span class="badge {% if report.identity_score >= 80 %}badge-low{% elif report.identity_score >= 50 %}badge-medium{% else %}badge-critical{% endif %}" style="font-size: 8.5pt; padding: 4px 12px;">
+                <span class="badge {% if report.identity_score is none %}badge-info{% elif report.identity_score >= 80 %}badge-low{% elif report.identity_score >= 50 %}badge-medium{% else %}badge-critical{% endif %}" style="font-size: 8.5pt; padding: 4px 12px;">
                     {{ score_band }}
                 </span>
             </div>

@@ -142,3 +142,10 @@ def test_html_report_trust_and_validation_failed():
         "⚠ Attacker NOT validated: Judge failed to detect control jailbreak (Score is UNRELIABLE)"
         in html
     )
+
+
+def test_empty_identity_report_renders_unscored():
+    report = IdentityReport(audit_id="empty-fixture", path_audited="fixture")
+    html = render_html_report(report)
+    assert "N/A" in html
+    assert "INCONCLUSIVE" in html

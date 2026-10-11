@@ -14,9 +14,22 @@ spec:
       labels:
         app: agentscan-api
     spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: agentscan-api
-          image: agentscan:latest
+          # Replace this invalid placeholder with the verified release digest.
+          image: agentscan@sha256:REPLACE_WITH_VERIFIED_RELEASE_DIGEST
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
           command: ["agentscan", "api", "serve", "--host", "0.0.0.0", "--port", "8080"]
           ports:
             - containerPort: 8080
@@ -31,22 +44,71 @@ spec:
                 secretKeyRef:
                   name: agentscan-secrets
                   key: database-url
-            - name: AGENTSCAN_JWT_SECRET
+            - name: AGENTSCAN_JWT_PRIVATE_KEY
               valueFrom:
                 secretKeyRef:
                   name: agentscan-secrets
-                  key: jwt-secret
-            - name: AGENTSCAN_TOKEN_PSK
+                  key: jwt-private-key
+            - name: AGENTSCAN_TENANT_CREDENTIALS_JSON
               valueFrom:
                 secretKeyRef:
                   name: agentscan-secrets
-                  key: token-psk
+                  key: tenant-credentials-json
+            - name: AGENTSCAN_ALLOWED_TARGET_HOSTS
+              valueFrom:
+                secretKeyRef:
+                  name: agentscan-secrets
+                  key: allowed-target-hosts
+            - name: AGENTSCAN_TENANT_POLICIES_JSON
+              valueFrom:
+                secretKeyRef:
+                  name: agentscan-secrets
+                  key: tenant-policies-json
+            - name: AGENTSCAN_DATA_KEY_FILE
+              value: /run/secrets/agentscan/data-encryption-key
+            - name: AGENTSCAN_EXTERNAL_MODEL
+              valueFrom:
+                secretKeyRef:
+                  name: agentscan-secrets
+                  key: external-model
+                  optional: true
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: agentscan-secrets
+                  key: openai-api-key
+                  optional: true
+            - name: ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: agentscan-secrets
+                  key: anthropic-api-key
+                  optional: true
+            - name: GEMINI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: agentscan-secrets
+                  key: gemini-api-key
+                  optional: true
+            - name: AGENTSCAN_RETENTION_DAYS
+              value: "7"
           readinessProbe:
             httpGet:
-              path: /docs
+              path: /health/ready
               port: 8080
             initialDelaySeconds: 5
             periodSeconds: 10
+            timeoutSeconds: 4
+          livenessProbe:
+            httpGet:
+              path: /health/live
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          volumeMounts:
+            - name: service-data
+              mountPath: /run/secrets/agentscan
+              readOnly: true
           resources:
             requests:
               cpu: "250m"
@@ -54,6 +116,15 @@ spec:
             limits:
               cpu: "1"
               memory: "1Gi"
+      volumes:
+        - name: service-data
+          secret:
+            secretName: agentscan-secrets
+            defaultMode: 0440
+            items:
+              - key: data-encryption-key
+                path: data-encryption-key
+
 ---
 apiVersion: v1
 kind: Service

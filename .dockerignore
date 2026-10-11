@@ -1,0 +1,34 @@
+# Allow only installation inputs into the build context.
+**
+!Dockerfile
+!Dockerfile.deep
+!pyproject.toml
+!uv.lock
+!README.md
+!LICENSE
+!CHANGELOG.md
+!agentscan/
+!agentscan/**
+!rules/
+!rules/ai_rules.yaml
+
+# Reapply operational exclusions even beneath the runtime package.
+**/.env
+**/.env.*
+**/*.pem
+**/*.key
+**/*.p12
+**/*.pfx
+**/id_rsa
+**/id_ed25519
+**/.agentscan/**
+**/.agentscan-recovery/**
+**/.agentscan-fix-*
+**/.agentscan-recover-*
+**/.agentscan-rollback-*
+**/Codex audit/**
+**/AUDIT_PHASE2.md
+**/internal_docs/**
+**/.test-tmp/**
+**/__pycache__/**
+**/*.pyc

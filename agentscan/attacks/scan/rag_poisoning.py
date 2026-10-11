@@ -1,6 +1,6 @@
 # agentscan/attacks/scan/rag_poisoning.py
 #
-# ATK-008: RAG / Knowledge-Base Poisoning — OWASP LLM03
+# ATK-008: RAG / Knowledge-Base Poisoning — OWASP LLM08
 #
 # Tests knowledge integrity (conflicting facts, fake citations, document-channel
 # system overrides). Distinct from ATK-005, which hides *instructions* in docs.
@@ -27,7 +27,7 @@ class RagPoisoningModule(YamlScanRunner):
     is_abstract = False
     attack_id = "ATK-008"
     attack_name = "RAG / Knowledge-Base Poisoning"
-    owasp_id = "LLM03"
+    owasp_id = "LLM08"
     payload_file = PAYLOAD_FILE
 
     default_remediation = (

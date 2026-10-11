@@ -35,6 +35,8 @@ AgentScan helps developers and security teams evaluate AI agents before deployme
 
 ## Quick Start
 
+For dashboard startup, terminal workflows, prerequisites and every implemented attack, follow [START_HERE.md](docs/START_HERE.md).
+
 ### Prerequisites
 - **Python**: 3.12 or higher
 - **Package Manager**: [`uv`](https://github.com/astral-sh/uv) (recommended) or `pip`
@@ -60,16 +62,22 @@ Run a scan against a running agent endpoint:
 uv run agentscan scan http://localhost:8000/chat --output report.json
 ```
 
+Analysis defaults to deterministic checks and sensitive data. Optional offline analysis uses an installed local model: `--analysis local --local-model ollama/llama3.2`. Clients can also explicitly designate a non-sensitive scan and choose external analysis using their locally configured OpenAI, Anthropic or Gemini key. Sensitive scans cannot use external analysis, and failures never switch providers automatically. See [data policy and setup](docs/DATA_POLICY.md) for all three modes, key configuration, service encryption and retention.
+
+The [architecture guide](docs/ARCHITECTURE.md) explains the runtime components and evidence boundaries. The full use cases, execution sequences, component/state/data-flow diagrams and searchable Python/JavaScript function inventories are saved locally in `internal_docs/diagrams/`. That Git-ignored working folder is excluded from published packages.
+
 > [!NOTE]
 > The target endpoint must be a running service that accepts JSON chat requests (e.g., `{"message": "..."}`). To test AgentScan without a live server, run the local benchmark below or run a static audit on a local directory (`uv run agentscan audit .`).
 
 ### 3. Run the Local Benchmark
 
-Verify the detection and scoring engine locally against reference agents without needing a running server, network access, or API keys:
+Run a synthetic heuristic smoke check without a running server, network access, or API keys:
 
 ```bash
 uv run agentscan benchmark
 ```
+
+The built-in fixtures check local behavior and scoring order. They do not establish independent detector accuracy or certify target safety.
 
 > [!IMPORTANT]
 > **Authorized Testing Only**: Only scan systems, applications, or endpoints that you own or have explicit, documented permission to test.

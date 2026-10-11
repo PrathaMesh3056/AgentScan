@@ -22,7 +22,6 @@
 from __future__ import annotations
 
 import asyncio
-from functools import lru_cache
 from itertools import combinations
 from typing import Any
 
@@ -31,6 +30,8 @@ from loguru import logger
 from agentscan.attacks.base import AttackModule
 from agentscan.attacks.scan.prompt_injection import PromptInjectionModule
 from agentscan.core.models import Finding, ScanMode, Severity, Target
+from agentscan.core.outcomes import ModuleUnavailableError, record_execution_error
+from agentscan.neural.execution import serialized_reference_call
 
 MODEL_NAME = "Qwen/Qwen2.5-0.5B-Instruct"
 LAYER_INDEX = 12  # Qwen2.5-0.5B has 24 hidden layers (24 // 2 = 12)
@@ -57,15 +58,11 @@ BENIGN_PROMPTS = (
 )
 
 
-@lru_cache(maxsize=1)
 def _load_model_and_tokenizer() -> tuple[Any, Any]:
-    """Lazy loader for Qwen model and tokenizer, cached once per process."""
-    from transformers import AutoModelForCausalLM, AutoTokenizer
+    """Use the shared pinned model rather than loading a second checkpoint."""
+    from agentscan.neural.qwen import load_model_and_tokenizer
 
-    tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
-    model = AutoModelForCausalLM.from_pretrained(MODEL_NAME)
-    model.eval()
-    return model, tokenizer
+    return load_model_and_tokenizer()
 
 
 def _extract_layer_activation(model: Any, tokenizer: Any, prompt: str, layer_idx: int) -> Any:
@@ -153,6 +150,7 @@ class ActivationProbeModule(AttackModule):
     attack_name = "Activation-Level Anomaly Detection"
     owasp_id = "LLM01"
     supported_modes = [ScanMode.DEEP]
+    assessment_scope = "local_reference_model"
 
     def variant_count(self) -> int:
         """One probe per prompt-injection payload replayed through the model."""
@@ -164,13 +162,16 @@ class ActivationProbeModule(AttackModule):
         # run_scan()'s asyncio.gather uses to run other modules concurrently.
         return await asyncio.to_thread(self._probe)
 
+    @serialized_reference_call
     def _probe(self) -> list[Finding]:
         """Synchronous probe body — safe to run inside asyncio.to_thread."""
         try:
             model, tokenizer = _load_model_and_tokenizer()
         except Exception as e:  # noqa: BLE001 - skip cleanly when weights are missing
             logger.warning(f"ATK-023 skipped: DEEP reference model unavailable: {e}")
-            return []
+            raise ModuleUnavailableError(
+                "Local reference model or neural baseline unavailable"
+            ) from e
 
         import torch
 
@@ -195,6 +196,7 @@ class ActivationProbeModule(AttackModule):
                 )
             except Exception as e:  # noqa: BLE001 - one bad payload must not kill the probe
                 logger.error(f"Activation probe failed on payload {vid}: {e}")
+                record_execution_error(f"Activation payload {vid}: {e}")
                 continue
 
             delta = _mean_distance_to_benign(activation, benign_stack)

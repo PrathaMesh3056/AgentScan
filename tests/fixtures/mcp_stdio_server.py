@@ -1,4 +1,4 @@
-# Minimal MCP stdio server (Content-Length framed JSON-RPC) for connector tests.
+# Minimal MCP stdio server (newline-delimited JSON-RPC) for connector tests.
 
 from __future__ import annotations
 
@@ -7,23 +7,12 @@ import sys
 
 
 def read_message() -> dict | None:
-    headers: dict[str, str] = {}
-    while True:
-        line = sys.stdin.buffer.readline()
-        if not line:
-            return None
-        if line in (b"\r\n", b"\n"):
-            break
-        key, _, val = line.decode("utf-8", errors="replace").partition(":")
-        headers[key.strip().lower()] = val.strip()
-    n = int(headers.get("content-length", "0"))
-    body = sys.stdin.buffer.read(n)
-    return json.loads(body.decode("utf-8"))
+    line = sys.stdin.buffer.readline(4194305)
+    return json.loads(line) if line else None
 
 
 def write_message(obj: dict) -> None:
-    raw = json.dumps(obj).encode("utf-8")
-    sys.stdout.buffer.write(f"Content-Length: {len(raw)}\r\n\r\n".encode("ascii") + raw)
+    sys.stdout.buffer.write(json.dumps(obj).encode("utf-8") + b"\n")
     sys.stdout.buffer.flush()
 
 
@@ -33,6 +22,8 @@ TOOLS = [
 
 
 def main() -> None:
+    sys.stderr.buffer.write(b"fixture stderr " * 80000)
+    sys.stderr.buffer.flush()
     while True:
         msg = read_message()
         if msg is None:

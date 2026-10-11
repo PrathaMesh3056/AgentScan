@@ -17,6 +17,14 @@ from agentscan.core.models import (
 
 
 class TestTarget:
+    def test_tls_mcp_target_selects_https_connector(self) -> None:
+        from agentscan.core.connectors import McpSseConnector, select_connector
+
+        target = Target(url="mcp+sses://mcp.example.test/mcp")
+        connector = select_connector(target)
+        assert isinstance(connector, McpSseConnector)
+        assert connector.http_url == "https://mcp.example.test/mcp"
+
     def test_valid_target(self) -> None:
         t = Target(url="http://localhost:8000/chat")
         assert t.url == "http://localhost:8000/chat"

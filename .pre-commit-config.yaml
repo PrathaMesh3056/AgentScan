@@ -9,9 +9,10 @@
 repos:
   # ── Ruff: lint + format (replaces flake8 + black + isort) ──────────────────
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.4.4
+    # Keep this revision equal to the Ruff version in uv.lock.
+    rev: v0.15.8
     hooks:
-      - id: ruff
+      - id: ruff-check
         name: ruff lint
         args: [--fix]          # auto-fix safe issues
       - id: ruff-format
@@ -19,17 +20,22 @@ repos:
 
   # ── Mypy: static type checking ──────────────────────────────────────────────
   - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v1.9.0
+    # PEP 695 syntax requires the current checker used by locked CI.
+    rev: v1.19.1
     hooks:
       - id: mypy
         name: mypy type check
-        files: ^agentscan/
+        # Check the whole runtime, including modules not staged in this commit.
+        pass_filenames: false
+        always_run: true
         additional_dependencies:
-          - pydantic>=2.0
-          - httpx>=0.27
-          - types-PyYAML
-          - types-redis
-        args: [--ignore-missing-imports]
+          # Match the directly typed support dependencies in uv.lock.
+          - pydantic==2.12.5
+          - httpx==0.28.1
+          - types-pyyaml==6.0.12.20260518
+          # Redis ships its own types; the legacy stubs hide modern aclose().
+          - redis==8.1.0
+        args: [agentscan]
 
   # ── General file hygiene ────────────────────────────────────────────────────
   - repo: https://github.com/pre-commit/pre-commit-hooks

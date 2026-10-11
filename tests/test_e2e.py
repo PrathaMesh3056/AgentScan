@@ -12,6 +12,7 @@ import json
 from pathlib import Path
 
 import httpx
+import pytest
 import respx
 from typer.testing import CliRunner
 
@@ -86,6 +87,11 @@ class TestEndToEndScan:
     def test_e2e_transcript_and_redaction(self, tmp_path: Path) -> None:
         """Verify --transcript captures traffic and redacts sensitive credentials."""
         transcript_path = tmp_path / "scan_traffic.txt"
+        from agentscan.core.context import active_context
+        from agentscan.core.trace import recorder
+
+        previous_context = active_context.get()
+        previous_recording = recorder.enabled
 
         # Mock target replying with an echo including an API key
         respx.post("http://e2e-secret.test/chat").mock(
@@ -111,7 +117,50 @@ class TestEndToEndScan:
         assert transcript_path.exists()
         content = transcript_path.read_text(encoding="utf-8")
         assert "AgentScan Transcript" in content
+        assert "<< REPLY" in content and "Using api_key:" in content
+        assert "Status: INCONCLUSIVE" in content
+        assert "Score: unavailable" in content
+        assert "ASSESSMENT COVERAGE" in content
+        assert "Provision a confidential canary" in content
+        assert "resisted every payload" not in content
         # Ensure credentials were redacted
         assert "sk-1234567890abcdef1234567890" not in content
         assert "secret-token-abc-12345" not in content
         assert "[REDACTED]" in content
+        assert active_context.get() is previous_context
+        assert recorder.enabled is previous_recording
+
+    @respx.mock
+    @pytest.mark.parametrize("credential", ["local-private-Qz82tP", "abc"])
+    def test_cli_transcript_redacts_bare_known_credentials_of_any_evidence_length(
+        self, tmp_path: Path, credential: str
+    ) -> None:
+        from agentscan.core.context import active_context
+        from agentscan.core.trace import recorder
+
+        previous_context = active_context.get()
+        previous_recording = recorder.enabled
+        transcript = tmp_path / "known-credential.txt"
+        respx.post("http://e2e-known-private.test/chat").mock(
+            return_value=httpx.Response(
+                200, json={"response": f"Bare protected value: {credential}"}
+            )
+        )
+        result = runner.invoke(
+            app,
+            [
+                "scan",
+                "http://e2e-known-private.test/chat",
+                "--system-prompt",
+                f'API_TOKEN = "{credential}"',
+                "--transcript",
+                str(transcript),
+            ],
+        )
+        assert result.exit_code == 0
+        content = transcript.read_text(encoding="utf-8")
+        assert "<< REPLY" in content
+        assert "Bare protected value: [REDACTED]" in content
+        assert credential not in content
+        assert active_context.get() is previous_context
+        assert recorder.enabled is previous_recording

@@ -12,16 +12,16 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as pkg_version
-from typing import Any
+from typing import Any, Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 def _installed_version() -> str:
     try:
         return pkg_version("agentscan")
     except PackageNotFoundError:
-        return "0.1.0"
+        return "0.2.0"
 
 
 # ── Enums ─────────────────────────────────────────────────────────────────────
@@ -239,6 +239,13 @@ class BrowserConfig(BaseModel):
     )
     timeout: int = Field(default=30, ge=1, le=300, description="Seconds to wait for a reply.")
     headless: bool = Field(default=True, description="Run the browser without a visible window.")
+    completion_selector: str | None = Field(
+        default=None, description="CSS selector on/inside the newest reply indicating completion."
+    )
+    allow_unverified_completion: bool = Field(
+        default=False,
+        description="Explicitly accept text-stability heuristic without a completion marker.",
+    )
 
 
 # ── Target ────────────────────────────────────────────────────────────────────
@@ -250,11 +257,54 @@ class Target(BaseModel):
     This is the input to every attack module.
     """
 
+    allowed_hosts: list[str] | None = Field(
+        default=None,
+        description="Deployment-owned exact host enrollment; None for trusted local CLI use.",
+    )
+    allowed_origins: list[str] | None = None
+    allowed_networks: list[str] | None = Field(
+        default=None,
+        description="None for local CLI; service connections require public IPs or these explicit CIDRs.",
+    )
+    max_response_bytes: int = Field(default=4 * 1024 * 1024, ge=1024, le=16 * 1024 * 1024)
+    request_budget: int | None = Field(default=None, ge=1, le=10000)
+    analysis_mode: str = Field(default="deterministic", pattern="^(deterministic|local|external)$")
+    local_model: str = Field(default="ollama/llama3.2", max_length=136)
+    external_model: str = Field(default="", max_length=140)
+    external_keys_from_dotenv: bool = True
+    data_classification: str = Field(default="sensitive", pattern="^(sensitive|non_sensitive)$")
+
+    @model_validator(mode="after")
+    def sensitive_analysis_policy(self):
+        if self.analysis_mode == "external":
+            if self.data_classification != "non_sensitive":
+                raise ValueError("External analysis is blocked for sensitive scans.")
+            from agentscan.core.external_analysis import external_model_name
+
+            try:
+                external_model_name(self.external_model)
+            except RuntimeError as exc:
+                raise ValueError(str(exc)) from None
+        return self
+
+    retry_state_changing_requests: bool = False
+    indirect_adapter: Literal["document_v1"] | None = Field(
+        default=None,
+        description="Opt in only if the target implements the document.v1 ingestion/receipt contract.",
+    )
+    canary_token: str | None = Field(
+        default=None,
+        min_length=16,
+        max_length=128,
+        pattern=r"^[A-Za-z0-9_-]+$",
+        description="Confidential synthetic canary already provisioned in target instructions out of band.",
+    )
+
     url: str = Field(
         ...,
         description=(
             "Target endpoint. HTTP(S) for JSON APIs, ws(s):// for WebSocket, "
-            "mcp://stdio for MCP stdio JSON-RPC, mcp+sse:// for MCP SSE."
+            "mcp://stdio for MCP stdio JSON-RPC, mcp+sse:// (HTTP) or mcp+sses:// (HTTPS) for MCP."
         ),
         examples=[
             "http://localhost:8000/chat",
@@ -262,6 +312,7 @@ class Target(BaseModel):
             "ws://localhost:8765/chat",
             "mcp://stdio?command=python",
             "mcp+sse://localhost:8080/sse",
+            "mcp+sses://myagent.example.com/mcp",
         ],
     )
 
@@ -336,13 +387,13 @@ class Target(BaseModel):
 
     attacker_model: str | None = Field(
         default=None,
-        description="LLM (litellm id, e.g. 'gpt-4o-mini' / 'ollama/llama3') for the AI "
+        description="Offline local model (e.g. 'ollama/llama3.2') for the AI "
         "iterative attacker + judge. When unset, the AI attacker module is skipped.",
     )
 
     judge_model: str | None = Field(
         default=None,
-        description="LLM (litellm id, e.g. 'gpt-4o-mini' / 'ollama/llama3') for LLM-as-a-Judge "
+        description="Offline local model (e.g. 'ollama/llama3.2') for LLM-as-a-Judge "
         "evaluation of scan responses. When unset, defaults to attacker_model if set.",
     )
 
@@ -361,7 +412,7 @@ class Target(BaseModel):
 
     escalation_model: str | None = Field(
         default=None,
-        description="Frontier LLM (litellm id, e.g. 'gpt-4o' or 'claude-3-5-sonnet') to escalate to "
+        description="Offline local model to escalate to "
         "if the primary attacker_model fails to achieve the objective.",
     )
 
@@ -380,12 +431,21 @@ class Target(BaseModel):
     @field_validator("url")
     @classmethod
     def url_must_be_supported_scheme(cls, v: str) -> str:
-        allowed = ("http://", "https://", "ws://", "wss://", "mcp://", "mcp+sse://", "mcp+stdio://")
+        allowed = (
+            "http://",
+            "https://",
+            "ws://",
+            "wss://",
+            "mcp://",
+            "mcp+sse://",
+            "mcp+sses://",
+            "mcp+stdio://",
+        )
         lower = v.lower()
         if not lower.startswith(allowed):
             raise ValueError(
                 "URL must start with http://, https://, ws://, wss://, mcp://, "
-                f"mcp+sse://, or mcp+stdio://. Got: {v!r}"
+                f"mcp+sse://, mcp+sses://, or mcp+stdio://. Got: {v!r}"
             )
         return v.rstrip("/")  # normalise — remove trailing slash
 
@@ -425,7 +485,7 @@ class Finding(BaseModel):
     owasp_id: str = Field(
         ...,
         description="OWASP LLM Top 10 ID. e.g. 'LLM01'",
-        pattern=r"^LLM\d{2}$",
+        pattern=r"^(LLM\d{2}|UNMAPPED)$",
     )
 
     atlas_id: str | None = Field(
@@ -590,6 +650,12 @@ class ScanReport(BaseModel):
         description="Set when the scan finishes.",
     )
 
+    status: str = Field(default="RUNNING", pattern="^(RUNNING|COMPLETE|INCONCLUSIVE|ERROR)$")
+    tests_selected: int = Field(default=0, ge=0)
+    module_outcomes: list[dict[str, Any]] = Field(default_factory=list)
+    reference_observations: list[Finding] = Field(default_factory=list)
+    assessment_scope: str = Field(default="target")
+
     findings: list[Finding] = Field(
         default_factory=list,
         description="All findings from this scan.",
@@ -685,10 +751,15 @@ class ScanReport(BaseModel):
         """Add a finding to this report."""
         self.findings.append(finding)
 
-    def complete(self, score: int, tests_run: int | None = None) -> None:
+    def complete(
+        self, score: int | None, tests_run: int | None = None, *, status: str = "COMPLETE"
+    ) -> None:
         """Mark this scan as complete with a final score."""
         self.completed_at = datetime.now(UTC)
         self.score = score
+        if status not in {"COMPLETE", "INCONCLUSIVE", "ERROR"}:
+            raise ValueError("Invalid terminal scan status")
+        self.status = status
         if tests_run is not None:
             self.tests_run = tests_run
 

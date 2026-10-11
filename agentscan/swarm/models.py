@@ -58,7 +58,7 @@ class SwarmTeamConfig(BaseModel):
 
     name: str
     strategy: SwarmStrategy = SwarmStrategy.PIPELINE
-    default_model: str = "gpt-4o-mini"
+    default_model: str = "ollama/llama3.2"
     max_rounds: int = 2
     agents: list[SwarmAgentConfig]
 
@@ -89,4 +89,5 @@ class SwarmReport(BaseModel):
     intel_discovered: dict[str, Any] = Field(default_factory=dict)
     turns: list[SwarmTurnRecord] = Field(default_factory=list)
     findings: list[Finding] = Field(default_factory=list)
-    score: int = 100
+    score: int | None = None
+    budget_summary: dict[str, Any] = Field(default_factory=dict)

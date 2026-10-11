@@ -1,20 +1,13 @@
-# agentscan/core/runner.py
-#
-# The scan orchestrator. Given a Target, it:
-# 1. Discovers applicable attack modules via the registry
-# 2. Runs them all concurrently (asyncio.gather)
-# 3. Scores the aggregated findings
-# 4. Returns a completed ScanReport
-#
-# Resilience: a module that raises an exception is logged and excluded
-# from both findings and total_tests_run — it doesn't crash the scan.
+"""Execute isolated scans and retain coverage, skips, and operational failures."""
 
 from __future__ import annotations
 
 import asyncio
+from typing import Any
 
 from loguru import logger
 
+from agentscan.attacks.base import AttackModule
 from agentscan.attacks.registry import registry
 from agentscan.core.client import set_global_concurrency_limit
 from agentscan.core.connectors import (
@@ -22,11 +15,19 @@ from agentscan.core.connectors import (
     close_browser_session,
     open_browser_session,
 )
+from agentscan.core.context import active_context, begin_scan_context, target_redaction_secrets
 from agentscan.core.models import Finding, ScanMode, ScanReport, Target
+from agentscan.core.outcomes import (
+    AssessmentInconclusiveError,
+    ExecutionLedger,
+    ModuleUnavailableError,
+    execution_ledger,
+)
 from agentscan.core.scorer import calculate_score
 from agentscan.core.ssp_mapper import classify_ssp
 from agentscan.core.trace import recorder
 from agentscan.core.trajectory import trajectory_recorder
+from agentscan.telemetry.otel import observe_scan
 
 
 def _attach_trajectory(report: ScanReport) -> None:
@@ -34,161 +35,251 @@ def _attach_trajectory(report: ScanReport) -> None:
     report.ssp_class = classify_ssp(report.trajectory)
 
 
+def _finish(report: ScanReport) -> ScanReport:
+    incomplete = any(o["status"] != "COMPLETE" for o in report.module_outcomes)
+    status = "INCONCLUSIVE" if incomplete or report.tests_run == 0 else "COMPLETE"
+    if report.tests_run == 0 and any(o["status"] == "ERROR" for o in report.module_outcomes):
+        status = "ERROR"
+    target_tests = sum(
+        int(o.get("executed_tests", 0))
+        for o in report.module_outcomes
+        if o.get("assessment_scope") != "local_reference_model"
+    )
+    local = any(
+        o.get("assessment_scope") == "local_reference_model" for o in report.module_outcomes
+    )
+    report.assessment_scope = (
+        ("mixed" if target_tests else "local_reference_model") if local else "target"
+    )
+    report.complete(
+        None if incomplete else calculate_score(report.findings, target_tests), status=status
+    )
+    _attach_trajectory(report)
+    return report
+
+
+@observe_scan
 async def run_scan(target: Target, *, reset_trajectory: bool = True) -> ScanReport:
-    """
-    Run a full security scan against the target.
-
-    Discovers all applicable attack modules, runs them concurrently,
-    scores findings, and returns a completed ScanReport.
-    """
+    """Run applicable attacks. A clean finding list does not imply full coverage."""
     if reset_trajectory:
-        trajectory_recorder.reset()
-
-    # 1. Load all attack modules (idempotent — safe to call every time)
-    registry.load_all()
-
-    # 2. Get modules applicable to this target
-    modules = registry.get_for_target(target)
-    logger.info(f"Running {len(modules)} attack modules against {target.url}")
-
-    if not modules:
-        logger.warning("No applicable attack modules found for this target.")
-        report = ScanReport(
-            target_url=target.url,
-            scan_mode=target.mode,
-            framework=target.framework,
-            findings=[],
+        begin_scan_context()
+    context = active_context.get()
+    if context is not None:
+        context.request_budget = target.request_budget
+        context.analysis_mode = target.analysis_mode
+        context.local_model = target.local_model
+        context.external_model = target.external_model
+        context.data_classification = target.data_classification
+        context.external_keys_from_dotenv = target.external_keys_from_dotenv
+        context.redaction_secrets = target_redaction_secrets(target)
+    if target.analysis_mode in {"local", "external"}:
+        model = target.local_model if target.analysis_mode == "local" else target.external_model
+        target = target.model_copy(
+            update={
+                "attacker_model": target.attacker_model or model,
+                "judge_model": target.judge_model or model,
+            }
         )
-        score = calculate_score([], 0)
-        report.complete(score, tests_run=0)
-        _attach_trajectory(report)
-        return report
-
-    # 3. Run the modules.
-    # Sequential when: traffic recording is on (correct attribution / no interleaving),
-    # OR browser mode (a single shared page can't be typed into concurrently).
-    # Otherwise run concurrently for speed.
-    # Browser mode also opens ONE shared browser for the whole scan (reused by every
-    # module) instead of launching Chromium per module.
-    own_session = False
-    if target.browser is not None and not browser_session_active():
-        await open_browser_session(target.browser)
-        own_session = True
-
-    sequential = recorder.enabled or target.browser is not None
-    if not sequential and getattr(target, "concurrency", None):
-        set_global_concurrency_limit(target.concurrency * 2)
-
+    report = ScanReport(target_url=target.url, scan_mode=target.mode, framework=target.framework)
     try:
-        results: list[list[Finding] | BaseException]
-        if sequential:
-            results = []
-            for m in modules:
-                recorder.set_module(m.attack_id, m.attack_name)
-                try:
-                    res: list[Finding] = await m.run(target)
-                except Exception as e:  # noqa: BLE001 - mirror gather(return_exceptions=True)
-                    results.append(e)
-                else:
-                    for f in res:
-                        recorder.record_finding(f.attack_id, f.severity.value, f.description)
-                    results.append(res)
-        else:
-            # return_exceptions=True so one broken module doesn't kill the scan
-            results = await asyncio.gather(
-                *[m.run(target) for m in modules],
-                return_exceptions=True,
+        registry.load_all()
+        modules, selection_errors = registry.select_for_target(target)
+    except Exception as exc:
+        report.module_errors.append(
+            {"module_id": "registry", "module_name": "Discovery", "error": str(exc)}
+        )
+        report.module_outcomes.append(
+            {"module_id": "registry", "status": "ERROR", "selected_tests": 0, "executed_tests": 0}
+        )
+        return _finish(report)
+    for error in selection_errors:
+        report.module_errors.append(error)
+        report.module_outcomes.append(
+            {**error, "status": "ERROR", "selected_tests": 0, "executed_tests": 0}
+        )
+    for error in registry.load_errors:
+        if error.get("mode") != target.mode.value.lower():
+            continue
+        report.module_errors.append({k: v for k, v in error.items() if k != "mode"})
+        report.module_outcomes.append(
+            {**error, "status": "SKIPPED", "selected_tests": 0, "executed_tests": 0}
+        )
+    if not modules:
+        return _finish(report)
+
+    async def execute(module: AttackModule) -> tuple[list[Finding], dict[str, Any], list[str]]:
+        selected = 0
+        ledger = ExecutionLedger()
+        token = execution_ledger.set(ledger)
+        outcome = {
+            "module_id": module.attack_id,
+            "module_name": module.attack_name,
+            "status": "COMPLETE",
+            "selected_tests": selected,
+            "executed_tests": 0,
+        }
+        outcome["assessment_scope"] = getattr(module, "assessment_scope", "target")
+        findings: list[Finding] = []
+        recorder.set_module(module.attack_id, module.attack_name)
+        try:
+            selected = module.variant_count()
+            outcome["selected_tests"] = selected
+            findings = await module.run(target)
+            outcome["selected_tests"] = ledger.selected if ledger.selected is not None else selected
+            outcome["executed_tests"] = (
+                ledger.evaluated
+                if ledger.evaluated is not None
+                else (0 if ledger.errors or ledger.inconclusive_reasons else selected)
             )
+            if ledger.errors:
+                outcome["status"] = "ERROR"
+            elif ledger.inconclusive_reasons:
+                outcome["status"] = "INCONCLUSIVE"
+        except AssessmentInconclusiveError as exc:
+            outcome["status"] = "INCONCLUSIVE"
+            ledger.inconclusive_reasons.append(str(exc))
+            outcome["executed_tests"] = ledger.evaluated or 0
+        except ModuleUnavailableError as exc:
+            outcome["status"] = "SKIPPED"
+            ledger.errors.append(str(exc))
+        except Exception as exc:
+            outcome["status"] = "ERROR"
+            ledger.errors.append(str(exc) or type(exc).__name__)
+            outcome["executed_tests"] = ledger.evaluated or 0
+        finally:
+            execution_ledger.reset(token)
+        for finding in findings:
+            recorder.record_finding(finding.attack_id, finding.severity.value, finding.description)
+        reasons = ledger.errors + ledger.inconclusive_reasons
+        outcome["reason"] = "; ".join(reasons)
+        return findings, outcome, reasons
+
+    own_session = False
+    try:
+        if target.browser is not None and not browser_session_active():
+            await open_browser_session(target.browser)
+            own_session = True
+        sequential = recorder.enabled or target.browser is not None
+        set_global_concurrency_limit(target.concurrency * 2 if not sequential else None)
+        if sequential:
+            results = [await execute(module) for module in modules]
+        else:
+            tasks = [asyncio.create_task(execute(module)) for module in modules]
+            try:
+                results = await asyncio.gather(*tasks)
+            except BaseException:
+                for task in tasks:
+                    if not task.done():
+                        task.cancel()
+                await asyncio.gather(*tasks, return_exceptions=True)
+                raise
+        for findings, outcome, errors in results:
+            if outcome.get("assessment_scope") == "local_reference_model":
+                report.reference_observations.extend(findings)
+            else:
+                report.findings.extend(findings)
+            report.module_outcomes.append(outcome)
+            report.tests_selected += int(outcome["selected_tests"])
+            report.tests_run += int(outcome["executed_tests"])
+            if errors:
+                report.module_errors.append(
+                    {
+                        "module_id": str(outcome["module_id"]),
+                        "module_name": str(outcome["module_name"]),
+                        "error": "; ".join(errors),
+                    }
+                )
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        report.module_errors.append(
+            {"module_id": "runner", "module_name": "Scan setup", "error": str(exc)}
+        )
+        report.module_outcomes.append(
+            {
+                "module_id": "runner",
+                "status": "ERROR",
+                "reason": str(exc),
+                "selected_tests": 0,
+                "executed_tests": 0,
+            }
+        )
     finally:
         set_global_concurrency_limit(None)
         if own_session:
-            await close_browser_session()
-
-    # 4. Collect findings and compute total_tests_run
-    all_findings: list[Finding] = []
-    total_tests_run = 0
-    module_errors: list[dict[str, str]] = []
-
-    for module, result in zip(modules, results, strict=True):
-        if isinstance(result, BaseException):
-            # Module raised — log and track error
-            err_msg = str(result) or type(result).__name__
-            logger.error(f"Module {module.attack_id} ({module.attack_name}) failed: {err_msg}")
-            module_errors.append(
-                {
-                    "module_id": module.attack_id,
-                    "module_name": module.attack_name,
-                    "error": err_msg,
-                }
-            )
-            continue
-
-        # result is list[Finding]
-        all_findings.extend(result)
-        total_tests_run += module.variant_count()
-
-    # 5. Build report
-    report = ScanReport(
-        target_url=target.url,
-        scan_mode=target.mode,
-        framework=target.framework,
-        findings=all_findings,
-        module_errors=module_errors,
-    )
-
-    # 6. Score and complete
-    score = calculate_score(all_findings, total_tests_run)
-    report.complete(score, tests_run=total_tests_run)
-
-    _attach_trajectory(report)
-
+            try:
+                await close_browser_session()
+            except Exception as exc:
+                report.module_errors.append(
+                    {"module_id": "cleanup", "module_name": "Browser cleanup", "error": str(exc)}
+                )
+                report.module_outcomes.append(
+                    {
+                        "module_id": "cleanup",
+                        "status": "ERROR",
+                        "selected_tests": 0,
+                        "executed_tests": 0,
+                    }
+                )
+    _finish(report)
     logger.info(
-        f"Scan complete: {len(all_findings)} findings, "
-        f"score {score}/100, {total_tests_run} tests run, "
-        f"{len(module_errors)} module errors"
+        f"Scan {report.status}: {report.tests_run}/{report.tests_selected} evaluated tests, score={report.score}"
     )
-
     return report
 
 
 async def run_scan_multi(target: Target, modes: list[ScanMode]) -> ScanReport:
-    """
-    Run scans across multiple modes sequentially and merge the results.
-    """
-    trajectory_recorder.reset()
-
-    all_findings = []
-    total_tests_run = 0
-    all_errors: list[dict[str, str]] = []
-
-    # Open ONE shared browser for the entire multi-mode scan (SCAN + EXPLOIT + …),
-    # so the whole run uses a single Chromium instead of one per mode. run_scan()
-    # sees the active session and reuses it rather than opening its own.
-    own_session = False
-    if target.browser is not None and not browser_session_active():
-        await open_browser_session(target.browser)
-        own_session = True
-
-    try:
-        for m in modes:
-            mode_target = target.model_copy(update={"mode": m})
-            report = await run_scan(mode_target, reset_trajectory=False)
-            all_findings.extend(report.findings)
-            total_tests_run += report.tests_run
-            all_errors.extend(report.module_errors)
-    finally:
-        if own_session:
-            await close_browser_session()
-
-    # Create merged report. Use the first mode as the primary scan_mode for the report.
-    merged_report = ScanReport(
+    """Run several modes in one isolated context and retain all coverage records."""
+    begin_scan_context()
+    merged = ScanReport(
         target_url=target.url,
         scan_mode=modes[0] if modes else target.mode,
         framework=target.framework,
-        findings=all_findings,
-        module_errors=all_errors,
     )
-    score = calculate_score(all_findings, total_tests_run)
-    merged_report.complete(score, tests_run=total_tests_run)
-    _attach_trajectory(merged_report)
-    return merged_report
+    own_session = False
+    try:
+        if modes and target.browser is not None and not browser_session_active():
+            await open_browser_session(target.browser)
+            own_session = True
+        for mode in modes:
+            report = await run_scan(
+                target.model_copy(update={"mode": mode}), reset_trajectory=False
+            )
+            merged.findings.extend(report.findings)
+            merged.reference_observations.extend(report.reference_observations)
+            merged.module_errors.extend(report.module_errors)
+            merged.module_outcomes.extend(report.module_outcomes)
+            merged.tests_selected += report.tests_selected
+            merged.tests_run += report.tests_run
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        merged.module_errors.append(
+            {"module_id": "runner", "module_name": "Scan setup", "error": str(exc)}
+        )
+        merged.module_outcomes.append(
+            {
+                "module_id": "runner",
+                "status": "ERROR",
+                "reason": str(exc),
+                "selected_tests": 0,
+                "executed_tests": 0,
+            }
+        )
+    finally:
+        if own_session:
+            try:
+                await close_browser_session()
+            except Exception as exc:
+                merged.module_errors.append(
+                    {"module_id": "cleanup", "module_name": "Browser cleanup", "error": str(exc)}
+                )
+                merged.module_outcomes.append(
+                    {
+                        "module_id": "cleanup",
+                        "status": "ERROR",
+                        "selected_tests": 0,
+                        "executed_tests": 0,
+                    }
+                )
+    return _finish(merged)

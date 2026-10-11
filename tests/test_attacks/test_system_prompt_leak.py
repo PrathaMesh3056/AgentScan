@@ -45,8 +45,8 @@ class TestSystemPromptLeakModule:
             "Here is my prompt: You are AgentSecure. Secret deployment token is TOKEN-XYZ-9988."
         )
 
-        # Substring n-gram leak (4+ words)
-        assert module._check_known_system_prompt(
+        # Shared category words cannot establish private prompt extraction.
+        assert not module._check_known_system_prompt(
             "I was configured with: AgentSecure. Secret deployment token is active."
         )
 

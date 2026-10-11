@@ -1,6 +1,6 @@
 # agentscan/attacks/scan/output_handling.py
 #
-# ATK-007: Insecure Output Handling — OWASP LLM02
+# ATK-007: Insecure Output Handling — OWASP LLM05
 #
 # Asks the agent to echo attacker syntax (XSS, SQLi, markdown, ANSI, shell).
 # Success = unsanitized reflection in the response.
@@ -27,7 +27,7 @@ class OutputHandlingModule(YamlScanRunner):
     is_abstract = False
     attack_id = "ATK-007"
     attack_name = "Insecure Output Handling"
-    owasp_id = "LLM02"
+    owasp_id = "LLM05"
     payload_file = PAYLOAD_FILE
 
     default_remediation = (

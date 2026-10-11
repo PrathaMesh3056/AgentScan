@@ -11,90 +11,226 @@
 
 from __future__ import annotations
 
-import re
+import ast
+import json
 from pathlib import Path
 
 from agentscan.core.models import Finding
 from agentscan.remediation.models import FixAction
+from agentscan.remediation.paths import contained_path
 
 
 def _patch_torch_load(content: str) -> str:
-    """Add weights_only=True to torch.load() calls that lack it."""
+    """Patch the actual torch.load call, preserving surrounding source and nested args.
 
-    # Matches torch.load(args) where weights_only is not in args
-    def _repl(match: re.Match[str]) -> str:
-        call = match.group(0)
-        inner = match.group(1).strip()
-        if "weights_only" in inner:
-            return call
-        if inner:
-            return f"torch.load({inner}, weights_only=True)"
-        return "torch.load(weights_only=True)"
+    Dynamic **kwargs may supply weights_only themselves, so leave those calls for
+    manual review rather than introducing a duplicate-keyword runtime error.
+    """
+    try:
+        tree = ast.parse(content)
+    except SyntaxError:
+        return content
+    lines = content.splitlines(keepends=True)
 
-    return re.sub(r"torch\.load\(([^)]*)\)", _repl, content)
+    def offset(line: int | None, column: int | None) -> int:
+        # AST columns count UTF-8 bytes, including when the original text is Unicode.
+        if line is None or column is None:
+            raise ValueError("Parsed source node is missing its location")
+        prefix = lines[line - 1].encode("utf-8")[:column].decode("utf-8")
+        return sum(len(part) for part in lines[: line - 1]) + len(prefix)
+
+    edits: list[tuple[int, int, str]] = []
+    for node in ast.walk(tree):
+        if not (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id == "torch"
+            and node.func.attr == "load"
+        ):
+            continue
+        if any(keyword.arg is None for keyword in node.keywords):
+            continue
+        explicit = next((kw for kw in node.keywords if kw.arg == "weights_only"), None)
+        if explicit is not None:
+            if isinstance(explicit.value, ast.Constant) and explicit.value.value is False:
+                value = explicit.value
+                edits.append(
+                    (
+                        offset(value.lineno, value.col_offset),
+                        offset(value.end_lineno, value.end_col_offset),
+                        "True",
+                    )
+                )
+            continue
+        closing = offset(node.end_lineno, node.end_col_offset) - 1
+        if not node.args and not node.keywords:
+            insertion = "weights_only=True"
+        else:
+            arguments: list[ast.expr | ast.keyword] = [*node.args, *node.keywords]
+            last = max(arguments, key=lambda item: (item.end_lineno or 0, item.end_col_offset or 0))
+            tail = content[offset(last.end_lineno, last.end_col_offset) : closing]
+            # The last argument may already have a trailing comma before a comment.
+            trailing_comma = tail.lstrip().startswith(",")
+            insertion = "weights_only=True" if trailing_comma else ", weights_only=True"
+        edits.append((closing, closing, insertion))
+    for start, end, replacement in sorted(edits, reverse=True):
+        content = content[:start] + replacement + content[end:]
+    return content
+
+
+def _ast_edits(content: str, select) -> str:
+    """Replace selected syntax nodes, leaving strings and comments intact."""
+    try:
+        tree = ast.parse(content)
+    except SyntaxError:
+        return content
+    lines = content.splitlines(keepends=True)
+
+    def offset(line, column):
+        return sum(len(part) for part in lines[: line - 1]) + len(
+            lines[line - 1].encode("utf-8")[:column].decode("utf-8")
+        )
+
+    edits = []
+    for node, replacement in select(tree):
+        edits.append(
+            (
+                offset(node.lineno, node.col_offset),
+                offset(node.end_lineno, node.end_col_offset),
+                replacement,
+            )
+        )
+    for start, end, value in sorted(edits, reverse=True):
+        content = content[:start] + value + content[end:]
+    return content
+
+
+def _call_name(node):
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        return _call_name(node.value) + "." + node.attr
+    return ""
+
+
+def _keyword_patch(content, keyword, before, after, call_names, predicate=lambda call: True):
+    def select(tree):
+        for call in ast.walk(tree):
+            if not isinstance(call, ast.Call) or _call_name(call.func) not in call_names:
+                continue
+            if any(kw.arg is None for kw in call.keywords) or not predicate(call):
+                continue
+            for kw in call.keywords:
+                if (
+                    kw.arg == keyword
+                    and isinstance(kw.value, ast.Constant)
+                    and type(kw.value.value) is type(before)
+                    and kw.value.value == before
+                ):
+                    yield kw.value, json.dumps(after) if isinstance(after, str) else repr(after)
+
+    return _ast_edits(content, select)
 
 
 def _patch_allow_dangerous_deserialization(content: str) -> str:
-    """Flip allow_dangerous_deserialization=True to False."""
-    return re.sub(
-        r"allow_dangerous_deserialization\s*=\s*True",
-        "allow_dangerous_deserialization=False",
+    return _keyword_patch(
         content,
+        "allow_dangerous_deserialization",
+        True,
+        False,
+        {"FAISS.load_local", "load_local", "create_pandas_dataframe_agent"},
     )
 
 
 def _patch_numpy_allow_pickle(content: str) -> str:
-    """Flip allow_pickle=True to allow_pickle=False in numpy.load."""
-    return re.sub(
-        r"\ballow_pickle\s*=\s*True\b",
-        "allow_pickle=False",
-        content,
-    )
+    return _keyword_patch(content, "allow_pickle", True, False, {"np.load", "numpy.load"})
 
 
 def _patch_shell_true(content: str) -> str:
-    """Flip shell=True to shell=False in subprocess invocations."""
-    return re.sub(
-        r"\bshell\s*=\s*True\b",
-        "shell=False",
+    def safe_argv(call):
+        command = (
+            call.args[0]
+            if call.args
+            else next((kw.value for kw in call.keywords if kw.arg == "args"), None)
+        )
+        return (
+            isinstance(command, (ast.List, ast.Tuple))
+            and bool(command.elts)
+            and all(
+                isinstance(arg, ast.Constant) and isinstance(arg.value, str) for arg in command.elts
+            )
+        )
+
+    # A shell command string cannot simply become argv: leave it for review.
+    return _keyword_patch(
         content,
+        "shell",
+        True,
+        False,
+        {"subprocess." + name for name in ("run", "Popen", "call", "check_call", "check_output")},
+        safe_argv,
     )
 
 
 def _patch_debug_true(content: str) -> str:
-    """Flip module-level DEBUG = True to DEBUG = False."""
-    return re.sub(
-        r"^(\s*DEBUG\s*=\s*)True(\s*(?:#.*)?)$",
-        r"\g<1>False\g<2>",
-        content,
-        flags=re.MULTILINE,
-    )
+    def select(tree):
+        for node in tree.body:
+            if (
+                isinstance(node, ast.Assign)
+                and isinstance(node.value, ast.Constant)
+                and node.value.value is True
+                and all(
+                    isinstance(target, ast.Name) and target.id == "DEBUG" for target in node.targets
+                )
+            ):
+                yield node.value, "False"
+
+    return _ast_edits(content, select)
 
 
 def _patch_crew_code_execution(content: str) -> str:
-    """Flip allow_code_execution=True to allow_code_execution=False."""
-    return re.sub(
-        r"\ballow_code_execution\s*=\s*True\b",
-        "allow_code_execution=False",
-        content,
-    )
+    return _keyword_patch(content, "allow_code_execution", True, False, {"Agent", "crewai.Agent"})
 
 
 def _patch_autogen_use_docker(content: str) -> str:
-    """Flip 'use_docker': False to 'use_docker': True."""
-    return re.sub(
-        r"(['\"]use_docker['\"]\s*:\s*)False",
-        r"\g<1>True",
-        content,
-    )
+    def select(tree):
+        for call in ast.walk(tree):
+            if not isinstance(call, ast.Call) or _call_name(call.func).split(".")[-1] not in {
+                "UserProxyAgent",
+                "ConversableAgent",
+                "AssistantAgent",
+            }:
+                continue
+            if any(kw.arg is None for kw in call.keywords):
+                continue
+            config = next(
+                (kw.value for kw in call.keywords if kw.arg == "code_execution_config"), None
+            )
+            if isinstance(config, ast.Dict) and all(key is not None for key in config.keys):
+                for key, value in zip(config.keys, config.values, strict=True):
+                    if (
+                        isinstance(key, ast.Constant)
+                        and key.value == "use_docker"
+                        and isinstance(value, ast.Constant)
+                        and value.value is False
+                    ):
+                        yield value, "True"
+
+    return _ast_edits(content, select)
 
 
 def _patch_autogen_human_input_mode(content: str) -> str:
-    """Flip human_input_mode='NEVER' to 'ALWAYS'."""
-    return re.sub(
-        r"\bhuman_input_mode\s*=\s*['\"]NEVER['\"]",
-        'human_input_mode="ALWAYS"',
+    return _keyword_patch(
         content,
+        "human_input_mode",
+        "NEVER",
+        "ALWAYS",
+        {
+            prefix + name
+            for prefix in ("", "autogen.", "ag2.")
+            for name in ("UserProxyAgent", "AssistantAgent", "ConversableAgent")
+        },
     )
 
 
@@ -117,15 +253,15 @@ def plan_ast_patches(findings: list[Finding], root_path: Path) -> list[FixAction
     target_files: set[Path] = set()
     for f in ast_findings:
         if "file" in f.metadata:
-            p = Path(f.metadata["file"])
+            p = contained_path(root_path, str(f.metadata["file"]))
             if p.exists() and p.is_file():
-                target_files.add(p.resolve())
+                target_files.add(p)
 
     if not target_files:
         if root_path.is_file() and root_path.suffix == ".py":
             target_files.add(root_path.resolve())
         elif root_path.is_dir():
-            target_files.update(p.resolve() for p in root_path.glob("**/*.py"))
+            target_files.update(contained_path(root_path, p) for p in root_path.glob("**/*.py"))
 
     actions: list[FixAction] = []
 
@@ -137,6 +273,11 @@ def plan_ast_patches(findings: list[Finding], root_path: Path) -> list[FixAction
 
         updated = content
         for f in ast_findings:
+            if (
+                f.metadata.get("file")
+                and contained_path(root_path, str(f.metadata["file"])) != file_path
+            ):
+                continue
             attack_id = f.attack_id
             if attack_id == "SC-011":
                 updated = _patch_torch_load(updated)

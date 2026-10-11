@@ -24,9 +24,9 @@ class TestCalculateScore:
         """No findings at all → perfect score."""
         assert calculate_score([], 10) == 100
 
-    def test_total_tests_zero_returns_100(self) -> None:
-        """Edge case: total_tests_run=0 → 100 (nothing tested)."""
-        assert calculate_score([], 0) == 100
+    def test_total_tests_zero_has_no_score(self) -> None:
+        """An untested target has no security score."""
+        assert calculate_score([], 0) is None
 
     def test_clamp_at_zero(self) -> None:
         """Extreme weighted sum should not produce negative score."""

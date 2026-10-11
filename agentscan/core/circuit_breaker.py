@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import time
 from collections.abc import Callable
 from enum import StrEnum
@@ -69,6 +70,7 @@ class AsyncCircuitBreaker:
 
     async def call(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
         """Execute async function guarded by this circuit breaker."""
+        trial = False
         async with self._lock:
             now = time.monotonic()
 
@@ -90,15 +92,25 @@ class AsyncCircuitBreaker:
                 if self._trial_count >= self.half_open_max_trials:
                     raise CircuitBreakerOpenError(self.name, self.recovery_timeout)
                 self._trial_count += 1
+                trial = True
 
         # Execute operation outside the lock so other requests aren't held
         try:
-            if asyncio.iscoroutinefunction(func):
-                result = await func(*args, **kwargs)
-            else:
-                result = func(*args, **kwargs)
+            result = func(*args, **kwargs)
+            if inspect.isawaitable(result):
+                result = await result
+        except asyncio.CancelledError:
+            async with self._lock:
+                if trial and self._state == CircuitState.HALF_OPEN:
+                    self._trial_count = max(0, self._trial_count - 1)
+            raise
         except self.monitored_exceptions as exc:
             await self._on_failure(exc)
+            raise
+        except BaseException:
+            async with self._lock:
+                if trial and self._state == CircuitState.HALF_OPEN:
+                    self._trial_count = max(0, self._trial_count - 1)
             raise
         else:
             await self._on_success()

@@ -22,7 +22,8 @@ def test_graph_to_view_has_nodes_and_edges() -> None:
 
 
 @pytest.fixture
-def sample_report(tmp_path: Path) -> Path:
+def sample_report(tmp_path: Path, monkeypatch) -> Path:
+    monkeypatch.setenv("AGENTSCAN_HMAC_KEY", "ui-tests-independent-signing-key-32-bytes")
     report = ScanReport(
         target_url="http://agent.example/chat",
         scan_mode=ScanMode.SCAN,
@@ -51,6 +52,7 @@ def test_ui_api_serves_report_and_rbac(sample_report: Path) -> None:
 
     app = create_app(sample_report, Path("tests/fixtures/demo-agents"))
     client = TestClient(app)
+    client.get("/")
     home = client.get("/")
     assert home.status_code == 200
     assert b"AgentScan" in home.content
@@ -124,28 +126,19 @@ def test_ui_uvicorn_config_is_local_single_worker() -> None:
     assert server.config is config
 
 
-def test_ui_vault_zip_download(sample_report: Path) -> None:
-    import io
-    import zipfile
-
+def test_ui_report_available_after_vault_removal(sample_report: Path) -> None:
     from fastapi.testclient import TestClient
 
     from agentscan.ui.app import create_app
 
     app = create_app(sample_report, Path("tests/fixtures/demo-agents"))
     client = TestClient(app)
+    client.get("/")
 
-    resp = client.get("/api/vault/zip")
-    assert resp.status_code == 200
-    assert "zip" in resp.headers.get("content-type", "")
-
-    zf = zipfile.ZipFile(io.BytesIO(resp.content))
-    names = zf.namelist()
-    assert "report.json" in names
-    assert "summary.md" in names
-    assert any("findings/" in n for n in names)
-    assert "remediation.patch" in names
-    assert "guardrails/litellm.yaml" in names
+    assert client.get("/api/vault/zip").status_code == 404
+    report = client.get("/api/report")
+    assert report.status_code == 200
+    assert report.json()["findings"]
 
 
 def test_ui_custom_secret_key_certificate(sample_report: Path) -> None:
@@ -155,8 +148,9 @@ def test_ui_custom_secret_key_certificate(sample_report: Path) -> None:
 
     app = create_app(sample_report, Path("tests/fixtures/demo-agents"))
     client = TestClient(app)
+    client.get("/")
 
-    custom_key = "test_custom_secret_key_98765"
+    custom_key = "test_custom_secret_key_98765_at_least_32_bytes"
     cert_resp = client.get(f"/api/certificate?secret_key={custom_key}")
     assert cert_resp.status_code == 200
     cert = cert_resp.json()
@@ -171,7 +165,7 @@ def test_ui_custom_secret_key_certificate(sample_report: Path) -> None:
     # Test with mismatched secret key
     mismatched_resp = client.post(
         "/api/verify-certificate",
-        json={"certificate": cert, "secret_key": "wrong_key_123"},
+        json={"certificate": cert, "secret_key": "wrong_key_123_at_least_32_bytes_for_testing"},
     )
     assert mismatched_resp.status_code == 200
     assert mismatched_resp.json()["valid"] is False
@@ -184,6 +178,7 @@ def test_ui_live_scan_controller_and_discovery(sample_report: Path, tmp_path: Pa
 
     app = create_app(sample_report, Path("tests/fixtures/demo-agents"))
     client = TestClient(app)
+    client.get("/")
 
     # Test Scan Trigger
     scan_resp = client.post(
@@ -212,7 +207,7 @@ def test_ui_live_scan_controller_and_discovery(sample_report: Path, tmp_path: Pa
 
     save_resp = client.post(
         "/api/discovery/save",
-        json={"manifest": disc_data, "output_path": str(tmp_path / "discovered_agent.json")},
+        json={"manifest": disc_data, "output_path": "discovered_agent.json"},
     )
     assert save_resp.status_code == 200
 
@@ -222,8 +217,9 @@ def test_ui_static_audit_and_supply_chain(sample_report: Path) -> None:
 
     from agentscan.ui.app import create_app
 
-    app = create_app(sample_report, Path("tests/fixtures/demo-agents"))
+    app = create_app(sample_report, Path("tests/fixtures/demo-agents"), project_root=Path.cwd())
     client = TestClient(app)
+    client.get("/")
 
     # Static audit
     audit_resp = client.post("/api/audit", json={"path": "tests/fixtures/demo-agents"})
@@ -256,6 +252,7 @@ def test_ui_calibration_and_benchmarking(sample_report: Path) -> None:
 
     app = create_app(sample_report, Path("tests/fixtures/demo-agents"))
     client = TestClient(app)
+    client.get("/")
 
     # Calibration
     cal_resp = client.post("/api/calibrate", json={"target": "http://127.0.0.1:8765", "probes": 3})
@@ -281,6 +278,7 @@ def test_ui_sentinel_mcp_and_swarms(sample_report: Path) -> None:
 
     app = create_app(sample_report, Path("tests/fixtures/demo-agents"))
     client = TestClient(app)
+    client.get("/")
 
     # Sentinel
     snt_resp = client.get("/api/sentinel/status")
@@ -288,12 +286,12 @@ def test_ui_sentinel_mcp_and_swarms(sample_report: Path) -> None:
     assert "running" in snt_resp.json()
 
     probe_resp = client.post("/api/sentinel/probe")
-    assert probe_resp.status_code == 200
-    assert "status" in probe_resp.json()
+    assert probe_resp.status_code == 400
+    assert "target_url" in probe_resp.json()["error"]
 
     start_resp = client.post("/api/sentinel/start", json={"interval": 10})
-    assert start_resp.status_code == 200
-    assert start_resp.json()["running"] is True
+    assert start_resp.status_code == 400
+    assert "target_url" in start_resp.json()["error"]
 
     stop_resp = client.post("/api/sentinel/stop")
     assert stop_resp.status_code == 200
@@ -314,7 +312,8 @@ def test_ui_sentinel_mcp_and_swarms(sample_report: Path) -> None:
 
     # Swarms & Blackboard
     swarm_resp = client.post("/api/swarms/run", json={"strategy": "COLLABORATIVE", "max_rounds": 1})
-    assert swarm_resp.status_code == 200
+    assert swarm_resp.status_code == 400
+    assert "target_url" in swarm_resp.json()["error"]
 
     bb_add = client.post(
         "/api/swarms/blackboard/add",
@@ -332,8 +331,9 @@ def test_ui_self_healing_apply_and_server(sample_report: Path, tmp_path: Path) -
 
     from agentscan.ui.app import create_app
 
-    app = create_app(sample_report, Path("tests/fixtures/demo-agents"))
+    app = create_app(sample_report, Path("tests/fixtures/demo-agents"), project_root=tmp_path)
     client = TestClient(app)
+    client.get("/")
 
     # Heal apply
     heal_resp = client.post("/api/heal/apply", json={"backup": True})
@@ -345,13 +345,18 @@ def test_ui_self_healing_apply_and_server(sample_report: Path, tmp_path: Path) -
     assert srv_resp.status_code == 200
     assert "status" in srv_resp.json()
 
+    fixture = tmp_path / "agent.py"
+    source = "def reply(message):\n    return message\n"
+    fixture.write_text(source, encoding="utf-8")
     sim_resp = client.post(
         "/api/heal/server/simulate",
         json={
-            "file": "tests/fixtures/sample_agent.py",
+            "file": "agent.py",
             "vulnerability_type": "PROMPT_INJECTION",
             "evidence": "Injected payload bypassed filter",
         },
     )
     assert sim_resp.status_code == 200
     assert "patch" in sim_resp.json()
+    assert sim_resp.json()["applied"] is False
+    assert fixture.read_text(encoding="utf-8") == source

@@ -10,7 +10,7 @@ rules:
       Prefer a safe serializer (json) or hmac-authenticated payloads.
     metadata:
       agentscan_id: SC-015
-      owasp_id: LLM05
+      owasp_id: LLM03
       category: deserialization
     pattern: pickle.loads(...)
 
@@ -22,7 +22,7 @@ rules:
       execute attacker-controlled code from a model file.
     metadata:
       agentscan_id: SC-011
-      owasp_id: LLM05
+      owasp_id: LLM03
       category: deserialization
     patterns:
       - pattern: torch.load(...)
@@ -99,7 +99,7 @@ rules:
       array files, leading to arbitrary code execution.
     metadata:
       agentscan_id: SC-011
-      owasp_id: LLM05
+      owasp_id: LLM03
       category: deserialization
     pattern: numpy.load(..., allow_pickle=True, ...)
 
@@ -111,7 +111,7 @@ rules:
       loaders and can execute attacker-controlled code from untrusted files.
     metadata:
       agentscan_id: SC-011
-      owasp_id: LLM05
+      owasp_id: LLM03
       category: deserialization
     pattern: joblib.load(...)
 

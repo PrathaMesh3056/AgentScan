@@ -14,12 +14,14 @@ __pycache__/
 
 # --- Tools & Testing ---
 .pytest_cache/
+.test-tmp/
 .ruff_cache/
 .mypy_cache/
 .coverage
 .coverage.*
 coverage.xml
 htmlcov/
+graphify-out
 
 # --- IDEs & OS ---
 .vscode/
@@ -35,6 +37,8 @@ Desktop.ini
 
 # --- Environment Secrets ---
 .env
+.env.*
+!.env.example
 *.log
 
 # --- AgentScan Reports & Temp Files ---
@@ -49,6 +53,8 @@ captured*.txt
 *llm*.txt
 !llms.txt
 !llms-full.txt
+Codex audit
+
 
 # --- Local target profiles / init output (users force-add if they want to keep one) ---
 target.yaml
@@ -61,4 +67,10 @@ generate_sample.py
 # --- Internal planning / working docs (not for the public repo) ---
 internal_docs/
 scratch/
+/deploy/k8s/secrets.yaml
+/deploy/k8s/secrets.*.yaml
 *.cdx.json
+# Local encryption/signing keys and recoverable remediation preimages.
+agentscan-data.key
+agentscan-jwt.pem
+.agentscan-recovery/

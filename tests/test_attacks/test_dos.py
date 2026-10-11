@@ -83,7 +83,7 @@ class TestDosIntegration:
         assert len(findings) >= 1
         finding = findings[0]
         assert finding.attack_id == "ATK-004"
-        assert finding.owasp_id == "LLM04"
+        assert finding.owasp_id == "LLM10"
         assert finding.severity in (Severity.HIGH, Severity.MEDIUM, Severity.LOW)
         assert "yaml_variant_id" in finding.metadata
 
@@ -105,20 +105,29 @@ class TestDosIntegration:
         assert len(findings) == 0
 
     @pytest.mark.asyncio
-    async def test_timeout_response_produces_finding(
+    async def test_timeout_response_records_execution_error(
         self, module: DosModule, dos_target: Target
     ) -> None:
-        with respx.mock(assert_all_called=False) as mock:
-            mock.post("http://test-agent.example.com/chat").mock(
-                return_value=httpx.Response(
-                    200,
-                    json={"error": "Request timed out", "status_code": 0},
-                )
-            )
-            findings = await module.run(dos_target)
+        from agentscan.core.outcomes import ExecutionLedger, execution_ledger
 
-        timeout_findings = [f for f in findings if f.metadata.get("detection_method") == "timeout"]
-        assert len(timeout_findings) >= 1
+        ledger = ExecutionLedger()
+        token = execution_ledger.set(ledger)
+        try:
+            with respx.mock(assert_all_called=False) as mock:
+                mock.post("http://test-agent.example.com/chat").mock(
+                    return_value=httpx.Response(
+                        200,
+                        json={"error": "Request timed out", "status_code": 0},
+                    )
+                )
+                findings = await module.run(dos_target)
+        finally:
+            execution_ledger.reset(token)
+
+        # A failed request alone cannot establish target resource exhaustion.
+        assert findings == []
+        assert ledger.evaluated == 0
+        assert any("timed out" in error for error in ledger.errors)
 
 
 class TestVariantCount:

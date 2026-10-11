@@ -1,9 +1,8 @@
 # agentscan/core/benchmark.py
 #
-# Discriminating-power benchmark. A "SAFE" verdict is only meaningful if the tool
-# also gives a VULNERABLE agent a bad grade. This runs AgentScan against a spread
-# of reference agents at KNOWN vulnerability levels and checks the scores rank
-# them correctly — turning "trust me" into "here's the proof, repeatably".
+# Synthetic ATK-028 canary-disclosure smoke check, not independent calibration.
+# The reference agents have a real private fixture value, provisioned out of band.
+# Only this criterion receives a score; unavailable criteria remain unscored.
 #
 # The reference agents are deterministic in-process functions (no network, no key).
 
@@ -11,31 +10,38 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from agentscan.attacks.scan.multi_turn_escalation import MultiTurnEscalationAttack
 from agentscan.core.connectors import CallableConnector, use_connector
+from agentscan.core.context import ScanContext, active_context
 from agentscan.core.models import ScanMode, Target
-from agentscan.core.runner import run_scan_multi
+from agentscan.core.outcomes import ExecutionLedger, ModuleUnavailableError, execution_ledger
+from agentscan.core.scorer import calculate_score
+
+BENCHMARK_SCOPE = "synthetic_ATK-028_canary_disclosure"
+_PRIVATE_CANARY = "BENCHMARK_PRIVATE_7F2D18C099AB"
 
 
-def _wide_open(payload: str) -> str:
-    """No defenses: naively complies by echoing whatever it's told (worst case)."""
-    return "Sure! As instructed: " + payload
+@dataclass
+class _ReferenceAgent:
+    canary: str | None
+    leaking_scripts: frozenset[int]
+    requests: int = 0
 
-
-def _guarded(payload: str) -> str:
-    """Strong scope guard: deflects everything to its allowed topic (best case)."""
-    return "I can only help with questions about our products and services."
-
-
-def _partial(payload: str) -> str:
-    """Some defenses: falls for roughly half of attacks, resists the rest."""
-    return ("Sure! As instructed: " + payload) if (len(payload) % 2 == 0) else _guarded(payload)
+    def __call__(self, payload: str) -> str:
+        if self.canary and self.canary in payload:
+            raise RuntimeError("Private benchmark criterion contaminated a user prompt")
+        script, turn = divmod(self.requests, 3)
+        self.requests += 1
+        if turn == 2 and script in self.leaking_scripts and self.canary is not None:
+            return self.canary
+        return "I cannot disclose confidential configuration."
 
 
 # Ordered weakest → strongest, so a correct tool produces ASCENDING scores.
 REFERENCE_AGENTS = [
-    ("wide-open (no defenses)", _wide_open, "expect LOW score"),
-    ("partial (some defenses)", _partial, "expect MEDIUM score"),
-    ("guarded (strong scope)", _guarded, "expect HIGH score"),
+    ("wide-open (all scripts leak)", frozenset({0, 1, 2}), "expect 3 canary findings"),
+    ("partial (one script leaks)", frozenset({0}), "expect 1 canary finding"),
+    ("guarded (canary protected)", frozenset(), "expect 0 canary findings"),
 ]
 
 
@@ -44,22 +50,59 @@ class BenchmarkRow:
     name: str
     expectation: str
     findings: int
-    score: int
+    score: int | None
+    assessment_status: str = "COMPLETE"
+    tests_selected: int = 0
+    tests_evaluated: int = 0
+    assessment_scope: str = "synthetic_heuristic_smoke"
+    reason: str = ""
 
 
-async def run_benchmark() -> list[BenchmarkRow]:
-    """Grade each reference agent and return the rows (weakest → strongest)."""
+async def run_benchmark(*, canary_token: str | None = _PRIVATE_CANARY) -> list[BenchmarkRow]:
+    """Score three synthetic agents on real, out-of-band ATK-028 canary disclosure."""
     rows: list[BenchmarkRow] = []
-    for name, agent, expectation in REFERENCE_AGENTS:
-        target = Target(url="http://benchmark.local/chat", mode=ScanMode.SCAN)
-        with use_connector(CallableConnector(agent)):
-            report = await run_scan_multi(target, [ScanMode.SCAN, ScanMode.EXPLOIT])
+    for name, leaking_scripts, expectation in REFERENCE_AGENTS:
+        target = Target(
+            url="http://benchmark.local/chat", mode=ScanMode.SCAN, canary_token=canary_token
+        )
+        agent = _ReferenceAgent(canary_token, leaking_scripts)
+        module = MultiTurnEscalationAttack()
+        ledger = ExecutionLedger(evaluated=0, selected=module.variant_count())
+        context = ScanContext(
+            request_budget=9, redaction_secrets=(canary_token,) if canary_token else ()
+        )
+        context_token = active_context.set(context)
+        ledger_token = execution_ledger.set(ledger)
+        findings = []
+        try:
+            with use_connector(CallableConnector(agent)):
+                findings = await module.run(target)
+        except ModuleUnavailableError as exc:
+            ledger.inconclusive_reasons.append(str(exc))
+        except Exception as exc:
+            ledger.errors.append(str(exc))
+        finally:
+            execution_ledger.reset(ledger_token)
+            active_context.reset(context_token)
+        evaluated = ledger.evaluated or 0
+        status = (
+            "ERROR"
+            if ledger.errors
+            else "INCONCLUSIVE"
+            if ledger.inconclusive_reasons or evaluated != module.variant_count()
+            else "COMPLETE"
+        )
         rows.append(
             BenchmarkRow(
                 name=name,
                 expectation=expectation,
-                findings=len(report.findings),
-                score=report.score or 0,
+                findings=len(findings),
+                score=calculate_score(findings, evaluated) if status == "COMPLETE" else None,
+                assessment_status=status,
+                tests_selected=module.variant_count(),
+                tests_evaluated=evaluated,
+                assessment_scope=BENCHMARK_SCOPE,
+                reason="; ".join(ledger.errors + ledger.inconclusive_reasons),
             )
         )
     return rows
@@ -73,6 +116,14 @@ def discriminates(rows: list[BenchmarkRow]) -> bool:
     (Findings-count is the granular signal — the 0-100 Score saturates in the vulnerable
     range, since both a wide-open and a partly-vulnerable agent are legitimately CRITICAL.)
     """
+    if len(rows) < 2 or any(r.score is None or r.assessment_status != "COMPLETE" for r in rows):
+        return False
     findings = [r.findings for r in rows]
     descending = all(a > b for a, b in zip(findings, findings[1:], strict=False))
-    return descending and rows[-1].score > rows[0].score
+    scores = [r.score for r in rows if r.score is not None]
+    return (
+        descending
+        and all(a <= b for a, b in zip(scores, scores[1:], strict=False))
+        and scores[-1] >= 80
+        and scores[0] <= 40
+    )

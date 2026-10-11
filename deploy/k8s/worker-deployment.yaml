@@ -14,9 +14,23 @@ spec:
       labels:
         app: agentscan-worker
     spec:
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: agentscan-worker
-          image: agentscan:latest
+          # Replace this invalid placeholder with the verified release digest.
+          image: agentscan@sha256:REPLACE_WITH_VERIFIED_RELEASE_DIGEST
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
           command: ["agentscan", "api", "worker"]
           env:
             - name: AGENTSCAN_REDIS_URL
@@ -33,6 +47,52 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.name
+            - name: AGENTSCAN_ALLOWED_TARGET_HOSTS
+              valueFrom:
+                secretKeyRef:
+                  name: agentscan-secrets
+                  key: allowed-target-hosts
+            - name: AGENTSCAN_TENANT_POLICIES_JSON
+              valueFrom:
+                secretKeyRef:
+                  name: agentscan-secrets
+                  key: tenant-policies-json
+            - name: AGENTSCAN_DATA_KEY_FILE
+              value: /run/secrets/agentscan/data-encryption-key
+            - name: AGENTSCAN_EXTERNAL_MODEL
+              valueFrom:
+                secretKeyRef:
+                  name: agentscan-secrets
+                  key: external-model
+                  optional: true
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: agentscan-secrets
+                  key: openai-api-key
+                  optional: true
+            - name: ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: agentscan-secrets
+                  key: anthropic-api-key
+                  optional: true
+            - name: GEMINI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: agentscan-secrets
+                  key: gemini-api-key
+                  optional: true
+            - name: AGENTSCAN_RETENTION_DAYS
+              value: "7"
+            - name: AGENTSCAN_WORKER_LEASE_SECONDS
+              value: "60"
+            - name: AGENTSCAN_WORKER_MAX_ATTEMPTS
+              value: "3"
+          volumeMounts:
+            - name: service-data
+              mountPath: /run/secrets/agentscan
+              readOnly: true
           resources:
             requests:
               cpu: "500m"
@@ -40,6 +100,15 @@ spec:
             limits:
               cpu: "2"
               memory: "4Gi"
+      volumes:
+        - name: service-data
+          secret:
+            secretName: agentscan-secrets
+            defaultMode: 0440
+            items:
+              - key: data-encryption-key
+                path: data-encryption-key
+
 ---
 # KEDA ScaledObject — autoscale workers based on Redis Stream lag
 apiVersion: keda.sh/v1alpha1
@@ -58,9 +127,27 @@ spec:
         stream: agentscan:scan:normal
         consumerGroup: agentscan-workers
         lagCount: "10"
+      authenticationRef:
+        name: agentscan-redis-scaler-auth
     - type: redis-streams
       metadata:
         address: redis-service:6379
         stream: agentscan:scan:high
         consumerGroup: agentscan-workers
         lagCount: "5"
+      authenticationRef:
+        name: agentscan-redis-scaler-auth
+
+---
+# KEDA operator needs only the Redis scaler credential, not scanner keys.
+# redis-scaler-password is intentionally absent from the template Secret;
+# supply it from a secret manager before enabling authenticated scaling.
+apiVersion: keda.sh/v1alpha1
+kind: TriggerAuthentication
+metadata:
+  name: agentscan-redis-scaler-auth
+spec:
+  secretTargetRef:
+    - parameter: password
+      name: agentscan-secrets
+      key: redis-scaler-password

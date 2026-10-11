@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 from typer.testing import CliRunner
 
@@ -16,6 +17,16 @@ from agentscan.remediation.webhook_receiver import app as webhook_app
 
 runner = CliRunner()
 client = TestClient(webhook_app)
+
+
+@pytest.fixture(autouse=True)
+def webhook_configuration(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("AGENTSCAN_HEAL_TOKEN", "synthetic-test-token")
+    monkeypatch.setenv("AGENTSCAN_HEAL_ROOT", str(tmp_path))
+    monkeypatch.setenv("AGENTSCAN_HEAL_ALLOW_APPLY", "1")
+    client.headers["Authorization"] = "Bearer synthetic-test-token"
+    yield
+    client.headers.pop("Authorization", None)
 
 
 def test_generate_unified_patch_empty():
@@ -88,7 +99,7 @@ def test_webhook_alert_validation(tmp_path: Path):
             "finding_ids": ["SC-011"],
         },
     )
-    assert resp.status_code == 404
+    assert resp.status_code == 403
 
 
 def test_webhook_alert_planning_and_patch(tmp_path: Path):

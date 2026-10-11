@@ -150,6 +150,15 @@ class IdentityReport(BaseModel):
         description="AgentScan Identity Score (0-100). See identity_scorer.py.",
     )
 
+    audit_coverage: list[dict] = Field(
+        default_factory=list,
+        description="Per-module source and assessment limits for static audits.",
+    )
+    status: str = Field(
+        default="INCONCLUSIVE",
+        description="Assessment completion, separate from findings severity.",
+    )
+
     @property
     def total_agents_audited(self) -> int:
         return len(self.agents_found)

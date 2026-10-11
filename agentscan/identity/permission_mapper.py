@@ -116,7 +116,7 @@ def _over_privileged_finding(
         attack_id="ID-002",
         attack_name="Over-privileged tool",
         severity=Severity.CRITICAL,
-        owasp_id="LLM08",
+        owasp_id="LLM06",
         description=(
             f"Agent '{agent.agent_id}' has access to '{tool_name}' "
             f"(scope '{scope}') which is {reason} "
@@ -143,7 +143,7 @@ def _no_scope_declaration_finding(agent: AgentIdentity) -> Finding:
         attack_id="ID-008",
         attack_name="No scope declaration",
         severity=Severity.HIGH,
-        owasp_id="LLM08",
+        owasp_id="LLM06",
         description=(
             f"Agent '{agent.agent_id}' has {tool_count} registered tool(s) "
             f"with no policy baseline defined — declared_role is missing "
@@ -180,7 +180,7 @@ def _dangerous_keyword_findings(
                         attack_id="ID-009",
                         attack_name="Dangerous capability on undeclared agent",
                         severity=Severity.CRITICAL,
-                        owasp_id="LLM08",
+                        owasp_id="LLM06",
                         description=(
                             f"Agent '{agent.agent_id}' has no declared role but "
                             f"holds tool '{tool.tool_name}' matching the "

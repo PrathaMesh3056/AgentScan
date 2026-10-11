@@ -13,4 +13,10 @@ def render_pdf_report(report: ScanReport | IdentityReport, output_path: Path) ->
             "PDF report generation requires the 'pdf' extra: pip install 'agentscan[pdf]'"
         ) from e
     html_content = render_html_report(report)
-    weasyprint.HTML(string=html_content).write_pdf(str(output_path))
+
+    def local_assets_only(url: str):
+        if not url.startswith("data:"):
+            raise ValueError("PDF rendering permits embedded assets only.")
+        return weasyprint.default_url_fetcher(url)
+
+    weasyprint.HTML(string=html_content, url_fetcher=local_assets_only).write_pdf(str(output_path))

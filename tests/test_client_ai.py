@@ -1,103 +1,139 @@
-# tests/test_client_ai.py
-#
-# Unit tests for AIClient. litellm is mocked — no network, no API key needed.
+"""Offline analysis and sensitive-data egress controls; no providers are called."""
 
-from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from __future__ import annotations
 
+import json
+
+import httpx
 import pytest
 
-pytest.importorskip("litellm")
-
 from agentscan.core.ai_client import AIClient, AIClientError
+from agentscan.core.context import active_context, begin_scan_context
 
 
-def _fake_response(content: str | None) -> SimpleNamespace:
-    """Build a minimal litellm-shaped response object."""
-    message = SimpleNamespace(content=content)
-    choice = SimpleNamespace(message=message)
-    return SimpleNamespace(choices=[choice])
+@pytest.fixture(autouse=True)
+def isolated_analysis_context():
+    token = active_context.set(None)
+    yield
+    active_context.reset(token)
 
 
-@pytest.mark.asyncio
-async def test_complete_builds_system_and_user_messages() -> None:
-    client = AIClient(model="gpt-4o", temperature=0.3, max_tokens=256)
-    mock = AsyncMock(return_value=_fake_response("hello"))
+@pytest.fixture
+def offline_transport(monkeypatch):
+    calls = []
 
-    with patch("litellm.acompletion", mock):
-        out = await client.complete("do the thing", system="be terse")
+    def handler(request):
+        calls.append((request.url, json.loads(request.content)))
+        if request.url.path == "/api/show":
+            return httpx.Response(200, json={"model_info": {"general.architecture": "llama"}})
+        return httpx.Response(200, json={"done": True, "message": {"content": "local verdict"}})
 
-    assert out == "hello"
-    _, kwargs = mock.call_args
-    assert kwargs["model"] == "gpt-4o"
-    assert kwargs["messages"] == [
-        {"role": "system", "content": "be terse"},
-        {"role": "user", "content": "do the thing"},
+    monkeypatch.setattr(
+        "agentscan.core.egress.PinnedHTTPTransport", lambda target: httpx.MockTransport(handler)
+    )
+    return calls
+
+
+@pytest.mark.parametrize(
+    "model", ["gpt-4o", "gemini/gemini-flash", "claude-3", "ollama/model-cloud"]
+)
+async def test_external_and_cloud_model_names_never_send_data(model, offline_transport):
+    with pytest.raises(AIClientError):
+        await AIClient(model).complete("synthetic sensitive target response")
+    assert offline_transport == []
+
+
+async def test_deterministic_mode_makes_no_model_requests(offline_transport):
+    begin_scan_context()
+    with pytest.raises(AIClientError, match="disabled"):
+        await AIClient("ollama/llama3.2").complete("synthetic confidential response")
+    assert offline_transport == []
+
+
+async def test_local_analysis_checks_weights_before_sending_redacted_messages(offline_transport):
+    context = begin_scan_context()
+    context.analysis_mode = "local"
+    context.redaction_secrets = ("synthetic-private-header-value",)
+    result = await AIClient("ollama/llama3.2", temperature=0.3, max_tokens=256).complete(
+        "synthetic-private-header-value", system="evaluate this synthetic response"
+    )
+    assert result == "local verdict"
+    assert [url.path for url, _ in offline_transport] == ["/api/show", "/api/chat"]
+    assert offline_transport[0][1] == {"model": "llama3.2"}
+    payload = offline_transport[1][1]
+    assert payload["messages"] == [
+        {"role": "system", "content": "evaluate this synthetic response"},
+        {"role": "user", "content": "[REDACTED]"},
     ]
-    assert kwargs["temperature"] == 0.3
-    assert kwargs["max_tokens"] == 256
+    assert payload["options"]["temperature"] == 0.3
+    assert payload["options"]["num_predict"] == 256
+    assert payload["stream"] is False
 
 
-@pytest.mark.asyncio
-async def test_complete_without_system_omits_system_message() -> None:
-    client = AIClient(model="claude-3-5-sonnet-latest")
-    mock = AsyncMock(return_value=_fake_response("ok"))
-
-    with patch("litellm.acompletion", mock):
-        await client.complete("hi")
-
-    _, kwargs = mock.call_args
-    assert kwargs["messages"] == [{"role": "user", "content": "hi"}]
-
-
-@pytest.mark.asyncio
-async def test_chat_returns_content() -> None:
-    client = AIClient(model="gpt-4o")
-    mock = AsyncMock(return_value=_fake_response("multi-turn reply"))
-
-    with patch("litellm.acompletion", mock):
-        out = await client.chat([{"role": "user", "content": "hey"}])
-
-    assert out == "multi-turn reply"
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://model.example",
+        "http://localhost:11434",
+        "http://127.0.0.1:11434/api",
+        "http://user:pass@127.0.0.1:11434",
+    ],
+)
+async def test_nonliteral_or_remote_model_endpoints_fail_before_transmission(
+    monkeypatch, offline_transport, url
+):
+    monkeypatch.setenv("AGENTSCAN_LOCAL_MODEL_URL", url)
+    with pytest.raises(AIClientError):
+        await AIClient("ollama/llama3.2").complete("sensitive fixture")
+    assert offline_transport == []
 
 
-@pytest.mark.asyncio
-async def test_empty_content_becomes_empty_string() -> None:
-    client = AIClient(model="gpt-4o")
-    mock = AsyncMock(return_value=_fake_response(None))
+@pytest.mark.parametrize(
+    "metadata",
+    [
+        {},
+        {"remote_host": "provider.test", "model_info": {"architecture": "llama"}},
+        {"remote_model": "cloud-model", "model_info": {"architecture": "llama"}},
+    ],
+)
+async def test_remote_or_unknown_weights_receive_no_sensitive_messages(monkeypatch, metadata):
+    calls = []
 
-    with patch("litellm.acompletion", mock):
-        out = await client.complete("hi")
+    def handler(request):
+        calls.append(json.loads(request.content))
+        return httpx.Response(200, json=metadata)
 
-    assert out == ""
-
-
-@pytest.mark.asyncio
-async def test_provider_error_is_wrapped() -> None:
-    client = AIClient(model="gpt-4o")
-    mock = AsyncMock(side_effect=RuntimeError("429 rate limited"))
-
-    with patch("litellm.acompletion", mock), pytest.raises(AIClientError) as exc:
-        await client.complete("hi")
-
-    assert "gpt-4o" in str(exc.value)
-
-
-@pytest.mark.asyncio
-async def test_malformed_response_raises() -> None:
-    client = AIClient(model="gpt-4o")
-    mock = AsyncMock(return_value=SimpleNamespace(choices=[]))  # no choices
-
-    with patch("litellm.acompletion", mock), pytest.raises(AIClientError):
-        await client.complete("hi")
+    monkeypatch.setattr(
+        "agentscan.core.egress.PinnedHTTPTransport", lambda target: httpx.MockTransport(handler)
+    )
+    with pytest.raises(AIClientError, match="local weights"):
+        await AIClient("ollama/llama3.2").complete("secret fixture")
+    assert calls == [{"model": "llama3.2"}]
 
 
-def test_validate_environment_reports_missing_keys() -> None:
-    client = AIClient(model="gpt-4o")
-    info = {"keys_in_environment": False, "missing_keys": ["OPENAI_API_KEY"]}
+def test_environment_check_needs_no_provider_keys():
+    assert AIClient("gpt-4o").validate_environment()[0] is False
+    assert AIClient("ollama/llama3.2").validate_environment() == (True, [])
 
-    with patch("litellm.validate_environment", return_value=info):
-        present, missing = client.validate_environment()
 
-    assert present is False
-    assert missing == ["OPENAI_API_KEY"]
+@pytest.mark.parametrize(
+    "value", [{}, {"message": {"content": None}}, {"message": {"content": {"secret": "fixture"}}}]
+)
+def test_invalid_model_responses_do_not_echo_sensitive_data(value):
+    with pytest.raises(AIClientError, match="Malformed local model response"):
+        AIClient._extract_content(value)
+
+
+def test_generation_and_deadline_bounds_cannot_enable_unlimited_local_prediction():
+    client = AIClient("ollama/synthetic", max_tokens=-1, timeout=0)
+    assert client.max_tokens == 1 and client.timeout == 1
+    client = AIClient("ollama/synthetic", max_tokens=1000000, timeout=1000000)
+    assert client.max_tokens == 4096 and client.timeout == 120
+
+
+async def test_local_input_bound_counts_utf8_bytes_before_model_requests(offline_transport):
+    context = begin_scan_context()
+    context.analysis_mode = "local"
+    with pytest.raises(AIClientError, match="size limit"):
+        await AIClient("ollama/synthetic").complete(chr(0x1F512) * 17000)
+    assert offline_transport == []

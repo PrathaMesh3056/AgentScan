@@ -49,7 +49,7 @@ def to_sarif(report: ScanReport | IdentityReport) -> dict[str, Any]:
                 },
                 "properties": {
                     "tags": ["security", "ai-security", "owasp-top-10", owasp_id],
-                    "precision": "high",
+                    "precision": "low",
                 },
                 "defaultConfiguration": {
                     "level": (
@@ -73,47 +73,67 @@ def to_sarif(report: ScanReport | IdentityReport) -> dict[str, Any]:
         )
 
         # Determine physical location
+        metadata = getattr(finding, "metadata", {})
         manifest_path = (
-            getattr(finding, "metadata", {}).get("manifest_path") or "agentscan/target_agent.py"
+            metadata.get("manifest_path") or metadata.get("file") or metadata.get("path")
         )
 
         result: dict[str, Any] = {
             "ruleId": attack_id,
             "level": level,
             "message": {"text": f"[{finding.severity.value}] {finding.description}"},
-            "locations": [
-                {
-                    "physicalLocation": {
-                        "artifactLocation": {
-                            "uri": str(manifest_path),
-                            "uriBaseId": "%SRCROOT%",
-                        },
-                        "region": {
-                            "startLine": 1,
-                            "startColumn": 1,
-                        },
-                    }
-                }
-            ],
         }
+        if isinstance(manifest_path, str) and manifest_path:
+            from pathlib import Path
+            from urllib.parse import quote
+
+            path = Path(manifest_path)
+            location: dict[str, Any] = {
+                "artifactLocation": {
+                    "uri": path.as_uri()
+                    if path.is_absolute()
+                    else quote(path.as_posix(), safe="/"),
+                    **({} if path.is_absolute() else {"uriBaseId": "%SRCROOT%"}),
+                }
+            }
+            line = metadata.get("line") or metadata.get("line_number")
+            if isinstance(line, int) and not isinstance(line, bool) and line > 0:
+                location["region"] = {"startLine": line}
+                column = metadata.get("column")
+                if isinstance(column, int) and not isinstance(column, bool) and column > 0:
+                    location["region"]["startColumn"] = column
+            result["locations"] = [{"physicalLocation": location}]
 
         results.append(result)
+
+    run: dict[str, Any] = {
+        "tool": {
+            "driver": {
+                "name": "AgentScan",
+                "version": version,
+                "semanticVersion": version,
+                "informationUri": "https://github.com/PrathaMesh3056/AgentScan",
+                "rules": list(rules.values()),
+            }
+        },
+        "results": results,
+    }
+    if isinstance(report, ScanReport):
+        run["properties"] = {
+            "agentscanAssessment": {
+                "status": report.status,
+                "scope": report.assessment_scope,
+                "score": report.score,
+                "tests_selected": report.tests_selected,
+                "tests_run": report.tests_run,
+                "module_errors": report.module_errors,
+                "module_outcomes": report.module_outcomes,
+            }
+        }
+        run["invocations"] = [{"executionSuccessful": report.status == "COMPLETE"}]
 
     return {
         "$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/main/sarif-2.1/schema/sarif-schema-2.1.0.json",
         "version": "2.1.0",
-        "runs": [
-            {
-                "tool": {
-                    "driver": {
-                        "name": "AgentScan",
-                        "version": version,
-                        "semanticVersion": version,
-                        "informationUri": "https://github.com/PrathaMesh3056/AgentScan",
-                        "rules": list(rules.values()),
-                    }
-                },
-                "results": results,
-            }
-        ],
+        "runs": [run],
     }

@@ -1,52 +1,100 @@
-# docker-compose.api.yml
-# Local development stack for the AgentScan API (no GPU).
-# Usage: docker compose -f docker-compose.api.yml up
-
+# Local development API stack. Set AGENTSCAN_JWT_PRIVATE_KEY_FILE to an
+# existing Ed25519 private PEM and enroll target hosts before starting.
 services:
   redis:
     image: redis:7-alpine
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     volumes:
       - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
   postgres:
     image: postgres:16-alpine
     environment:
       POSTGRES_USER: agentscan
-      POSTGRES_PASSWORD: agentscan
+      POSTGRES_PASSWORD: ${AGENTSCAN_POSTGRES_PASSWORD:?Set a local database password}
       POSTGRES_DB: agentscan
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U agentscan -d agentscan"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
   agentscan-api:
     build: .
     command: api serve --host 0.0.0.0 --port 8080
     ports:
-      - "8081:8080"
+      - "127.0.0.1:8081:8080"
     environment:
       AGENTSCAN_REDIS_URL: redis://redis:6379/0
-      AGENTSCAN_DATABASE_URL: postgresql://agentscan:agentscan@postgres:5432/agentscan
-      AGENTSCAN_JWT_SECRET: dev-secret-change-in-production
-      AGENTSCAN_TOKEN_PSK: dev-psk
+      AGENTSCAN_DATABASE_URL: postgresql://agentscan:${AGENTSCAN_POSTGRES_PASSWORD}@postgres:5432/agentscan
+      AGENTSCAN_JWT_PRIVATE_KEY_FILE: /run/secrets/agentscan-jwt.pem
+      AGENTSCAN_TENANT_CREDENTIALS_JSON: ${AGENTSCAN_TENANT_CREDENTIALS_JSON:-{}}
+      AGENTSCAN_ALLOWED_TARGET_HOSTS: ${AGENTSCAN_ALLOWED_TARGET_HOSTS:?Enroll exact authorized target hosts}
+      AGENTSCAN_TENANT_POLICIES_JSON: ${AGENTSCAN_TENANT_POLICIES_JSON:?Configure tenant target policies}
+      AGENTSCAN_DATA_KEY_FILE: /run/secrets/agentscan-data.key
+      AGENTSCAN_RETENTION_DAYS: ${AGENTSCAN_RETENTION_DAYS:-7}
+      AGENTSCAN_EXTERNAL_MODEL: ${AGENTSCAN_EXTERNAL_MODEL:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+    secrets:
+      - source: jwt-private
+        target: agentscan-jwt.pem
+      - source: service-data
+        target: agentscan-data.key
     depends_on:
-      - redis
-      - postgres
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health/ready', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   agentscan-worker:
     build: .
     command: api worker
+    secrets:
+      - source: service-data
+        target: agentscan-data.key
     environment:
       AGENTSCAN_REDIS_URL: redis://redis:6379/0
-      AGENTSCAN_DATABASE_URL: postgresql://agentscan:agentscan@postgres:5432/agentscan
+      AGENTSCAN_DATABASE_URL: postgresql://agentscan:${AGENTSCAN_POSTGRES_PASSWORD}@postgres:5432/agentscan
+      AGENTSCAN_ALLOWED_TARGET_HOSTS: ${AGENTSCAN_ALLOWED_TARGET_HOSTS:?Enroll exact authorized target hosts}
+      AGENTSCAN_TENANT_POLICIES_JSON: ${AGENTSCAN_TENANT_POLICIES_JSON:?Configure tenant target policies}
+      AGENTSCAN_DATA_KEY_FILE: /run/secrets/agentscan-data.key
+      AGENTSCAN_RETENTION_DAYS: ${AGENTSCAN_RETENTION_DAYS:-7}
+      AGENTSCAN_EXTERNAL_MODEL: ${AGENTSCAN_EXTERNAL_MODEL:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      AGENTSCAN_WORKER_LEASE_SECONDS: ${AGENTSCAN_WORKER_LEASE_SECONDS:-60}
+      AGENTSCAN_WORKER_MAX_ATTEMPTS: ${AGENTSCAN_WORKER_MAX_ATTEMPTS:-3}
     depends_on:
-      - redis
-      - postgres
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
     deploy:
       replicas: 3
 
+secrets:
+  service-data:
+    file: ${AGENTSCAN_DATA_KEY_FILE:?Set path to a persistent Fernet key file}
+  jwt-private:
+    file: ${AGENTSCAN_JWT_PRIVATE_KEY_FILE:?Set path to your local Ed25519 private PEM}
 volumes:
   redis_data:
   pg_data:

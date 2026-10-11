@@ -35,46 +35,33 @@ runs:
   using: 'composite'
   steps:
     - name: Set up Python
-      uses: actions/setup-python@v5
+      uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
       with:
         python-version: '3.12'
 
     - name: Install uv
-      uses: astral-sh/setup-uv@v3
+      uses: astral-sh/setup-uv@caf0cab7a618c569241d31dcd442f54681755d39 # v3
       with:
         enable-cache: true
+        version: '0.12.3'
 
     - name: Install AgentScan
       shell: bash
+      env:
+        AGENTSCAN_ACTION_PATH: ${{ github.action_path }}
       run: |
-        uv pip install --system "${{ github.action_path }}"
+        set -euo pipefail
+        uv pip install --system "$AGENTSCAN_ACTION_PATH"
 
-    - name: Execute AgentScan Audit
-      if: ${{ inputs.command == 'audit' }}
+    - name: Execute AgentScan
       shell: bash
+      env:
+        AGENTSCAN_ACTION_PATH: ${{ github.action_path }}
+        AGENTSCAN_COMMAND: ${{ inputs.command }}
+        AGENTSCAN_PATH: ${{ inputs.path }}
+        AGENTSCAN_TARGET_URL: ${{ inputs.target-url }}
+        AGENTSCAN_FAIL_ON: ${{ inputs.fail-on }}
+        AGENTSCAN_SARIF_OUTPUT: ${{ inputs.sarif-output }}
+        AGENTSCAN_JSON_OUTPUT: ${{ inputs.json-output }}
       run: |
-        CMD_ARGS="${{ inputs.path }}"
-        if [ -n "${{ inputs.fail-on }}" ]; then
-          CMD_ARGS="$CMD_ARGS --fail-on ${{ inputs.fail-on }}"
-        fi
-        if [ -n "${{ inputs.sarif-output }}" ]; then
-          CMD_ARGS="$CMD_ARGS --output ${{ inputs.sarif-output }}"
-        elif [ -n "${{ inputs.json-output }}" ]; then
-          CMD_ARGS="$CMD_ARGS --output ${{ inputs.json-output }}"
-        fi
-        agentscan audit $CMD_ARGS
-
-    - name: Execute AgentScan Scan
-      if: ${{ inputs.command == 'scan' }}
-      shell: bash
-      run: |
-        CMD_ARGS="${{ inputs.target-url }}"
-        if [ -n "${{ inputs.fail-on }}" ]; then
-          CMD_ARGS="$CMD_ARGS --fail-on ${{ inputs.fail-on }}"
-        fi
-        if [ -n "${{ inputs.sarif-output }}" ]; then
-          CMD_ARGS="$CMD_ARGS --output ${{ inputs.sarif-output }}"
-        elif [ -n "${{ inputs.json-output }}" ]; then
-          CMD_ARGS="$CMD_ARGS --output ${{ inputs.json-output }}"
-        fi
-        agentscan scan $CMD_ARGS
+        bash "$AGENTSCAN_ACTION_PATH/.github/scripts/run-action.sh"

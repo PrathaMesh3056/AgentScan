@@ -10,6 +10,7 @@ from pathlib import Path
 
 from agentscan.core.models import Finding
 from agentscan.remediation.models import FixAction
+from agentscan.remediation.paths import contained_path
 
 
 def _extract_pkg_and_fix(finding: Finding) -> tuple[str, str] | None:
@@ -79,6 +80,7 @@ def plan_pin_bumps(findings: list[Finding], root_path: Path) -> list[FixAction]:
     actions: list[FixAction] = []
 
     for manifest in manifest_paths:
+        manifest = contained_path(root_path, manifest)
         try:
             content = manifest.read_text(encoding="utf-8")
         except Exception:

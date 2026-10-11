@@ -11,6 +11,7 @@ from agentscan.remediation.ast_patch import plan_ast_patches
 from agentscan.remediation.guardrails import plan_guardrails
 from agentscan.remediation.identity_shrink import plan_identity_shrinks
 from agentscan.remediation.models import FixAction, FixPlan
+from agentscan.remediation.paths import contained_path
 from agentscan.remediation.pin_bump import plan_pin_bumps
 
 
@@ -29,6 +30,10 @@ class RemediationEngine:
         actions: list[FixAction] = []
 
         allowed_kinds = set(kinds) if kinds else None
+        # Validate untrusted finding paths before a planner can read them.
+        for finding in findings:
+            if finding.metadata.get("file"):
+                contained_path(self.root_path, str(finding.metadata["file"]))
 
         # 1. Dependency pin bumping (SC-001)
         if allowed_kinds is None or "pin_bump" in allowed_kinds:
@@ -46,10 +51,13 @@ class RemediationEngine:
         if allowed_kinds is None or "guardrails" in allowed_kinds:
             actions.extend(plan_guardrails(findings, self.root_path))
 
-        return FixPlan(actions=actions)
+        plan = FixPlan(actions=actions)
+        plan.bind_root(self.root_path)
+        return plan
 
     def apply(self, plan: FixPlan) -> FixPlan:
         """Execute all planned FixActions by writing modified files to disk."""
+        plan.bind_root(self.root_path)
         plan.apply()
         return plan
 

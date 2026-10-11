@@ -55,7 +55,7 @@ def _shared_credential_finding(
         attack_id="ID-005",
         attack_name="Shared credential across agents",
         severity=Severity.CRITICAL,
-        owasp_id="LLM08",
+        owasp_id="LLM06",
         description=(
             f"Agents {agent_list} all authenticate with credential "
             f"'{credential_ref}' — no independent identity, no accountable "

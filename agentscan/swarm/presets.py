@@ -19,7 +19,7 @@ PRESETS: dict[str, SwarmTeamConfig] = {
     "trio": SwarmTeamConfig(
         name="Default Red-Team Trio",
         strategy=SwarmStrategy.PIPELINE,
-        default_model="gpt-4o-mini",
+        default_model="ollama/llama3.2",
         max_rounds=2,
         agents=[
             SwarmAgentConfig(name="Recon-Alpha", role=AgentRole.RECON),
@@ -31,7 +31,7 @@ PRESETS: dict[str, SwarmTeamConfig] = {
     "agency": SwarmTeamConfig(
         name="Excessive Agency Hunter",
         strategy=SwarmStrategy.COLLABORATIVE,
-        default_model="gpt-4o-mini",
+        default_model="ollama/llama3.2",
         max_rounds=2,
         agents=[
             SwarmAgentConfig(name="Tool-Scanner", role=AgentRole.RECON),
@@ -42,7 +42,7 @@ PRESETS: dict[str, SwarmTeamConfig] = {
     "stealth": SwarmTeamConfig(
         name="Stealth Evasion Swarm",
         strategy=SwarmStrategy.ADAPTIVE,
-        default_model="gpt-4o-mini",
+        default_model="ollama/llama3.2",
         max_rounds=2,
         agents=[
             SwarmAgentConfig(name="Boundary-Prober", role=AgentRole.RECON),

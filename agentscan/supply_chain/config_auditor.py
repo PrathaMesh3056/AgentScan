@@ -17,6 +17,7 @@ from pathlib import Path
 from loguru import logger
 
 from agentscan.core.models import Finding, Severity
+from agentscan.supply_chain.coverage import collect_inputs, record_coverage
 
 # ── AST helpers ───────────────────────────────────────────────────────────────
 
@@ -37,16 +38,20 @@ def _is_torch_load(call: ast.Call) -> bool:
     return False
 
 
-def _check_file(filepath: Path) -> list[Finding]:
+def _check_file(filepath: Path, issues: list[str] | None = None) -> list[Finding]:
     """Parse one .py file and return all SC-* findings for it."""
     findings: list[Finding] = []
     try:
-        source = filepath.read_text(encoding="utf-8", errors="replace")
+        source = filepath.read_text(encoding="utf-8")
         tree = ast.parse(source, filename=str(filepath))
     except SyntaxError as e:
+        if issues is not None:
+            issues.append(f"{filepath.name}: SyntaxError")
         logger.warning(f"Skipping {filepath}: syntax error — {e}")
         return findings
     except Exception as e:
+        if issues is not None:
+            issues.append(f"{filepath.name}: {type(e).__name__}")
         logger.error(f"Failed to read {filepath}: {e}")
         return findings
 
@@ -62,7 +67,7 @@ def _check_file(filepath: Path) -> list[Finding]:
                     attack_id="SC-011",
                     attack_name="Unsafe model deserialisation",
                     severity=Severity.CRITICAL,
-                    owasp_id="LLM05",
+                    owasp_id="LLM03",
                     description=(
                         f"Call to torch.load() in '{filepath.name}' is missing "
                         f"weights_only=True. Loading untrusted model files without "
@@ -87,7 +92,7 @@ def _check_file(filepath: Path) -> list[Finding]:
                     attack_id="SC-011",
                     attack_name="Unsafe model deserialisation",
                     severity=Severity.CRITICAL,
-                    owasp_id="LLM05",
+                    owasp_id="LLM03",
                     description=(
                         f"Call in '{filepath.name}' uses "
                         f"allow_dangerous_deserialization=True, which permits loading "
@@ -115,7 +120,7 @@ def _check_file(filepath: Path) -> list[Finding]:
                             attack_id="SC-014",
                             attack_name="Debug mode enabled in production code",
                             severity=Severity.HIGH,
-                            owasp_id="LLM05",
+                            owasp_id="LLM03",
                             description=(
                                 f"'DEBUG = True' found in '{filepath.name}'. "
                                 f"Leaving debug mode enabled in production exposes "
@@ -145,22 +150,25 @@ _IGNORED_DIRS = {
 }
 
 
-def scan_config(path: str) -> tuple[list[Finding], int]:
+def scan_config(path: str, *, coverage: list[dict] | None = None) -> tuple[list[Finding], int]:
     """
     Walk all .py files under `path` and check for dangerous configuration patterns.
 
     Returns:
         (findings, checks_run) where checks_run = number of .py files parsed.
     """
+    issues: list[str] = []
     root = Path(path)
-    if root.is_file() and root.suffix == ".py":
-        return _check_file(root), 1
-
-    py_files = [p for p in root.rglob("*.py") if not any(part in _IGNORED_DIRS for part in p.parts)]
+    py_files = collect_inputs(root, "*.py", issues, ignored_dirs=_IGNORED_DIRS)
     checks_run = len(py_files)
 
     all_findings: list[Finding] = []
     for py_file in py_files:
-        all_findings.extend(_check_file(py_file))
-
+        previous_errors = len(issues)
+        all_findings.extend(_check_file(py_file, issues))
+        if len(issues) > previous_errors:
+            checks_run -= 1
+    record_coverage(
+        coverage, "config", checks_run, source="python_ast", issues=issues, selected=len(py_files)
+    )
     return all_findings, checks_run

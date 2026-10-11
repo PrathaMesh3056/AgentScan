@@ -10,6 +10,8 @@ from loguru import logger
 
 from agentscan.attacks.base import AttackModule
 from agentscan.core.models import Finding, ScanMode, Severity, Target
+from agentscan.core.outcomes import ModuleUnavailableError
+from agentscan.neural.execution import serialized_reference_call
 from agentscan.neural.fingerprint import run_fingerprint
 
 
@@ -18,18 +20,20 @@ class ModelFingerprintModule(AttackModule):
 
     attack_id = "ATK-026"
     attack_name = "Model Activation Fingerprint"
-    owasp_id = "LLM10"
+    owasp_id = "UNMAPPED"
     supported_modes = [ScanMode.DEEP]
+    assessment_scope = "local_reference_model"
 
     async def run(self, target: Target) -> list[Finding]:
         del target
         return await asyncio.to_thread(self._probe)
 
+    @serialized_reference_call
     def _probe(self) -> list[Finding]:
         result = run_fingerprint()
         if result is None:
             logger.info("ATK-026 skipped: DEEP reference model unavailable.")
-            return []
+            raise ModuleUnavailableError("Local reference model or neural baseline unavailable")
         digest = result["digest"]
         expected = result["expected"]
         if expected and not result["matched"]:
@@ -39,7 +43,7 @@ class ModelFingerprintModule(AttackModule):
                     description=(
                         "Local reference-model activation fingerprint does not match the "
                         "expected hash. Weights may have been substituted or fine-tuned "
-                        "without review (LLM10)."
+                        "without review (UNMAPPED)."
                     ),
                     evidence=f"digest={digest} expected={expected}",
                     remediation=(

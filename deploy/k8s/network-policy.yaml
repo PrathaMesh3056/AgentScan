@@ -1,0 +1,83 @@
+# Default deny for scanner workloads. Requires a NetworkPolicy-enforcing CNI.
+# Labels below are examples; align them to the selected namespace's actual DB,
+# Redis, ingress controller and CoreDNS labels before deployment.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: agentscan-workload-boundaries
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app
+        operator: In
+        values: [agentscan-api, agentscan-worker, agentscan-deep-worker]
+  policyTypes: [Ingress, Egress]
+  ingress: []
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - to:
+        - podSelector:
+            matchLabels:
+              app: agentscan-postgres
+      ports:
+        - protocol: TCP
+          port: 5432
+    - to:
+        - podSelector:
+            matchLabels:
+              app: agentscan-redis
+      ports:
+        - protocol: TCP
+          port: 6379
+
+---
+# Permit API ingress only from an explicitly enrolled ingress controller.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: agentscan-api-ingress
+spec:
+  podSelector:
+    matchLabels:
+      app: agentscan-api
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/component: controller
+      ports:
+        - protocol: TCP
+          port: 8080
+
+---
+# No target or model-provider egress is enabled by default. Operator-approved
+# target CIDRs/ports go in this list, matching the tenant origin/CIDR policies.
+# Never use 0.0.0.0/0 or ::/0; public model providers need a separately controlled
+# egress gateway policy for explicitly non-sensitive analysis.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: agentscan-approved-target-egress
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app
+        operator: In
+        values: [agentscan-worker, agentscan-deep-worker]
+  policyTypes: [Egress]
+  egress: []

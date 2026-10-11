@@ -31,8 +31,7 @@ def render_html_report(report: ScanReport | IdentityReport) -> str:
     if isinstance(report, ScanReport):
         template = env.get_template("scan_report.html.j2")
         compliance_summary = generate_compliance_summary(report.findings)
-        score_val = report.score if report.score is not None else 0
-        band = score_band(score_val)
+        band = score_band(report.score) if report.status == "COMPLETE" else report.status
         return template.render(
             report=report,
             compliance_summary=compliance_summary,
@@ -42,7 +41,7 @@ def render_html_report(report: ScanReport | IdentityReport) -> str:
         )
     else:
         template = env.get_template("identity_report.html.j2")
-        score_val = getattr(report, "identity_score", 100)
+        score_val = report.identity_score
         band = score_band(score_val)
         return template.render(
             report=report,

@@ -75,7 +75,7 @@ class TestMcpShadowIntegration:
         assert len(findings) >= 1
         finding = findings[0]
         assert finding.attack_id == "ATK-006"
-        assert finding.owasp_id == "LLM07"
+        assert finding.owasp_id == "LLM01"
         assert finding.severity in (Severity.CRITICAL, Severity.HIGH, Severity.MEDIUM)
         assert "agentscan-mcp-shadow.invalid" in finding.evidence
 

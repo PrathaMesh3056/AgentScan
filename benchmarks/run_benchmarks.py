@@ -54,6 +54,8 @@ async def execute_benchmarks(iterations: int = 1) -> dict[str, Any]:
         "iterations": iterations,
         "total_duration_seconds": round(total_elapsed, 3),
         "overall_passed": all_passed,
+        "assessment_scope": "synthetic_heuristic_smoke",
+        "independent_calibration": False,
         "runs": all_runs,
     }
 
@@ -62,9 +64,25 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Run AgentScan discriminating-power benchmarks.")
     parser.add_argument("--json", action="store_true", help="Output results in JSON format.")
     parser.add_argument("--iterations", type=int, default=1, help="Number of benchmark iterations.")
+    parser.add_argument(
+        "--save-receipt",
+        metavar="FILE",
+        default=None,
+        help="Serialize benchmark results to a JSON receipt file (e.g. benchmarks/receipts/reference_runs.json).",
+    )
     args = parser.parse_args()
 
     results = asyncio.run(execute_benchmarks(iterations=args.iterations))
+
+    if args.save_receipt:
+        import pathlib
+
+        receipt_path = pathlib.Path(args.save_receipt)
+        receipt_path.parent.mkdir(parents=True, exist_ok=True)
+        import json as _json
+
+        receipt_path.write_text(_json.dumps(results, indent=2), encoding="utf-8")
+        console.print(f"[cyan]Receipt saved to {receipt_path}[/cyan]")
 
     if args.json:
         print(json.dumps(results, indent=2))
@@ -83,7 +101,16 @@ def main() -> int:
     table.add_column("Score", justify="right")
 
     for row in latest_run["rows"]:
-        score_style = "green" if row["score"] >= 80 else "yellow" if row["score"] >= 40 else "red"
+        score = row["score"]
+        score_style = (
+            "dim"
+            if score is None
+            else "green"
+            if score >= 80
+            else "yellow"
+            if score >= 40
+            else "red"
+        )
         table.add_row(
             row["name"],
             row["expectation"],
@@ -95,7 +122,7 @@ def main() -> int:
 
     if results["overall_passed"]:
         console.print(
-            "\n[bold green][PASS] Scanner successfully discriminates between vulnerable and secure agents.[/bold green]\n"
+            "\n[bold green][PASS] Synthetic heuristic smoke check passed; independent calibration remains required.[/bold green]\n"
         )
         return 0
     else:

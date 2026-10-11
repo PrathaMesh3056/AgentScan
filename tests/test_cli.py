@@ -51,6 +51,35 @@ def _make_finding(severity: Severity, attack_id: str = "ATK-001") -> Finding:
 
 
 class TestScanCommand:
+    def test_document_adapter_profile_reaches_scan(self, tmp_path) -> None:
+        profile = tmp_path / "document.yaml"
+        profile.write_text(
+            "url: http://test-agent.example.com/chat\nindirect_adapter: document_v1\n",
+            encoding="utf-8",
+        )
+        with patch(
+            "agentscan.cli.run_scan_multi",
+            new_callable=AsyncMock,
+            return_value=_make_report([], 100),
+        ) as scan:
+            result = runner.invoke(app, ["scan", "--config", str(profile)])
+        assert result.exit_code == 0, result.output
+        assert scan.await_args.args[0].indirect_adapter == "document_v1"
+
+    def test_invalid_document_adapter_profile_explains_field_without_starting(
+        self, tmp_path
+    ) -> None:
+        profile = tmp_path / "invalid-document.yaml"
+        profile.write_text(
+            "url: http://test-agent.example.com/chat\nindirect_adapter: unsupported\n",
+            encoding="utf-8",
+        )
+        with patch("agentscan.cli.run_scan_multi", new_callable=AsyncMock) as scan:
+            result = runner.invoke(app, ["scan", "--config", str(profile)])
+        assert result.exit_code != 0
+        assert "indirect_adapter" in result.output and "document_v1" in result.output
+        scan.assert_not_called()
+
     def test_scan_exit_code_zero(self) -> None:
         """scan command against a mocked target exits with code 0 and shows score."""
         report = _make_report(
@@ -237,11 +266,11 @@ class TestScanCommand:
                     "scan",
                     "http://test-agent.example.com/chat",
                     "--attacker-model",
-                    "gpt-4o-mini",
+                    "ollama/llama3.2",
                     "--attacker-goal",
                     "bypass scope constraints",
                     "--escalation-model",
-                    "gpt-4o",
+                    "ollama/llama3.2",
                     "--escalation-turns",
                     "3",
                 ],
@@ -250,9 +279,9 @@ class TestScanCommand:
         assert result.exit_code == 0
         mock_run.assert_called_once()
         target_obj, _ = mock_run.call_args[0]
-        assert target_obj.attacker_model == "gpt-4o-mini"
+        assert target_obj.attacker_model == "ollama/llama3.2"
         assert target_obj.attacker_goal == "bypass scope constraints"
-        assert target_obj.escalation_model == "gpt-4o"
+        assert target_obj.escalation_model == "ollama/llama3.2"
         assert target_obj.escalation_turns == 3
 
     def test_scan_calibrate_required_abort_on_failure(self) -> None:
@@ -269,7 +298,7 @@ class TestScanCommand:
                     "scan",
                     "http://test-agent.example.com/chat",
                     "--attacker-model",
-                    "gpt-4o-mini",
+                    "ollama/llama3.2",
                     "--calibrate-required",
                 ],
             )
@@ -283,7 +312,7 @@ class TestScanCommand:
         cfg.write_text(
             "url: http://test-agent.example.com/chat\n"
             "calibrate: true\n"
-            "attacker_model: gpt-4o-mini\n",
+            "attacker_model: ollama/llama3.2\n",
             encoding="utf-8",
         )
         report = _make_report([], 100)
@@ -299,7 +328,7 @@ class TestScanCommand:
             result = runner.invoke(app, ["scan", "-c", str(cfg)])
         assert result.exit_code == 0
         cal.assert_called_once()
-        assert "attacker validated" in result.output
+        assert "local synthetic controls passed" in result.output
 
     def test_scan_calibrate_required_proceeds_on_success(self) -> None:
         """--calibrate-required proceeds with scan when calibration passes."""
@@ -323,16 +352,16 @@ class TestScanCommand:
                     "scan",
                     "http://test-agent.example.com/chat",
                     "--attacker-model",
-                    "gpt-4o-mini",
+                    "ollama/llama3.2",
                     "--calibrate-required",
                 ],
             )
 
         assert result.exit_code == 0
-        assert "attacker validated" in result.output
+        assert "local synthetic controls passed" in result.output
         assert report.calibration == mock_cal
         assert report.attacker_config is not None
-        assert report.attacker_config.model == "gpt-4o-mini"
+        assert report.attacker_config.model == "ollama/llama3.2"
 
     def test_calibrate_command_with_attacker_goal(self) -> None:
         """calibrate command accepts optional --attacker-goal."""
@@ -347,14 +376,14 @@ class TestScanCommand:
                 [
                     "calibrate",
                     "--attacker-model",
-                    "gpt-4o-mini",
+                    "ollama/llama3.2",
                     "--attacker-goal",
                     "exfiltrate data",
                 ],
             )
 
         assert result.exit_code == 0
-        mock_run.assert_called_once_with("gpt-4o-mini", attacker_goal="exfiltrate data")
+        mock_run.assert_called_once_with("ollama/llama3.2", attacker_goal="exfiltrate data")
 
 
 class TestListAttacks:
@@ -400,7 +429,7 @@ class TestListAttacks:
         assert "ATK-005" in result.output
         assert "ATK-006" in result.output
         assert "Denial of Service" in result.output
-        assert "Indirect Prompt Injection" in result.output
+        assert "Indirect Document Injection" in result.output
         assert "MCP Shadow Server" in result.output
 
     def test_list_attacks_shows_owasp_closeout_modules(self) -> None:
@@ -544,3 +573,51 @@ class TestAuditCommand:
         data = json.loads(out.read_text(encoding="utf-8"))
         assert data["bomFormat"] == "CycloneDX"
         assert data["specVersion"] == "1.6"
+
+
+class TestVerifyClaimsCommand:
+    def test_verify_claims_success(self, tmp_path: Path) -> None:
+        receipt_file = tmp_path / "receipt.json"
+        data = {
+            "runs": [
+                {
+                    "iteration": 1,
+                    "duration_seconds": 0.5,
+                    "rows": [
+                        {"name": "wide-open", "expectation": "LOW", "findings": 10, "score": 20},
+                        {"name": "partial", "expectation": "MED", "findings": 5, "score": 50},
+                        {"name": "guarded", "expectation": "HIGH", "findings": 0, "score": 90},
+                    ],
+                }
+            ]
+        }
+        receipt_file.write_text(json.dumps(data), encoding="utf-8")
+        result = runner.invoke(app, ["verify-claims", "--receipt", str(receipt_file)])
+        assert result.exit_code == 0
+        assert "VERIFIED" in result.output
+
+    def test_verify_claims_missing_receipt(self, tmp_path: Path) -> None:
+        missing = tmp_path / "does_not_exist.json"
+        result = runner.invoke(app, ["verify-claims", "--receipt", str(missing)])
+        assert result.exit_code == 1
+        assert "Receipt not found" in result.output
+
+    def test_verify_claims_failed_expectation(self, tmp_path: Path) -> None:
+        receipt_file = tmp_path / "receipt.json"
+        # guarded got lower score than wide-open -> discriminates() fails
+        data = {
+            "runs": [
+                {
+                    "iteration": 1,
+                    "duration_seconds": 0.5,
+                    "rows": [
+                        {"name": "wide-open", "expectation": "LOW", "findings": 0, "score": 90},
+                        {"name": "guarded", "expectation": "HIGH", "findings": 10, "score": 20},
+                    ],
+                }
+            ]
+        }
+        receipt_file.write_text(json.dumps(data), encoding="utf-8")
+        result = runner.invoke(app, ["verify-claims", "--receipt", str(receipt_file)])
+        assert result.exit_code == 1
+        assert "FAILED" in result.output

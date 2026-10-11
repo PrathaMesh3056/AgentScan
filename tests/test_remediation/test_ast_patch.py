@@ -60,5 +60,24 @@ def test_ast_patch_shell_true(tmp_path: Path) -> None:
     )
 
     actions = plan_ast_patches([finding], tmp_path)
-    assert len(actions) == 1
-    assert "shell=False" in actions[0].after
+    assert actions == []  # Dynamic command semantics need manual review.
+
+
+def test_scoped_ast_patch_preserves_literals_and_unrelated_files(tmp_path):
+    from agentscan.remediation.ast_patch import (
+        _patch_debug_true,
+        _patch_numpy_allow_pickle,
+        _patch_shell_true,
+    )
+
+    source = 'note = "allow_pickle=True"\n# allow_pickle=True\nvalue = np.load("x.npy", allow_pickle=True)\nother = helper(allow_pickle=True)\n'
+    result = _patch_numpy_allow_pickle(source)
+    assert 'note = "allow_pickle=True"' in result and "# allow_pickle=True" in result
+    assert (
+        "helper(allow_pickle=True)" in result and 'np.load("x.npy", allow_pickle=False)' in result
+    )
+    assert _patch_debug_true("def f():\n    DEBUG = True\n") == "def f():\n    DEBUG = True\n"
+    assert "shell=False" in _patch_shell_true('subprocess.run(["python", "-V"], shell=True)')
+    assert _patch_shell_true('subprocess.run("echo hello > output", shell=True)').endswith(
+        "shell=True)"
+    )

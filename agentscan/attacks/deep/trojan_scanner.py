@@ -1,6 +1,6 @@
 # agentscan/attacks/deep/trojan_scanner.py
 #
-# ATK-024: Rare-token / suffix trojan probe (DEEP, LLM10).
+# ATK-024: Rare-token / suffix trojan probe (DEEP, LLM04).
 # Flags a catastrophic shift in next-token distribution vs a benign baseline.
 
 from __future__ import annotations
@@ -12,7 +12,9 @@ from loguru import logger
 
 from agentscan.attacks.base import AttackModule
 from agentscan.core.models import Finding, ScanMode, Severity, Target
+from agentscan.core.outcomes import ModuleUnavailableError, record_execution_error
 from agentscan.neural.activation_delta import kl_divergence
+from agentscan.neural.execution import serialized_reference_call
 from agentscan.neural.qwen import next_token_logits, try_load_model_and_tokenizer
 
 # Rare / trigger-like suffixes historically used in backdoor literature.
@@ -33,8 +35,9 @@ class TrojanScannerModule(AttackModule):
 
     attack_id = "ATK-024"
     attack_name = "Rare-Token Trojan Scanner"
-    owasp_id = "LLM10"
+    owasp_id = "LLM04"
     supported_modes = [ScanMode.DEEP]
+    assessment_scope = "local_reference_model"
 
     def variant_count(self) -> int:
         return len(TROJAN_SUFFIXES)
@@ -43,18 +46,21 @@ class TrojanScannerModule(AttackModule):
         del target
         return await asyncio.to_thread(self._probe)
 
+    @serialized_reference_call
     def _probe(self) -> list[Finding]:
         loaded = try_load_model_and_tokenizer()
         if loaded is None:
             logger.info("ATK-024 skipped: DEEP reference model unavailable.")
-            return []
+            raise ModuleUnavailableError("Local reference model or neural baseline unavailable")
         model, tokenizer = loaded
 
         try:
             baseline = next_token_logits(model, tokenizer, BENIGN_STEM)
         except Exception as e:  # noqa: BLE001
             logger.warning(f"ATK-024 baseline failed: {e}")
-            return []
+            raise ModuleUnavailableError(
+                "Local reference model or neural baseline unavailable"
+            ) from e
 
         findings: list[Finding] = []
         for suffix in TROJAN_SUFFIXES:
@@ -64,6 +70,7 @@ class TrojanScannerModule(AttackModule):
                 kl = kl_divergence(logits, baseline)
             except Exception as e:  # noqa: BLE001
                 logger.error(f"ATK-024 failed on suffix {suffix!r}: {e}")
+                record_execution_error(f"Trojan suffix probe: {e}")
                 continue
 
             # Generation canary: a few greedy tokens after the suffix.
@@ -84,7 +91,7 @@ class TrojanScannerModule(AttackModule):
                     description=(
                         "Rare-token suffix induced a catastrophic shift in the local "
                         "reference model's next-token distribution versus the benign stem, "
-                        "consistent with a trigger/trojan behaviour (LLM10)."
+                        "consistent with a trigger/trojan behaviour (LLM04)."
                     ),
                     evidence=(
                         f"suffix={suffix!r} kl={kl:.3f} threshold={KL_THRESHOLD} "

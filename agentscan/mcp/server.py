@@ -15,9 +15,7 @@ from typing import Any
 
 from loguru import logger
 
-# Disable loguru writing to stdout/stderr in MCP stdio mode to prevent JSON-RPC corruption
-logger.remove()
-logger.add(sys.stderr, level="ERROR")
+# Configure stdio logging only when actually starting this server, not on import.
 
 
 TOOLS_METADATA: list[dict[str, Any]] = [
@@ -276,13 +274,17 @@ def process_jsonrpc_message(msg: dict[str, Any]) -> dict[str, Any] | None:
             "jsonrpc": "2.0",
             "id": req_id,
             "result": {
-                "protocolVersion": "2024-11-05",
+                "protocolVersion": params.get("protocolVersion")
+                if params.get("protocolVersion") in {"2024-11-05", "2025-03-26", "2025-06-18"}
+                else "2025-06-18",
                 "capabilities": {
                     "tools": {},
                 },
                 "serverInfo": {
                     "name": "agentscan",
-                    "version": "0.1.0",
+                    "version": __import__(
+                        "agentscan.core.models", fromlist=["_installed_version"]
+                    )._installed_version(),
                 },
             },
         }
@@ -356,6 +358,8 @@ def process_jsonrpc_message(msg: dict[str, Any]) -> dict[str, Any] | None:
 
 def run_mcp_server() -> None:
     """Run the MCP stdio JSON-RPC loop until EOF."""
+    logger.remove()
+    logger.add(sys.stderr, level="ERROR")
     for line in sys.stdin:
         line = line.strip()
         if not line:

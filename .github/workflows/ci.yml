@@ -6,46 +6,9 @@ on:
   pull_request:
     branches: [ main ]
 
+permissions:
+  contents: read
+
 jobs:
-  test:
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python-version: ["3.12", "3.13"]
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up uv
-        uses: astral-sh/setup-uv@v3
-        with:
-          enable-cache: true
-          version: "latest"
-
-      - name: Set up Python ${{ matrix.python-version }}
-        run: uv python install ${{ matrix.python-version }}
-
-      - name: Install dependencies
-        run: |
-          uv sync --extra semgrep --extra ui --dev
-
-      - name: Run Ruff Linter & Formatting
-        run: |
-          uv run ruff check .
-          uv run ruff format --check .
-
-      - name: Run Mypy Type Checking
-        run: |
-          uv run mypy agentscan
-
-      - name: Run Pytest Suite
-        run: |
-          uv run pytest -m "not slow" --cov=agentscan --cov-report=xml
-
-      - name: Dependency Security Audit
-        run: |
-          uvx pip-audit --desc on || echo "pip-audit completed"
-
-      - name: Verify Package Build
-        run: |
-          uv build
+  validation:
+    uses: ./.github/workflows/validate.yml

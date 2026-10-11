@@ -41,12 +41,13 @@ class TestAgentScanClient:
 
     @pytest.mark.asyncio
     async def test_handles_connection_error(self, target: Target) -> None:
-        with respx.mock():
-            respx.post(target.url).mock(side_effect=httpx.ConnectError("Connection refused"))
+        with respx.mock() as mock:
+            mock.post(target.url).mock(side_effect=httpx.ConnectError("Connection refused"))
             async with AgentScanClient(target) as client:
-                result = await client.send_message("test")
-            assert "error" in result
-            assert result["status_code"] == 0
+                from agentscan.core.outcomes import TargetRequestError
+
+                with pytest.raises(TargetRequestError, match="Connection failed"):
+                    await client.send_message("test")
 
     @pytest.mark.asyncio
     async def test_raises_without_context_manager(self, target: Target) -> None:

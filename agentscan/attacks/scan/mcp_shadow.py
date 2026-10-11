@@ -1,6 +1,6 @@
 # agentscan/attacks/scan/mcp_shadow.py
 #
-# ATK-006: MCP Shadow Server — OWASP LLM07
+# ATK-006: MCP Shadow Server — OWASP LLM01
 #
 # Simulates MCP tool impersonation and typosquatting by instructing the agent to
 # call attacker-controlled endpoints or spoofed tool names.
@@ -29,7 +29,7 @@ class McpShadowModule(YamlScanRunner):
     is_abstract = False
     attack_id = "ATK-006"
     attack_name = "MCP Shadow Server"
-    owasp_id = "LLM07"
+    owasp_id = "LLM01"
     payload_file = PAYLOAD_FILE
 
     default_remediation = (

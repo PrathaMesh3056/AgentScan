@@ -40,10 +40,12 @@ def mock_safe_response():
 
 @pytest.mark.asyncio
 async def test_exfiltration_skips_when_no_system_prompt(target):
+    from agentscan.core.outcomes import AssessmentInconclusiveError
+
     target.mode = ScanMode.EXPLOIT
     module = ExfiltrationModule()
-    findings = await module.run(target)
-    assert findings == []
+    with pytest.raises(AssessmentInconclusiveError):
+        await module.run(target)
 
 
 @pytest.mark.asyncio

@@ -31,16 +31,20 @@ def target_with_secret():
 
 @pytest.mark.asyncio
 async def test_credential_harvest_no_prompt(target_no_prompt):
+    from agentscan.core.outcomes import AssessmentInconclusiveError
+
     module = CredentialHarvestModule()
-    findings = await module.run(target_no_prompt)
-    assert findings == []
+    with pytest.raises(AssessmentInconclusiveError):
+        await module.run(target_no_prompt)
 
 
 @pytest.mark.asyncio
 async def test_credential_harvest_safe_prompt(target_safe_prompt):
+    from agentscan.core.outcomes import AssessmentInconclusiveError
+
     module = CredentialHarvestModule()
-    findings = await module.run(target_safe_prompt)
-    assert findings == []
+    with pytest.raises(AssessmentInconclusiveError):
+        await module.run(target_safe_prompt)
 
 
 @pytest.mark.asyncio

@@ -16,17 +16,42 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import contextvars
 from typing import Any
 
 from agentscan.core.connectors import Connector, select_connector
+from agentscan.core.context import active_context
 from agentscan.core.models import Target
+from agentscan.core.outcomes import TargetRequestError, record_execution_error
 from agentscan.core.trace import recorder
 from agentscan.core.trajectory import trajectory_recorder
+
+
+def _validate_response(resp: dict[str, Any]) -> None:
+    status = resp.get("status_code", 200)
+    from agentscan.telemetry.otel import record_connector_request
+
+    with contextlib.suppress(Exception):
+        record_connector_request(status if isinstance(status, int) else 0)
+    if resp.get("error") or (isinstance(status, int) and (status == 0 or status >= 400)):
+        reason = str(resp.get("error") or f"Target returned HTTP {status}")
+        record_execution_error(reason)
+        raise TargetRequestError(reason)
+
 
 _GLOBAL_SEMAPHORE: contextvars.ContextVar[asyncio.Semaphore | None] = contextvars.ContextVar(
     "_GLOBAL_SEMAPHORE", default=None
 )
+
+
+def consume_target_request() -> None:
+    context = active_context.get()
+    if context is not None:
+        if context.request_budget is not None and context.target_requests >= context.request_budget:
+            record_execution_error("Target request budget exhausted.")
+            raise TargetRequestError("Target request budget exhausted.")
+        context.target_requests += 1
 
 
 def set_global_concurrency_limit(limit: int | None) -> None:
@@ -91,6 +116,26 @@ class AgentScanClient:
         trajectory_recorder.record(message, resp)
         if recorder.enabled:
             recorder.record("message", message, resp)
+        _validate_response(resp)
+        return resp
+
+    async def send_indirect_document(
+        self, task: str, document: str, probe_id: str, source_id: str
+    ) -> dict[str, Any]:
+        """Use explicit ingestion capability; never synthesize chat/tool history."""
+        await self._ensure_connected()
+        sem = _GLOBAL_SEMAPHORE.get()
+        if sem is not None:
+            async with sem:
+                resp = await self._connector.send_indirect_document(
+                    task, document, probe_id, source_id
+                )
+        else:
+            resp = await self._connector.send_indirect_document(task, document, probe_id, source_id)
+        trajectory_recorder.record(task, resp)
+        if recorder.enabled:
+            recorder.record("indirect_document", task + "\n[untrusted document]\n" + document, resp)
+        _validate_response(resp)
         return resp
 
     async def send_conversation(self, messages: list[dict[str, str]]) -> dict[str, Any]:
@@ -111,4 +156,5 @@ class AgentScanClient:
         if recorder.enabled:
             rendered = " || ".join(f"{m.get('role')}: {m.get('content', '')}" for m in messages)
             recorder.record("conversation", rendered, resp)
+        _validate_response(resp)
         return resp

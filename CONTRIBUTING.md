@@ -28,7 +28,7 @@ cd AgentScan
 # git clone https://github.com/PrathaMesh3056/AgentScan.git
 
 # Sync dependencies and development tools
-uv sync --all-extras
+uv sync --locked --extra ui --extra api --dev
 ```
 
 ### 3. Running the Test Suite
@@ -37,7 +37,7 @@ Before writing code, verify that the existing test suite passes:
 
 ```bash
 # Run the fast test suite (skips slow model downloads)
-uv run pytest tests/ -m "not slow"
+uv run --no-sync pytest tests/ .github/tests/ -m "not slow"
 
 # Run the complete test suite
 uv run pytest tests/ -q
@@ -63,7 +63,18 @@ uv run mypy agentscan/
 We also recommend installing pre-commit hooks:
 ```bash
 uv run pre-commit install
+uv run pre-commit run --all-files
 ```
+
+The Ruff and mypy hook revisions and directly typed support dependencies must
+match `uv.lock`. When updating those locked packages, update
+`.pre-commit-config.yaml` together; `.github/tests/test_commit_hooks.py` checks
+that they remain aligned. Redis provides its own types, so do not install the
+legacy `types-redis` stubs. The mypy hook checks the entire `agentscan` package,
+including modules outside the current commit.
+
+If a hook formats a file, review and stage that change, then run the hooks again
+before retrying the commit. Keep hooks enabled so failures block the commit.
 
 ---
 

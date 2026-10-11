@@ -1,3 +1,5 @@
+import pytest
+
 from agentscan.core.models import Finding, Framework, ScanMode, ScanReport, Severity
 from agentscan.reporting.sarif_report import to_sarif
 
@@ -74,3 +76,38 @@ def test_sarif_report_unique_rules():
     rule_ids = [r["id"] for r in rules]
     assert "ATK-001" in rule_ids
     assert "ATK-002" in rule_ids
+
+
+@pytest.mark.parametrize("status", ["RUNNING", "INCONCLUSIVE", "ERROR"])
+def test_sarif_incomplete_assessment_keeps_coverage_and_positive_evidence(status):
+    finding = Finding(
+        attack_id="ATK-001",
+        attack_name="Test",
+        severity=Severity.HIGH,
+        description="Observed positive evidence",
+        owasp_id="LLM01",
+    )
+    report = _make_report([finding])
+    report.status = status
+    report.tests_selected = 3
+    report.tests_run = 1
+    report.module_outcomes = [{"attack_id": "ATK-012", "status": "INCONCLUSIVE"}]
+
+    run = to_sarif(report)["runs"][0]
+    assessment = run["properties"]["agentscanAssessment"]
+    assert assessment["status"] == status
+    assert assessment["score"] is None
+    assert assessment["tests_selected"] == 3
+    assert assessment["tests_run"] == 1
+    assert assessment["module_outcomes"] == report.module_outcomes
+    assert run["invocations"] == [{"executionSuccessful": False}]
+    assert len(run["results"]) == 1
+
+
+def test_sarif_complete_assessment_marks_execution_successful():
+    report = _make_report([])
+    report.tests_selected = report.tests_run = 3
+    report.complete(score=100)
+    run = to_sarif(report)["runs"][0]
+    assert run["invocations"] == [{"executionSuccessful": True}]
+    assert run["properties"]["agentscanAssessment"]["score"] == 100

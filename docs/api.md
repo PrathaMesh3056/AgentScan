@@ -1,172 +1,162 @@
-# REST API & Distributed Scan Architecture
+# REST API and distributed scans
 
-AgentScan provides an optional REST API and asynchronous worker service designed for submitting, managing, and monitoring security scans programmatically.
+The optional service uses FastAPI for authentication and scan submission, Redis Streams for delivery, and PostgreSQL for durable scan state and report JSON. Install the `ui` and `api` extras for the service; a DEEP worker also needs the `deep` extras and a suitable model cache.
 
----
+## Service boundaries
 
-## Architecture Overview
+See the [deployment and trust-boundary diagram](../internal_docs/diagrams/07_deployment_trust_boundaries.md) and the [component architecture](../internal_docs/diagrams/03_components.md). Diagram sources and previews are maintained in `internal_docs/diagrams/`.
 
-The API stack consists of three primary components:
-1. **FastAPI Service**: Provides REST endpoints for scan job dispatch, status queries, and real-time Server-Sent Events (SSE).
-2. **Redis Streams Task Queue**: Handles asynchronous scan job dispatch and worker coordination.
-3. **PostgreSQL Database**: Persists tenant records, scan metadata, historical audit logs, and complete report findings.
+Enrollment is an operator action. The same credential cannot request another tenant's token. The service-wide host list is an outer admission boundary. Each tenant also needs exact permitted origins (scheme, hostname and port), private-network CIDRs and scan quotas. HTTP initial URLs and every redirect are checked. Service connections resolve once per connection and connect to an approved literal IP while retaining the original TLS/Host identity. Mixed public/private DNS answers are rejected unless every address is permitted. Link-local metadata destinations, multicast and reserved destinations remain blocked. Infrastructure egress enforcement and identity-provider federation remain deployment responsibilities.
 
-```
-                  ┌──────────────────────┐
-                  │    HTTP Client /     │
-                  │   CI/CD Pipeline     │
-                  └──────────┬───────────┘
-                             │
-                      REST / JWT / SSE
-                             │
-                             ▼
-                  ┌──────────────────────┐
-                  │   FastAPI Service    │
-                  │  (agentscan api)     │
-                  └─────┬──────────┬─────┘
-                        │          │
-        Enqueue Scan Job│          │ Persist Metadata
-                        ▼          ▼
-            ┌──────────────┐    ┌──────────────┐
-            │ Redis Streams│    │  PostgreSQL  │
-            │  Task Queue  │    │  (Database)  │
-            └──────┬───────┘    └──────────────┘
-                   │
-                   ▼
-            ┌──────────────┐
-            │ Scan Worker  │
-            │  (Consumer)  │
-            └──────────────┘
-```
+Remote API jobs support `http://` and `https://` targets only. WebSocket, `mcp://stdio`, filesystem, browser and other connector schemes are rejected both when accepting a request and when executing a queued job. Trusted local CLI connector capabilities remain available independently. Remote WebSocket support requires redirect and network policy enforcement before it can be enabled.
 
----
+## Configuration
 
-## Getting Started
+There is no default signing key or default enrollment secret. API startup requires one configured Ed25519 PKCS8 PEM private key. All replicas and replacement processes must load the same key. Never commit a real key or enrollment credential.
 
-### Prerequisites
-- Docker and Docker Compose
-- Optional: `uv` or `pip` with `agentscan[api]` dependencies
+| Variable | Purpose | Default |
+|---|---|---|
+| `AGENTSCAN_DATABASE_URL` | PostgreSQL connection URI | `postgresql://agentscan:agentscan@localhost:5432/agentscan` (local fixture convenience) |
+| `AGENTSCAN_REDIS_URL` | Redis 6.2+ connection URI | `redis://localhost:6379/0` |
+| `AGENTSCAN_JWT_PRIVATE_KEY_FILE` | Path to shared Ed25519 PEM key | Required unless inline key is used |
+| `AGENTSCAN_JWT_PRIVATE_KEY` | Inline Ed25519 PEM key supplied by a secret manager | Required unless key file is used |
+| `AGENTSCAN_TENANT_CREDENTIALS_JSON` | Object mapping enrolled tenant IDs to unique secrets of at least 32 characters | `{}` disables `/token` |
+| `AGENTSCAN_ALLOWED_TARGET_HOSTS` | Comma-separated exact hostnames; enroll private/localhost targets explicitly | Required, no wildcard |
+| `AGENTSCAN_TENANT_POLICIES_JSON` | Object mapping tenants to exact origins, private CIDRs and quotas | Required, no implicit tenant scope |
+| `AGENTSCAN_DATA_KEY_FILE` | Shared persistent Fernet key file for queued requests | Required on API and workers |
+| `AGENTSCAN_RETENTION_DAYS` | Terminal report/event retention | `7`, allowed 1–365 |
+| `AGENTSCAN_LOCAL_MODEL` | Installed offline analysis model for permitted tenants | `ollama/llama3.2` |
+| `AGENTSCAN_EXTERNAL_MODEL` | Explicit `openai/model`, `anthropic/model` or `gemini/model` for external-enabled tenants | Empty; required when external mode is selected |
+| `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / `GEMINI_API_KEY` | Selected provider credential, supplied through deployment environment/secret manager | No default; no service `.env` fallback |
+| `AGENTSCAN_CORS_ORIGINS` | Explicit browser origin allowlist | Empty; cross-origin browser access disabled |
+| `WORKER_ID` | Redis consumer identity | Hostname |
+| `AGENTSCAN_DEEP_WORKER` | Consume only the DEEP stream | `false` |
+| `AGENTSCAN_WORKER_LEASE_SECONDS` | Database execution lease and Redis idle-reclaim threshold | `60`, allowed 3–600 |
+| `AGENTSCAN_WORKER_MAX_ATTEMPTS` | Maximum execution claims before a durable failed outcome | `3`, allowed 1–10 |
 
-### 1. Start the Service Stack
+The former `AGENTSCAN_JWT_SECRET` and `AGENTSCAN_TOKEN_PSK` variables are intentionally unsupported. Existing tokens must be reissued because the configured key, audience and signing-key ID are required. JWTs require issuer, audience, subject, tenant, issue time, not-before and expiry; the algorithm is pinned to EdDSA. Current key rotation invalidates existing tokens; overlapping key rotation/JWKS is not implemented.
 
-A complete local deployment configuration is provided in `docker-compose.api.yml`:
+An operator can generate a local development signing key with:
 
 ```bash
-docker compose -f docker-compose.api.yml up -d
+openssl genpkey -algorithm ED25519 -out agentscan-jwt.pem
 ```
 
-This starts:
-- **API Server**: Listening on `http://localhost:8080`
-- **PostgreSQL**: Port `5432`
-- **Redis**: Port `6379`
+Store it outside version control. For the Compose stack, follow the required environment and key mounting configuration in `docker-compose.api.yml`. The API is available on its configured mapped port (the supplied local stack uses `http://localhost:8081`). PostgreSQL and Redis must be ready before API startup; dependency initialization failures prevent the API from serving.
 
-Interactive OpenAPI documentation is available at `http://localhost:8080/docs`.
+## Token enrollment and HTTP endpoints
 
----
+`POST /token` accepts `{"tenant_id":"tenant-a","secret":"<tenant-a enrollment credential>"}` and returns `access_token`, `token_type: "bearer"`, and `tenant_id`. It returns 404 when enrollment is disabled and 403 for an unknown tenant or mismatched credential. Use HTTPS for deployed enrollment. The service does not yet implement enrollment rate limiting or user roles.
 
-## Authentication
+All scan routes require `Authorization: Bearer <token>`.
 
-All scan endpoints require a tenant-scoped Bearer token. In development, a pre-shared key (PSK) can be exchanged for a JWT token.
+| Endpoint | Behavior |
+|---|---|
+| `POST /scans` | Validate enrolled target, atomically persist encrypted request, queued metadata, delivery intent and initial event; optional tenant-scoped `Idempotency-Key`; return 202 with `scan_id`, current accepted `status`, and `stream_url` |
+| `GET /scans?limit=20&offset=0` | List the authenticated tenant's scans; limit 1–100 and nonnegative offset |
+| `GET /scans/{scan_id}` | Return metadata, UTC timestamps, nullable score, and redacted service report under `report` |
+| `GET /scans/{scan_id}/stream` | Replay tenant-scoped PostgreSQL events using `Last-Event-ID`, then follow durable state |
+| `POST /scans/{scan_id}/cancel` | Cancel active work, clear queued credentials and fence running attempts; 409 for terminal state |
+| `DELETE /scans/{scan_id}` | Delete a terminal record; return 409 for queued/running scans, 404 for missing/other-tenant records |
+| `GET /health/live` | Process liveness; does not require DB/Redis |
+| `GET /health/ready` | Bounded DB and Redis checks; return 503 during a required dependency outage |
 
-### Requesting a Token
+Example scan request:
 
-```bash
-TOKEN=$(curl -s -X POST http://localhost:8080/token \
-  -H "Content-Type: application/json" \
-  -d '{
-    "tenant_id": "default-tenant",
-    "secret": "dev-psk"
-  }' | jq -r .access_token)
-
-echo "Bearer Token: $TOKEN"
-```
-
----
-
-## API Endpoints
-
-### 1. Enqueue a Scan Job
-
-Submit a target URL or configuration for asynchronous scanning:
-
-```bash
-curl -s -X POST http://localhost:8080/scans \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "target_url": "http://localhost:8000/chat",
-    "scan_mode": "SCAN"
-  }'
-```
-
-**Response (`202 Accepted`):**
 ```json
 {
-  "scan_id": "scan_01h7abc123def",
-  "status": "QUEUED",
-  "created_at": "2026-09-20T12:00:00Z"
+  "target_url": "https://agent.example.com/chat",
+  "scan_mode": "SCAN",
+  "analysis_mode": "deterministic",
+  "data_classification": "sensitive",
+  "timeout": 30,
+  "concurrency": 10
 }
 ```
 
-### 2. Stream Live Scan Progress (SSE)
+Modes are `SCAN`, `EXPLOIT` and `DEEP`. DEEP requires a separately configured consumer: ordinary workers read only the high and normal streams. The supplied CPU Kubernetes deployment does not provision a GPU/DEEP worker automatically.
 
-Subscribe to Server-Sent Events to receive real-time execution events as attack modules run:
+Optional `indirect_adapter: "document_v1"` enables ATK-005 only when the enrolled
+HTTP target implements the [document ingestion/receipt contract](modules/indirect_injection.md).
+Supply an operator-known synthetic `canary_token` already provisioned privately
+on that target. Neither setting installs an adapter or a reference remotely.
+The worker preserves this selection and the existing target/tenant egress policy.
+Missing capability is unavailable; missing disclosure criteria or consumption
+receipts are inconclusive. This module uses deterministic evidence without a judge.
+Omitting the adapter, or sending `null`, preserves the previous canonical admission
+request shape; opting in changes its identity for `Idempotency-Key` retries.
+
+### Retrying a submission
+
+Clients that may retry `POST /scans` should generate a unique key for each intended scan and send it in the `Idempotency-Key` header. For example, `Idempotency-Key: scan-request-20261007-001`. Keep that key and the same request when retrying after a lost response or connection failure.
+
+The header is optional. It must occur exactly once and contain 1–128 ASCII letters, digits, periods, underscores, tildes or hyphens. Empty, duplicate, whitespace-containing and oversized keys return **400** without persisting a submission. A reused key with a changed request returns **409**. The key is scoped to the authenticated tenant; another tenant's use of the same string is independent.
+
+The canonical request includes every validated scan option, target headers and system prompt. JSON object order and omitted default values do not change its identity; URL spelling and actual option values do. A matching retry returns **202**, the original `scan_id`, its current persisted `status` (including terminal states) and the original stream URL. It does not create another job, progress event or outbox record, and does not consume another active/hourly quota slot. Replays still pass current authentication and tenant authorization checks; provider key availability is required only for a new external submission. A completed external scan remains inspectable through a matching retry when its provider key is unavailable.
+
+Deduplication is stored in PostgreSQL in the same transaction as acceptance, under the tenant transaction lock used for quotas. Concurrent retries across API replicas therefore share one accepted scan. Upgrade every API replica before enabling keyed client retries; older replicas do not implement this header. The database retains domain-separated HMAC-SHA256 digests of the tenant/key and canonical request, rather than the raw key or an unkeyed hash of potentially low-entropy credentials. The HMAC secret derives from the required shared `AGENTSCAN_DATA_KEY_FILE`; all API replicas must use that same persistent file content. Keep this key stable while queued encrypted requests or idempotency bindings remain. Data-key rotation requires a coordinated retention/drain plan; replacing it independently also changes retry identity.
+
+The binding lasts as long as its scan record. Completing, failing or cancelling a scan clears queued credentials while preserving its binding. Explicit deletion of a terminal scan, or terminal expiry under `AGENTSCAN_RETENTION_DAYS`, removes the binding with the scan. The key can then create a new scan, and normal quota checks apply. Active scans retain their bindings. This is a retention-bounded submission guarantee; clients should use fresh keys for new scans and should not deliberately recycle deleted keys.
+
+Without the header, each accepted `POST /scans` remains a new submission. Submission deduplication does not make target interactions exactly once: worker recovery can repeat target requests after an execution crash.
+
+Completed responses contain `report` as a JSON object and timestamps as ISO UTC strings. `score: null` and `status: "inconclusive"` indicate that sufficient evaluation evidence is unavailable; operational errors are not interpreted as a clean scan. Report statuses `COMPLETE`, `INCONCLUSIVE` and `ERROR` map to persisted states `completed`, `inconclusive` and `failed`.
+
+SSE data frames contain JSON, for example `data: {"status":"completed","progress":100,"score":81}`, with a durable PostgreSQL event sequence in the `id` field. Keepalives are comment frames. Reconnect with `Last-Event-ID` to replay missed transitions; `GET /scans/{id}` also returns authoritative state. Optional Redis PubSub notification is independent of the durable event log.
+
+## Delivery and failure behavior
+
+See the [API submission and worker sequence](../internal_docs/diagrams/05_api_job_sequence.md) and [job/scan state machine](../internal_docs/diagrams/06_job_state_machine.md).
+
+The worker leaves an entry pending when it cannot persist a terminal result, loses its lease or shuts down. A replacement consumer uses `XAUTOCLAIM` after the idle threshold. A database lease token fences stale owners from committing results. A terminal redelivery is acknowledged without rerunning the scan. Retry counters live in PostgreSQL; exhausted expired attempts become a durable failed result before ACK. Malformed deliveries without a valid persisted scan identity are quarantined with a bounded Redis receipt.
+
+Delivery is **at least once**. A crash after target interaction but before result persistence can repeat target actions. Leases and result fencing do not provide exactly-once external effects. EXPLOIT operations therefore still need target-side idempotency or operator controls.
+
+Submission commits the scan, its encrypted request, initial progress event, transactional outbox record and optional idempotency binding together. Redis relay failure still returns **202** after durable acceptance. API/worker reconciliation retries undelivered records and periodically redelivers stranded queued/expired work, including after Redis data loss. A crash after Redis acceptance may create duplicate deliveries; fenced leases and terminal-state checks prevent simultaneous ownership and terminal reruns. Client retries with a matching `Idempotency-Key` reuse the accepted scan within its retention window; use the returned scan ID to inspect acceptance.
+
+Progress comes from a tenant-scoped PostgreSQL event log. `Last-Event-ID` must be a nonnegative signed-64-bit decimal sequence. Running and terminal transitions append an event in the same transaction as the state update. Stream reconnects replay events after the cursor and terminate after the authoritative terminal outcome. Redis PubSub remains an optional best-effort signal, independent of durable replay.
+
+`XACK` and `XDEL` run together after durable terminal state. This service assumes one consumer group; do not add independent consumer groups and expect historical replay after entry deletion. Uncompleted/pending entries are retained. Dead-letter receipts are bounded at approximately 1000; archival, queue quotas and overload policy remain deployment work.
+
+API schema setup includes additive lease columns and is not a versioned migration framework. Plan rolling deployment compatibility and migration ownership separately. SIGTERM/SIGINT cancels the current asynchronous job and closes the DB pool; the unacknowledged lease expires for recovery. It does not roll back effects already observed by the target.
+
+## Regression verification
+
+Run API unit and failure-state tests:
 
 ```bash
-curl -N http://localhost:8080/scans/scan_01h7abc123def/stream \
-  -H "Authorization: Bearer $TOKEN"
+python -m pytest tests/api -q
 ```
 
-**Event Stream Format:**
-```
-event: progress
-data: {"module": "ATK-001", "status": "running", "percent": 15}
+Live integration tests require disposable, dedicated PostgreSQL and Redis services configured through `AGENTSCAN_TEST_DATABASE_URL` and `AGENTSCAN_TEST_REDIS_URL`. They reset scanner tables in the test database and scanner queue streams in the test Redis instance. Do not point them at production or shared queues.
 
-event: finding
-data: {"severity": "HIGH", "title": "Prompt Injection Detected", "owasp_id": "LLM01"}
+The live suite verifies UTC/JSONB round trips, tenant isolation, stale-owner rejection, all three stream deliveries, pending reclamation, persistence-failure recovery, bounded retries, terminal redelivery, outbox repair, durable replay, cancellation, quotas and an actual SCAN run against a refusal-only localhost fixture. `tests/api/test_idempotency.py` additionally checks concurrent matching/conflicting submissions, tenant-key isolation, canonical defaults, encrypted requests, quota accounting, persistence across pool recreation, and deletion/retention of bindings against PostgreSQL. The dedicated database URL alone enables these idempotency cases; they do not require Redis because submission delivery is tested separately. The tests do not load `.env` or call commercial providers. Provider adapter tests use synthetic responses through mocked transports; they do not validate a real model/account.
 
-event: complete
-data: {"scan_id": "scan_01h7abc123def", "status": "COMPLETED", "score": 85}
-```
+To include real dependency stop/start checks, set `AGENTSCAN_TEST_POSTGRES_CONTAINER` and `AGENTSCAN_TEST_REDIS_CONTAINER` to the dedicated test containers. Their names must start with `agentscan-hardening-`. Bind explicit localhost ports when creating them: automatic Docker host-port allocation may change when a container restarts, invalidating the test connection URLs. The outage check verifies readiness becomes 503 while either dependency is down, liveness remains 200, and readiness returns to 200 after recovery.
 
-### 3. Retrieve Scan Results
+## Tenant policy and sensitive data
 
-Poll the final report, findings summary, and risk score:
+Example administrator policy (the outer host list must include `agent.example.com`):
 
-```bash
-curl -s http://localhost:8080/scans/scan_01h7abc123def \
-  -H "Authorization: Bearer $TOKEN"
-```
-
-**Response (`200 OK`):**
 ```json
 {
-  "scan_id": "scan_01h7abc123def",
-  "target_url": "http://localhost:8000/chat",
-  "status": "COMPLETED",
-  "score": 85,
-  "findings_count": 2,
-  "findings": [
-    {
-      "id": "ATK-001",
-      "severity": "HIGH",
-      "title": "Direct Prompt Injection",
-      "owasp_id": "LLM01",
-      "remediation": "Enforce strict system prompt boundaries and input validation."
-    }
-  ]
+  "tenant-a": {
+    "origins": ["https://agent.example.com"],
+    "networks": [],
+    "max_active_scans": 5,
+    "submissions_per_hour": 60,
+    "max_scan_seconds": 600,
+    "max_target_requests": 500,
+    "allow_local_model_analysis": false,
+    "allow_external_model_analysis": false
+  }
 }
 ```
 
----
+Private targets require an explicit narrow CIDR as well as their origin. Quotas use per-tenant database transaction locks and durable hourly counters; deleting reports does not replenish the hourly allowance. Exceeding submission/active quotas returns 429. Execution has a total deadline and a request budget covering every HTTP hop. POST interactions are not automatically retried unless a trusted local operator explicitly opts into state-changing retries. Service response bodies are capped and compressed responses are rejected. HTTP request bodies are limited to 256 KiB and a 15-second receive deadline.
 
-## Configuration & Environment Variables
+Analysis defaults to `analysis_mode: "deterministic"` and `data_classification: "sensitive"`. `"local"` requires tenant permission and an administrator-operated offline loopback model. `"external"` requires explicit client designation `data_classification: "non_sensitive"`, tenant permission and the administrator's provider/model/key configuration. Both submission and worker execution reject sensitive external analysis. Neither a configured key nor a permitted tenant changes these defaults, and availability failures never trigger an external fallback.
 
-When deploying the API service, configure the following environment variables:
+External analysis can send relevant objectives and target responses to the selected provider; classification is the client's decision. Keys and arbitrary provider URLs are never accepted in scan requests. Service keys are administrator-configured rather than per-tenant BYOK; a client can use its own key through a locally owned CLI/dashboard process. See [data policy](DATA_POLICY.md) for external setup, offline setup, encryption, redaction and retention, and [data-flow diagram](../internal_docs/diagrams/17_sensitive_data_flow.md) for the three paths.
 
-| Variable | Description | Default |
-| :--- | :--- | :--- |
-| `DATABASE_URL` | PostgreSQL connection string | `postgresql://postgres:postgres@localhost:5432/agentscan` |
-| `REDIS_URL` | Redis connection string for stream queue | `redis://localhost:6379/0` |
-| `API_SECRET_KEY` | Secret key used for signing JWT tokens | `dev-secret-key-change-in-production` |
-| `WORKER_CONCURRENCY` | Maximum concurrent scans per worker | `4` |
+Database encryption key and tenant policy settings are required in the Compose and Kubernetes templates. Existing rolling deployments need a coordinated schema/config rollout; these local checks do not establish deployed cluster isolation.

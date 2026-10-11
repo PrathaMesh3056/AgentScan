@@ -39,10 +39,38 @@ def run_identity_audit(path: str) -> IdentityReport:
 
     This is the single entry point cli.py will call for `--scan-identity`.
     """
-    agents = load_manifests(path)
+    coverage: list[dict] = []
+    try:
+        agents = load_manifests(path, coverage=coverage)
+    except FileNotFoundError:
+        from agentscan.supply_chain.coverage import record_coverage
 
-    roles = load_role_policies()
-    dangerous_keywords = load_dangerous_keywords()
+        agents = []
+        record_coverage(
+            coverage,
+            "identity",
+            0,
+            source="agent_manifest_declarations",
+            issues=["Selected audit path does not exist."],
+        )
+        coverage[-1]["runtime_permissions_verified"] = False
+
+    try:
+        roles = load_role_policies()
+        dangerous_keywords = load_dangerous_keywords()
+        if (
+            not roles
+            or not dangerous_keywords
+            or any(not isinstance(k, str) for k in dangerous_keywords)
+        ):
+            raise ValueError("Missing identity baseline policy")
+    except Exception as exc:
+        roles = {}
+        dangerous_keywords = []
+        coverage[-1]["status"] = "INCONCLUSIVE"
+        coverage[-1]["limitations"].append(
+            f"Identity baseline policy failed: {type(exc).__name__}."
+        )
 
     findings = []
     for agent in agents:
@@ -53,7 +81,10 @@ def run_identity_audit(path: str) -> IdentityReport:
 
     findings.extend(audit_rbac_graph(agents, roles, dangerous_keywords))
 
-    score = calculate_identity_score(findings, total_agents_audited=len(agents))
+    complete = all(item["status"] == "COMPLETE" for item in coverage)
+    score = (
+        calculate_identity_score(findings, total_agents_audited=len(agents)) if complete else None
+    )
 
     return IdentityReport(
         audit_id=str(uuid.uuid4()),
@@ -61,6 +92,8 @@ def run_identity_audit(path: str) -> IdentityReport:
         agents_found=agents,
         findings=findings,
         identity_score=score,
+        audit_coverage=coverage,
+        status="COMPLETE" if complete else "INCONCLUSIVE",
     )
 
 
@@ -70,7 +103,11 @@ def format_terminal_report(report: IdentityReport) -> str:
     Pure function (returns a string) so it's trivially testable — the real
     CLI wraps this with rich for colour once cli.py exists.
     """
-    lines = ["[Identity & Authorization Audit]", ""]
+    lines = [
+        "[Identity & Authorization Audit]",
+        "Declared manifests only; deployed permissions are not verified.",
+        "",
+    ]
 
     severity_order = ["CRITICAL", "HIGH", "MEDIUM", "LOW"]
     sorted_findings = sorted(
@@ -86,7 +123,8 @@ def format_terminal_report(report: IdentityReport) -> str:
         lines.append(f"[{f.severity.value:8s}]  {f.attack_id:8s}  {f.description}")
 
     lines.append("")
-    band = score_band(report.identity_score or 0)
-    lines.append(f"AgentScan Identity Score:  {report.identity_score} / 100  [{band}]")
+    band = score_band(report.identity_score)
+    score_text = f"{report.identity_score} / 100" if report.identity_score is not None else "N/A"
+    lines.append(f"AgentScan Identity Score:  {score_text}  [{band}]")
 
     return "\n".join(lines)

@@ -1,6 +1,6 @@
 # agentscan/attacks/scan/dos.py
 #
-# ATK-004: Denial of Service / Resource Exhaustion — OWASP LLM04
+# ATK-004: Denial of Service / Resource Exhaustion — OWASP LLM10
 #
 # Probes the target for loop-inducing prompts, repetition bombs, and context-flood
 # patterns that can exhaust compute, memory, or context windows.
@@ -27,7 +27,7 @@ class DosModule(YamlScanRunner):
     is_abstract = False
     attack_id = "ATK-004"
     attack_name = "Denial of Service / Resource Exhaustion"
-    owasp_id = "LLM04"
+    owasp_id = "LLM10"
     payload_file = PAYLOAD_FILE
 
     default_remediation = (

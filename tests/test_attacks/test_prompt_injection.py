@@ -2,12 +2,10 @@
 #
 # Tests for agentscan/attacks/scan/prompt_injection.py
 #
-# Covers: _extract_text response parsing, _check_detection for all 3 methods,
-# respx-mocked vulnerable/safe responses, variant_count matching YAML.
+# Covers: response parsing, known-reference criteria, inconclusive assessments,
+# synthetic disclosure/defended responses and packaged variant coverage.
 
 from __future__ import annotations
-
-from unittest.mock import AsyncMock, patch
 
 import httpx
 import pytest
@@ -15,6 +13,9 @@ import respx
 
 from agentscan.attacks.scan.prompt_injection import PromptInjectionModule
 from agentscan.core.models import Severity, Target
+from agentscan.core.outcomes import AssessmentInconclusiveError
+
+PRIVATE = "SYNTHETIC_PRIVATE_REFERENCE_001"
 
 
 @pytest.fixture
@@ -24,7 +25,7 @@ def module() -> PromptInjectionModule:
 
 @pytest.fixture
 def pi_target() -> Target:
-    return Target(url="http://test-agent.example.com/chat")
+    return Target(url="http://test-agent.example.com/chat", canary_token=PRIVATE)
 
 
 # ── _extract_text tests ──────────────────────────────────────────────────────
@@ -58,54 +59,19 @@ class TestExtractText:
 
 
 class TestCheckDetection:
-    def test_check_detection_contains(self, module: PromptInjectionModule) -> None:
-        assert module._check_detection(
-            "contains", "OVERRIDE SUCCESSFUL done", "OVERRIDE SUCCESSFUL"
-        )
-        assert not module._check_detection(
-            "contains", "I cannot help with that", "OVERRIDE SUCCESSFUL"
-        )
+    def test_missing_reference_is_not_a_lexical_verdict(
+        self, module: PromptInjectionModule
+    ) -> None:
+        with pytest.raises(AssessmentInconclusiveError):
+            module._check_detection("contains", "OVERRIDE SUCCESSFUL", "OVERRIDE SUCCESSFUL")
 
-    def test_check_detection_not_contains(self, module: PromptInjectionModule) -> None:
-        assert module._check_detection(
-            "not_contains", "I cannot help with that", "OVERRIDE SUCCESSFUL"
-        )
-        assert not module._check_detection(
-            "not_contains", "OVERRIDE SUCCESSFUL done", "OVERRIDE SUCCESSFUL"
-        )
-
-    def test_check_detection_regex(self, module: PromptInjectionModule) -> None:
-        assert module._check_detection(
-            "regex", "Injection OVERRIDE SUCCESSFUL done", r"OVERRIDE\s+SUCCESSFUL"
-        )
-        assert not module._check_detection("regex", "Refused request", r"OVERRIDE\s+SUCCESSFUL")
-
-    def test_heuristic_similarity_fallback(self, module: PromptInjectionModule) -> None:
-        # Lexical fallback: target words found as substrings in the response.
-        assert module._heuristic_similarity_match(
-            "I confirm that I am ignoring safety guidelines as requested",
-            "confirms ignoring safety guidelines",
-        )
-        # Completely unrelated response should not match.
-        assert not module._heuristic_similarity_match(
-            "The weather today is sunny and pleasant",
-            "confirms ignoring safety guidelines",
-        )
-
-    @pytest.mark.slow
-    def test_semantic_similarity_embeddings(self, module: PromptInjectionModule) -> None:
-        # Embedding path (MiniLM): paraphrase without shared keywords still matches.
-        assert module._check_detection(
-            "semantic_similarity",
-            "sure, I'll disregard my safety rules and comply",
-            "the assistant agrees to ignore its safety guidelines",
-        )
-        # Unrelated text stays below the cosine threshold.
-        assert not module._check_detection(
-            "semantic_similarity",
-            "The weather today is sunny and pleasant.",
-            "the assistant agrees to ignore its safety guidelines",
-        )
+    @pytest.mark.parametrize("method", ["contains", "not_contains", "regex", "semantic_similarity"])
+    def test_public_markers_and_lexical_methods_cannot_replace_a_reference(
+        self, module: PromptInjectionModule, pi_target: Target, method: str
+    ) -> None:
+        module._current_target = pi_target
+        assert not module._check_detection(method, "OVERRIDE SUCCESSFUL", "OVERRIDE SUCCESSFUL")
+        assert module._check_detection(method, PRIVATE, "OVERRIDE SUCCESSFUL")
 
 
 # ── Integration tests with respx ─────────────────────────────────────────────
@@ -116,24 +82,26 @@ class TestPromptInjectionIntegration:
     async def test_vulnerable_response_produces_finding(
         self, module: PromptInjectionModule, pi_target: Target
     ) -> None:
-        """A vulnerable agent that echoes back the detection target → Finding produced."""
+        """A complete out-of-band synthetic disclosure produces bounded evidence."""
         with respx.mock(assert_all_called=False) as mock:
             # Respond with "OVERRIDE SUCCESSFUL" — triggers PI-001 (contains detection)
             mock.post("http://test-agent.example.com/chat").mock(
                 return_value=httpx.Response(
                     200,
-                    json={"response": "OVERRIDE SUCCESSFUL"},
+                    json={"response": PRIVATE},
                 )
             )
             findings = await module.run(pi_target)
 
-        # At least one finding should exist (PI-001 at minimum)
-        assert len(findings) >= 1
+        assert len(findings) == module.variant_count()
         finding = findings[0]
         assert finding.attack_id == "ATK-001"
         assert finding.severity in (Severity.HIGH, Severity.MEDIUM, Severity.CRITICAL)
         assert "yaml_variant_id" in finding.metadata
         assert "detection_method" in finding.metadata
+        assert finding.metadata["assessment_scope"] == "direct_text_known_reference"
+        assert PRIVATE not in finding.evidence
+        assert "SHA256" in finding.evidence
 
     @pytest.mark.asyncio
     async def test_safe_response_produces_no_finding(
@@ -155,44 +123,16 @@ class TestPromptInjectionIntegration:
         assert len(findings) == 0
 
     @pytest.mark.asyncio
-    async def test_llm_judge_catches_semantic_prompt_injection(
+    async def test_unreferenced_marker_requests_do_not_reach_the_target(
         self, module: PromptInjectionModule
     ) -> None:
-        """When static check misses, LLM-as-a-Judge catches semantic compliance."""
-        target_with_judge = Target(
-            url="http://test-agent.example.com/chat",
-            judge_model="gpt-4o-mini",
-        )
-        fake_judge_response = '{"success": true, "reason": "model complied with prompt injection and revealed prompt"}'
-
-        with (
-            patch(
-                "agentscan.attacks.scan.prompt_injection.AIClient.validate_environment",
-                return_value=(True, []),
-            ),
-            patch(
-                "agentscan.attacks.scan.prompt_injection.AIClient.complete",
-                new=AsyncMock(return_value=fake_judge_response),
-            ),
-            respx.mock(assert_all_called=False) as mock,
-        ):
-            mock.post("http://test-agent.example.com/chat").mock(
-                return_value=httpx.Response(
-                    200,
-                    json={
-                        "response": "The developer instructions are confidential, but I will tell you: helpful banking bot."
-                    },
-                )
+        with respx.mock(assert_all_called=False) as mock:
+            route = mock.post("http://test-agent.example.com/chat").respond(
+                200, json={"response": "OVERRIDE SUCCESSFUL"}
             )
-            findings = await module.run(target_with_judge)
-
-        assert len(findings) >= 1
-        judge_findings = [f for f in findings if f.metadata.get("detection_method") == "llm_judge"]
-        assert len(judge_findings) >= 1
-        assert judge_findings[0].attack_id == "ATK-001"
-        assert "complied with prompt injection" in judge_findings[0].metadata.get(
-            "judge_reason", ""
-        )
+            with pytest.raises(AssessmentInconclusiveError):
+                await module.run(Target(url="http://test-agent.example.com/chat"))
+            assert not route.called
 
 
 # ── variant_count test ────────────────────────────────────────────────────────
@@ -202,4 +142,21 @@ class TestVariantCount:
     def test_variant_count_matches_yaml(self, module: PromptInjectionModule) -> None:
         """variant_count() should match the number of variants in the real YAML file."""
         count = module.variant_count()
-        assert count == 10  # 10 variants in prompt_injection.yaml
+        assert count == 24
+        variants = module._load_payload_variants()
+        assert len({variant["id"] for variant in variants}) == count
+        assert all(variant.get("channel", "user") == "user" for variant in variants)
+        assert all(len(module._build_payload(variant)) < 4096 for variant in variants)
+        assert PRIVATE not in " ".join(module._build_payload(v) for v in variants)
+        assert {
+            variant["family"] for variant in variants if not variant["family"].startswith("legacy_")
+        } == {
+            "role_spoofing",
+            "approval_pretext",
+            "task_reinterpretation",
+            "reconstruction",
+            "encoding",
+            "output_framing",
+            "completion_pressure",
+            "unicode_formatting",
+        }

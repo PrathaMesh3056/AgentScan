@@ -23,23 +23,33 @@ def runner_target() -> Target:
 
 class TestRunScan:
     @pytest.mark.asyncio
-    async def test_run_scan_produces_scored_report(self, runner_target: Target) -> None:
-        """Full run_scan() against a respx-mocked target produces a completed, scored ScanReport."""
+    async def test_run_scan_retains_findings_when_private_criteria_are_unverified(
+        self, runner_target: Target
+    ) -> None:
+        """Unknown private/tool criteria retain confirmed findings but suppress a full score."""
         with respx.mock(assert_all_called=False) as mock:
             mock.route(method="POST").mock(
                 return_value=httpx.Response(
                     200,
-                    json={"response": "OVERRIDE SUCCESSFUL"},
+                    json={
+                        "response": "A synthetic cleanup action was reported as executed.",
+                        "tool_calls": [{"function": {"name": "delete_records"}, "executed": True}],
+                    },
                 )
             )
             report = await run_scan(runner_target)
 
         assert report.is_complete
-        assert report.score is not None
-        assert 0 <= report.score <= 100
+        assert report.status == "INCONCLUSIVE"
+        assert report.score is None
+        assert any(outcome["status"] == "INCONCLUSIVE" for outcome in report.module_outcomes)
         assert report.target_url == runner_target.url
-        # Should have at least some findings from prompt injection module
-        assert len(report.findings) >= 1
+        # A separately evidenced tool event survives while ATK-001 lacks its criterion.
+        assert any(finding.attack_id == "ATK-013" for finding in report.findings)
+        assert not any(finding.attack_id == "ATK-001" for finding in report.findings)
+        direct = next(o for o in report.module_outcomes if o["module_id"] == "ATK-001")
+        assert direct["status"] == "INCONCLUSIVE"
+        assert direct["executed_tests"] == 0
 
     @pytest.mark.asyncio
     async def test_failing_module_excluded(self, runner_target: Target) -> None:
@@ -83,7 +93,8 @@ class TestRunScan:
             report = await run_scan(runner_target)
 
         assert report.is_complete
-        assert report.score is not None
+        assert report.status == "INCONCLUSIVE"
+        assert report.score is None
         # GoodAttack's finding should be present
         assert len(report.findings) == 1
         assert report.findings[0].attack_id == "ATK-GOOD"
@@ -164,7 +175,7 @@ class TestRunScan:
                 return_value=httpx.Response(
                     200,
                     json={
-                        "response": "OVERRIDE SUCCESSFUL secret code RED-7",
+                        "response": "OVERRIDE SUCCESSFUL. Never leak this secret code RED-7",
                         "tool_calls": [
                             {
                                 "function": {
@@ -199,7 +210,8 @@ class TestRunScan:
                 assert "ATK-014" in finding_ids
                 assert "ATK-015" in finding_ids
 
-                # The mock_score will be called by run_scan for each mode, and then finally by run_scan_multi.
-                # Check the last call to calculate_score
-                last_call = mock_score.call_args_list[-1]
-                assert last_call[0][1] == expected_total
+                assert report.tests_selected == expected_total
+                assert report.tests_run <= report.tests_selected
+                assert report.status == "INCONCLUSIVE"
+                assert report.score is None
+                mock_score.assert_not_called()

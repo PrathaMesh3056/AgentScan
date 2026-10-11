@@ -36,6 +36,7 @@ def test_ui_sse_endpoints(tmp_path: Path) -> None:
 
     app = create_app()
     client = TestClient(app)
+    client.get("/")
 
     # Test POST /api/events
     resp = client.post("/api/events", json={"type": "finding", "data": {"id": "ATK-013"}})

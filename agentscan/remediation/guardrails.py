@@ -10,6 +10,7 @@ from pathlib import Path
 
 from agentscan.core.models import Finding
 from agentscan.remediation.models import FixAction
+from agentscan.remediation.paths import contained_path
 
 
 def _generate_colang_rules(atk_ids: set[str]) -> str:
@@ -132,15 +133,17 @@ def _generate_system_prompt_guard(atk_ids: set[str]) -> str:
 def plan_guardrails(findings: list[Finding], root_path: Path) -> list[FixAction]:
     """Generate guardrails/ FixActions if ATK-* vulnerabilities were found."""
     atk_findings = [f for f in findings if f.attack_id.startswith("ATK-")]
-    if not atk_findings:
+    if not atk_findings or not root_path.is_dir():
         return []
 
     atk_ids = {f.attack_id for f in atk_findings}
     actions: list[FixAction] = []
 
     target_dir = root_path if root_path.is_dir() else root_path.parent
-    colang_path = target_dir / "guardrails" / "agent_guardrails.co"
-    prompt_guard_path = target_dir / "guardrails" / "system_prompt_guard.md"
+    colang_path = contained_path(root_path, target_dir / "guardrails" / "agent_guardrails.co")
+    prompt_guard_path = contained_path(
+        root_path, target_dir / "guardrails" / "system_prompt_guard.md"
+    )
 
     # Colang rules
     colang_content = _generate_colang_rules(atk_ids)
@@ -149,7 +152,7 @@ def plan_guardrails(findings: list[Finding], root_path: Path) -> list[FixAction]
             path=str(colang_path.resolve()),
             kind="guardrails",
             finding_id=atk_findings[0].attack_id,
-            before="",
+            before=colang_path.read_text(encoding="utf-8") if colang_path.exists() else "",
             after=colang_content,
             applied=False,
         )
@@ -162,7 +165,9 @@ def plan_guardrails(findings: list[Finding], root_path: Path) -> list[FixAction]
             path=str(prompt_guard_path.resolve()),
             kind="guardrails",
             finding_id=atk_findings[0].attack_id,
-            before="",
+            before=prompt_guard_path.read_text(encoding="utf-8")
+            if prompt_guard_path.exists()
+            else "",
             after=prompt_guard_content,
             applied=False,
         )

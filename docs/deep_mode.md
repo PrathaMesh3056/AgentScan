@@ -1,6 +1,6 @@
 # DEEP Mode — Neural Activation Probing
 
-> **DEEP Mode** inspects the hidden internal states of an open-weight aligned reference model to corroborate prompt injection payloads at the neural activation level, bypassing textual obfuscation and implicit refusals.
+> **DEEP Mode** measures the hidden states of an open-weight local reference model. These experimental observations describe that reference model, not the hidden states or safety of an arbitrary remote target, and are excluded from remote-target scoring.
 
 ---
 
@@ -8,7 +8,7 @@
 
 Standard black-box scanners evaluate an agent's vulnerability purely from its **textual output**. However, defensive techniques such as paraphrasing, prompt wrappers, or implicit refusals can mask whether an injection payload actually compromised the model's latent processing.
 
-DEEP mode resolves this by replaying prompt-injection payloads through a local aligned reference model (default: `Qwen/Qwen2.5-0.5B-Instruct` on CPU) and measuring how far each payload shifts the model's internal representation away from an empirical **benign baseline**.
+DEEP mode replays payloads through a local reference model (`Qwen/Qwen2.5-0.5B-Instruct`) and measures representation changes against a benign baseline. The model revision is pinned, safetensors are required, remote model code is disabled and shared inference/hooks are serialized. A changed representation does not by itself establish an injection, compromise or the behavior of a separate target agent.
 
 ```
 Input Prompt ───▶ [ Reference Model Hidden Layers ] ───▶ Residual Stream Activation
@@ -39,17 +39,17 @@ For each layer in the residual stream, AgentScan measures two complementary geom
    Detects orthogonal shifts or vector inversions where the model's semantic trajectory abruptly diverges from standard instruction-following manifolds.
 
 ### Dynamic Noise Floor
-Rather than relying on arbitrary static cutoffs, AgentScan computes a **benign noise floor** across a diverse calibration set of standard, benign instructions. Payloads that statistically deviate beyond this floor are flagged as corroborated neural injections.
+AgentScan computes a **benign noise floor** across fixed benign instructions. Payload deviations are experimental reference observations. This baseline has not been established as independent held-out calibration of jailbreak detection, so an anomaly is not a confirmed neural injection.
 
 ---
 
 ## 🧬 Cross-Modal Correlation (`yaml_variant_id`)
 
-Every finding emitted by DEEP mode attaches a shared `metadata["yaml_variant_id"]`. This matches the exact variant ID used by `SCAN` mode's `ATK-001`.
+Activation-probe observations attach `metadata["yaml_variant_id"]` for comparison with the payload variant used by `SCAN` mode's `ATK-001`; other DEEP probes have their own evidence fields.
 
 In the final report (JSON, HTML, or PDF), security engineers can inspect the **dual perspective**:
 - **Black-box observation**: Did the endpoint output indicate compliance or refusal?
-- **White-box corroboration**: Did the payload trigger an anomalous latent activation spike inside the model?
+- **Local reference observation**: Did the same payload change activations in a separate reference model? Correlation does not establish target compromise.
 
 ---
 

@@ -5,10 +5,12 @@ services:
       dockerfile: Dockerfile
     command: ["ui", "--host", "0.0.0.0", "--port", "8765"]
     ports:
-      - "8765:8765"
+      - "127.0.0.1:8765:8765"
     volumes:
       - ./reports:/workspace/reports
       - ./manifests:/workspace/manifests
     environment:
-      - PYTHONUNBUFFERED=1
+      PYTHONUNBUFFERED: "1"
+      # Docker bridge clients are not container loopback; require explicit auth.
+      AGENTSCAN_UI_TOKEN: ${AGENTSCAN_UI_TOKEN:?Set a dedicated local dashboard access token}
     restart: unless-stopped

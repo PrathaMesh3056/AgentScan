@@ -344,3 +344,25 @@ class TestMultiHopEscalation:
         assert id_010[0].severity == Severity.CRITICAL
         assert "triage" in id_010[0].description
         assert id_010[0].metadata["scope"] == "exec_sql"
+
+
+def test_empty_identity_audit_is_unscored(tmp_path):
+    report = run_identity_audit(str(tmp_path))
+    assert report.identity_score is None
+    text = format_terminal_report(report)
+    assert "N/A" in text
+    assert "INCONCLUSIVE" in text
+
+
+def test_critical_identity_finding_cannot_be_diluted():
+    from agentscan.core.models import Finding, Severity
+    from agentscan.identity.identity_scorer import calculate_identity_score
+
+    finding = Finding(
+        attack_id="ID-003",
+        attack_name="Shared credential",
+        severity=Severity.CRITICAL,
+        owasp_id="LLM08",
+        description="Synthetic shared credential finding",
+    )
+    assert calculate_identity_score([finding], 10000) == 49

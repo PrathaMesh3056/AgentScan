@@ -3,12 +3,12 @@
 # AgentScan multi-tenant REST API.
 #
 # Endpoints:
-#   POST   /token                       — get a JWT for a tenant (dev convenience)
+#   POST   /token                       — tenant-bound enrollment (optional)
 #   POST   /scans                       — enqueue a new scan
 #   GET    /scans                       — list scans for the current tenant
 #   GET    /scans/{scan_id}             — get scan status + report
 #   GET    /scans/{scan_id}/stream      — SSE live progress stream
-#   DELETE /scans/{scan_id}             — cancel / delete a scan record
+#   DELETE /scans/{scan_id}             — delete a terminal scan record
 #
 # Authentication: Bearer JWT (see agentscan/api/auth.py).
 # Persistence:    PostgreSQL via agentscan/api/db.py.
@@ -16,22 +16,43 @@
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
+import os
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
-from typing import Any
+from typing import Annotated, Any
 
-from fastapi import Depends, FastAPI, HTTPException, Request, Response, status
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse, StreamingResponse
 from loguru import logger
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
-from agentscan.api.auth import create_token, get_current_tenant
-from agentscan.api.db import close_db, get_scan, init_db, list_scans, upsert_scan
-from agentscan.api.pubsub import subscribe_progress
-from agentscan.api.queue import enqueue_scan, ensure_consumer_groups
+from agentscan.api.auth import configure_auth, get_current_tenant, issue_enrollment_token
+from agentscan.api.contracts import TERMINAL_STATES, ScanRequest, allowed_target_hosts
+from agentscan.api.data_policy import data_cipher
+from agentscan.api.db import (
+    IdempotencyConflict,
+    TenantQuotaExceeded,
+    cancel_scan,
+    check_db,
+    close_db,
+    delete_terminal_scan,
+    dispatch_outbox,
+    get_scan,
+    init_db,
+    list_scans,
+    prune_expired_records,
+    read_scan_events,
+    submit_scan,
+    validate_idempotency_key,
+)
+from agentscan.api.limits import RequestBodyLimit
+from agentscan.api.policy import authorize_target, tenant_policies
+from agentscan.api.queue import check_redis, ensure_consumer_groups
 from agentscan.core.canary import canary_manager
 from agentscan.telemetry.otel import get_metrics_response
 
@@ -39,24 +60,17 @@ from agentscan.telemetry.otel import get_metrics_response
 
 
 class TokenRequest(BaseModel):
-    tenant_id: str = Field(..., description="Tenant identifier")
-    secret: str = Field(..., description="Shared pre-shared key for dev token issue")
+    model_config = ConfigDict(extra="forbid")
+    tenant_id: str = Field(..., min_length=1, max_length=128, description="Tenant identifier")
+    secret: str = Field(
+        ..., max_length=4096, description="Enrollment credential bound to this tenant"
+    )
 
 
 class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
     tenant_id: str
-
-
-class ScanRequest(BaseModel):
-    target_url: str = Field(..., description="Target agent endpoint URL")
-    scan_mode: str = Field(default="SCAN", description="SCAN | EXPLOIT | DEEP")
-    system_prompt: str | None = Field(default=None)
-    framework: str = Field(default="auto")
-    timeout: int = Field(default=30, ge=5, le=300)
-    concurrency: int | None = Field(default=None, ge=1, le=50)
-    headers: dict[str, str] = Field(default_factory=dict)
 
 
 class ScanEnqueuedResponse(BaseModel):
@@ -72,26 +86,49 @@ class ScanStatusResponse(BaseModel):
     scan_mode: str
     status: str
     score: int | None
-    started_at: str | None
-    completed_at: str | None
+    started_at: datetime | None
+    completed_at: datetime | None
     report: dict[str, Any] | None  # full ScanReport JSON, or None if pending
 
 
 # ── App factory ───────────────────────────────────────────────────────────────
 
-TOKEN_PSK = __import__("os").environ.get("AGENTSCAN_TOKEN_PSK", "dev-psk")
-
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    configure_auth()
+    allowed_target_hosts()
+    tenant_policies()
+    data_cipher()
+    retention_days = int(os.environ.get("AGENTSCAN_RETENTION_DAYS", "7"))
+    if not 1 <= retention_days <= 365:
+        raise ValueError("AGENTSCAN_RETENTION_DAYS must be between 1 and 365.")
+    relay = None
     try:
         await init_db()
         await ensure_consumer_groups()
-    except Exception as exc:
-        logger.warning(f"Failed to initialize database or consumer groups on startup: {exc}")
-    try:
+
+        async def recover_delivery() -> None:
+            cycle = 0
+            while True:
+                try:
+                    await dispatch_outbox()
+                    if cycle % 60 == 0:
+                        await prune_expired_records(retention_days)
+                except Exception as exc:
+                    logger.warning(
+                        "Delivery/retention reconciliation deferred: {}", type(exc).__name__
+                    )
+                cycle += 1
+                await asyncio.sleep(1)
+
+        relay = asyncio.create_task(recover_delivery())
         yield
     finally:
+        if relay is not None:
+            relay.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await relay
         try:
             await close_db()
         except Exception as exc:
@@ -110,10 +147,15 @@ def create_api_app() -> FastAPI:
 
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
+        allow_origins=[
+            origin.strip()
+            for origin in os.environ.get("AGENTSCAN_CORS_ORIGINS", "").split(",")
+            if origin.strip()
+        ],
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    app.add_middleware(RequestBodyLimit)
 
     @app.get("/", include_in_schema=False)
     async def root() -> RedirectResponse:
@@ -124,10 +166,8 @@ def create_api_app() -> FastAPI:
 
     @app.post("/token", response_model=TokenResponse, tags=["auth"])
     async def issue_token(req: TokenRequest) -> TokenResponse:
-        """Issue a JWT for a tenant. Requires AGENTSCAN_TOKEN_PSK match."""
-        if req.secret != TOKEN_PSK:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid PSK.")
-        token = create_token(req.tenant_id)
+        """Issue a token only for the identity bound to an enrollment credential."""
+        token = issue_enrollment_token(req.tenant_id, req.secret)
         return TokenResponse(access_token=token, tenant_id=req.tenant_id)
 
     # ── Scans ─────────────────────────────────────────────────────────────────
@@ -140,40 +180,98 @@ def create_api_app() -> FastAPI:
     )
     async def enqueue_scan_endpoint(
         req: ScanRequest,
+        idempotency_key: Annotated[list[str] | None, Header()] = None,
         tenant_id: str = Depends(get_current_tenant),
     ) -> ScanEnqueuedResponse:
         """Submit a new scan job. Returns immediately with a scan_id."""
         scan_id = str(uuid.uuid4())
-        now = datetime.now(UTC).isoformat()
+        now = datetime.now(UTC)
+        key = None
+        if idempotency_key is not None:
+            if len(idempotency_key) != 1:
+                raise HTTPException(
+                    status_code=400, detail="Provide exactly one Idempotency-Key header."
+                )
+            try:
+                key = validate_idempotency_key(idempotency_key[0])
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+        try:
+            policy = authorize_target(tenant_id, req.target_url)
+            if req.analysis_mode == "local" and not policy.allow_local_model_analysis:
+                raise PermissionError("Local model analysis is not enabled for this tenant.")
+            if req.analysis_mode == "external" and not policy.allow_external_model_analysis:
+                raise PermissionError("External analysis is not enabled for this tenant.")
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
 
-        # Persist initial queued row
-        await upsert_scan(
-            scan_id=scan_id,
-            tenant_id=tenant_id,
-            target_url=req.target_url,
-            scan_mode=req.scan_mode,
-            status="queued",
-            started_at=now,
-        )
+        def check_analysis_configuration() -> None:
+            if req.analysis_mode == "external":
+                from agentscan.core.external_analysis import external_model_name, provider_key
 
-        # Enqueue the job for a worker to pick up
-        job = {
-            "scan_id": scan_id,
-            "tenant_id": tenant_id,
-            "target": req.model_dump(),
-        }
-        await enqueue_scan(job, scan_mode=req.scan_mode)
+                try:
+                    provider, _ = external_model_name(
+                        os.environ.get("AGENTSCAN_EXTERNAL_MODEL", "")
+                    )
+                    provider_key(provider, allow_dotenv=False)
+                except RuntimeError as exc:
+                    raise HTTPException(
+                        status_code=503, detail="External analysis configuration unavailable."
+                    ) from exc
+
+        target_payload = req.model_dump()
+        if req.indirect_adapter is None:
+            # Preserve prior admission fingerprints for clients without this capability.
+            target_payload.pop("indirect_adapter")
+        job = {"scan_id": scan_id, "tenant_id": tenant_id, "target": target_payload}
+        scan_status = "queued"
+        replayed = False
+        try:
+            if key is None:
+                check_analysis_configuration()
+                await submit_scan(job, now, policy.max_active_scans, policy.submissions_per_hour)
+            else:
+                submission = await submit_scan(
+                    job,
+                    now,
+                    policy.max_active_scans,
+                    policy.submissions_per_hour,
+                    idempotency_key=key,
+                    admission_check=check_analysis_configuration,
+                )
+                if submission is None:
+                    raise RuntimeError("Missing idempotent submission result.")
+                scan_id, scan_status, replayed = (
+                    submission.scan_id,
+                    submission.status,
+                    submission.replayed,
+                )
+        except HTTPException:
+            raise
+        except IdempotencyConflict as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except TenantQuotaExceeded as exc:
+            raise HTTPException(
+                status_code=429, detail=str(exc), headers={"Retry-After": "60"}
+            ) from exc
+        except Exception as exc:
+            raise HTTPException(status_code=503, detail="Scan persistence unavailable.") from exc
+        if not replayed:
+            try:
+                await dispatch_outbox(scan_id)
+            except Exception:
+                logger.warning("Scan {} committed; background relay will retry delivery.", scan_id)
 
         return ScanEnqueuedResponse(
             scan_id=scan_id,
-            status="queued",
+            status=scan_status,
             stream_url=f"/scans/{scan_id}/stream",
         )
 
     @app.get("/scans", tags=["scans"])
     async def list_scans_endpoint(
-        limit: int = 20,
-        offset: int = 0,
+        limit: int = Query(default=20, ge=1, le=100),
+        offset: int = Query(default=0, ge=0),
         tenant_id: str = Depends(get_current_tenant),
     ) -> list[dict[str, Any]]:
         """List recent scans for the authenticated tenant."""
@@ -199,14 +297,16 @@ def create_api_app() -> FastAPI:
             scan_mode=row["scan_mode"] or "SCAN",
             status=row["status"],
             score=row["score"],
-            started_at=str(row["started_at"]) if row["started_at"] else None,
-            completed_at=str(row["completed_at"]) if row["completed_at"] else None,
+            started_at=row["started_at"],
+            completed_at=row["completed_at"],
             report=row["report_json"],
         )
 
     @app.get("/scans/{scan_id}/stream", tags=["scans"])
     async def stream_scan_progress(
         scan_id: str,
+        request: Request,
+        last_event_id: str | None = Header(default=None, max_length=20),
         tenant_id: str = Depends(get_current_tenant),
     ) -> StreamingResponse:
         """
@@ -219,12 +319,32 @@ def create_api_app() -> FastAPI:
 
         import json as _json
 
+        if last_event_id is not None and (
+            not last_event_id.isascii()
+            or not last_event_id.isdigit()
+            or int(last_event_id) > 2**63 - 1
+        ):
+            raise HTTPException(status_code=400, detail="Invalid Last-Event-ID.")
+        cursor = int(last_event_id or "0")
+
         async def _event_generator():
-            async for event in subscribe_progress(scan_id):
-                data = _json.dumps(event)
-                yield f"data: {data}\n\n"
-                if event.get("status") in ("completed", "failed"):
-                    break
+            nonlocal cursor
+            while not await request.is_disconnected():
+                events = await read_scan_events(scan_id, tenant_id, cursor)
+                for item in events:
+                    cursor = item["sequence"]
+                    yield f"id: {cursor}\ndata: {_json.dumps(item['event'])}\n\n"
+                current = await get_scan(scan_id, tenant_id)
+                if current is None:
+                    return
+                if current["status"] in TERMINAL_STATES and len(events) < 100:
+                    # Legacy rows or cursors beyond this scan still get its authoritative state.
+                    if not events:
+                        yield f"data: {_json.dumps({'status': current['status'], 'score': current['score']})}\n\n"
+                    return
+                if len(events) < 100:
+                    yield ": keepalive\n\n"
+                    await asyncio.sleep(1)
 
         return StreamingResponse(
             _event_generator(),
@@ -235,25 +355,48 @@ def create_api_app() -> FastAPI:
             },
         )
 
+    @app.post("/scans/{scan_id}/cancel", tags=["scans"])
+    async def cancel_scan_endpoint(
+        scan_id: str, tenant_id: str = Depends(get_current_tenant)
+    ) -> dict[str, str]:
+        if await get_scan(scan_id, tenant_id) is None:
+            raise HTTPException(status_code=404, detail="Scan not found.")
+        if not await cancel_scan(scan_id, tenant_id):
+            raise HTTPException(status_code=409, detail="Scan is already terminal.")
+        return {"status": "cancelled"}
+
     @app.delete("/scans/{scan_id}", status_code=204, tags=["scans"])
     async def delete_scan_endpoint(
         scan_id: str,
         tenant_id: str = Depends(get_current_tenant),
     ) -> None:
-        """Delete a scan record. Does not cancel an actively running worker job."""
-        from agentscan.api.db import _get_pool
-
-        pool = _get_pool()
-        async with pool.acquire() as conn:
-            result = await conn.execute(
-                "DELETE FROM scans WHERE scan_id = $1 AND tenant_id = $2",
-                scan_id,
-                tenant_id,
+        """Delete only terminal records; queued/running work requires explicit cancellation."""
+        row = await get_scan(scan_id, tenant_id)
+        if row is None:
+            raise HTTPException(status_code=404, detail="Scan not found.")
+        if row["status"] not in TERMINAL_STATES:
+            raise HTTPException(
+                status_code=409, detail="Queued or running scans cannot be deleted."
             )
+        result = await delete_terminal_scan(scan_id, tenant_id)
         if result == "DELETE 0":
             raise HTTPException(status_code=404, detail="Scan not found.")
 
     # ── Observability & Canary ────────────────────────────────────────────────
+
+    @app.get("/health/live", include_in_schema=False)
+    async def live() -> dict[str, str]:
+        return {"status": "alive"}
+
+    @app.get("/health/ready", include_in_schema=False)
+    async def ready() -> dict[str, str]:
+        try:
+            async with asyncio.timeout(3), asyncio.TaskGroup() as checks:
+                checks.create_task(check_db())
+                checks.create_task(check_redis())
+        except Exception as exc:
+            raise HTTPException(status_code=503, detail="Required dependency unavailable.") from exc
+        return {"status": "ready"}
 
     @app.get("/metrics", include_in_schema=False)
     async def metrics() -> Response:

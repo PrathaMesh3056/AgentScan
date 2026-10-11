@@ -73,7 +73,7 @@ def _is_exact_version(v: str) -> bool:
         return False
 
 
-def _parse_dependencies(path: str) -> list[tuple[str, str]]:
+def _parse_dependencies(path: str, issues: list[str] | None = None) -> list[tuple[str, str]]:
     """
     Parse dependencies from a project directory.
 
@@ -88,6 +88,14 @@ def _parse_dependencies(path: str) -> list[tuple[str, str]]:
     """
     root = Path(path)
     deps: list[tuple[str, str]] = []
+    if not root.exists():
+        if issues is not None:
+            issues.append("Selected audit path does not exist")
+        return deps
+    if not root.is_dir():
+        if issues is not None:
+            issues.append("Dependency audit requires a project directory")
+        return deps
 
     # 1. uv.lock
     uv_lock = root / "uv.lock"
@@ -96,14 +104,27 @@ def _parse_dependencies(path: str) -> list[tuple[str, str]]:
             with open(uv_lock, "rb") as f:
                 data = tomllib.load(f)
             packages = data.get("package", [])
+            if not isinstance(packages, list):
+                raise ValueError("Lockfile package entries must be a list")
             for pkg in packages:
-                name = pkg.get("name")
-                ver = pkg.get("version")
+                if (
+                    not isinstance(pkg, dict)
+                    or not isinstance(pkg.get("name"), str)
+                    or not isinstance(pkg.get("version"), str)
+                ):
+                    if issues is not None:
+                        issues.append("A malformed lockfile package was not assessed")
+                    continue
+                name, ver = pkg["name"], pkg["version"]
                 if name and ver:
-                    deps.append((str(name).lower(), str(ver)))
+                    deps.append((name.lower(), ver))
+                elif issues is not None:
+                    issues.append("An incomplete lockfile package was not assessed")
             if deps:
                 return list(dict.fromkeys(deps))
         except Exception as e:
+            if issues is not None:
+                issues.append("uv.lock could not be parsed")
             logger.error(f"Failed to parse uv.lock at {uv_lock}: {e}")
 
     # 2. poetry.lock
@@ -113,14 +134,27 @@ def _parse_dependencies(path: str) -> list[tuple[str, str]]:
             with open(poetry_lock, "rb") as f:
                 data = tomllib.load(f)
             packages = data.get("package", [])
+            if not isinstance(packages, list):
+                raise ValueError("Lockfile package entries must be a list")
             for pkg in packages:
-                name = pkg.get("name")
-                ver = pkg.get("version")
+                if (
+                    not isinstance(pkg, dict)
+                    or not isinstance(pkg.get("name"), str)
+                    or not isinstance(pkg.get("version"), str)
+                ):
+                    if issues is not None:
+                        issues.append("A malformed lockfile package was not assessed")
+                    continue
+                name, ver = pkg["name"], pkg["version"]
                 if name and ver:
-                    deps.append((str(name).lower(), str(ver)))
+                    deps.append((name.lower(), ver))
+                elif issues is not None:
+                    issues.append("An incomplete lockfile package was not assessed")
             if deps:
                 return list(dict.fromkeys(deps))
         except Exception as e:
+            if issues is not None:
+                issues.append("poetry.lock could not be parsed")
             logger.error(f"Failed to parse poetry.lock at {poetry_lock}: {e}")
 
     # 3. pyproject.toml
@@ -130,20 +164,32 @@ def _parse_dependencies(path: str) -> list[tuple[str, str]]:
             with open(pyproject, "rb") as f:
                 data = tomllib.load(f)
             project_data = data.get("project", {})
-            raw_deps: list[str] = list(project_data.get("dependencies", []))
+            raw_deps = project_data.get("dependencies", [])
             opt_deps = project_data.get("optional-dependencies", {})
+            if not isinstance(raw_deps, list) or not isinstance(opt_deps, dict):
+                raise ValueError("Dependency declarations must be lists")
+            raw_deps = list(raw_deps)
             for opt_group in opt_deps.values():
-                if isinstance(opt_group, list):
-                    raw_deps.extend(opt_group)
+                if not isinstance(opt_group, list):
+                    raise ValueError("Optional dependency groups must be lists")
+                raw_deps.extend(opt_group)
 
             for dep_str in raw_deps:
+                if not isinstance(dep_str, str):
+                    if issues is not None:
+                        issues.append("A malformed pyproject dependency was not assessed")
+                    continue
                 dep_str = dep_str.strip()
                 if not dep_str or dep_str.startswith("#"):
                     continue
                 parsed = _parse_requirement_str(dep_str)
                 if parsed:
                     deps.append(parsed)
+                elif issues is not None:
+                    issues.append("An unsupported pyproject dependency was not assessed")
         except Exception as e:
+            if issues is not None:
+                issues.append("pyproject.toml could not be parsed")
             logger.error(f"Failed to parse pyproject.toml at {pyproject}: {e}")
 
     # 4. requirements.txt
@@ -157,7 +203,11 @@ def _parse_dependencies(path: str) -> list[tuple[str, str]]:
                 parsed = _parse_requirement_str(line)
                 if parsed:
                     deps.append(parsed)
+                elif issues is not None:
+                    issues.append("An unsupported requirements.txt entry was not assessed")
         except Exception as e:
+            if issues is not None:
+                issues.append("requirements.txt could not be parsed")
             logger.error(f"Failed to parse requirements.txt at {req_txt}: {e}")
 
     return list(dict.fromkeys(deps))
@@ -180,14 +230,23 @@ def _finding_from_osv(pkg: str, ver: str, vuln: OsvVuln) -> Finding:
         attack_id="SC-001",
         attack_name="Known-vulnerable dependency",
         severity=vuln.severity,
-        owasp_id="LLM05",
+        owasp_id="LLM03",
         description=(
-            f"Dependency '{pkg}=={ver}' matches {cve}: {vuln.summary} Upgrade to >={fix}."
+            f"Dependency '{pkg}=={ver}' matches {cve}: {vuln.summary} "
+            + (
+                f"Fixed version in the affected range: {fix}."
+                if fix != "unknown"
+                else "No applicable fixed version was established."
+            )
         ),
         evidence=f"package={pkg}, version={ver}, cve={cve}, osv={vuln.osv_id}",
         remediation=(
-            f"Upgrade {pkg} to at least {fix}. "
-            f"See https://nvd.nist.gov/vuln/detail/{cve} for details."
+            (
+                f"Review upgrade to {pkg} {fix} and regenerate the lockfile. "
+                if fix != "unknown"
+                else "Review the advisory and select a verified unaffected release. "
+            )
+            + f"See https://osv.dev/vulnerability/{vuln.osv_id} for details."
         ),
         metadata={
             "package": pkg,
@@ -196,6 +255,7 @@ def _finding_from_osv(pkg: str, ver: str, vuln: OsvVuln) -> Finding:
             "fix_version": fix,
             "osv_id": vuln.osv_id,
             "source": "osv",
+            "severity_assessed": vuln.severity_known,
         },
     )
 
@@ -208,7 +268,7 @@ def _finding_from_yaml(pkg: str, ver: str, matched: dict[str, object]) -> Findin
         attack_id="SC-001",
         attack_name="Known-vulnerable dependency",
         severity=sev,
-        owasp_id="LLM05",
+        owasp_id="LLM03",
         description=(
             f"Dependency '{pkg}=={ver}' matches {cve}: "
             f"{str(matched['description']).strip()} "
@@ -239,7 +299,7 @@ def _finding_from_specifier(
         attack_id="SC-001",
         attack_name="Known-vulnerable dependency",
         severity=sev,
-        owasp_id="LLM05",
+        owasp_id="LLM03",
         description=(
             f"Dependency '{pkg}' constraint '{spec_str}' permits vulnerable version "
             f"'{bad_ver}' ({cve}): {str(matched['description']).strip()} Upgrade constraint to >={fix}."
@@ -470,6 +530,7 @@ def scan_dependencies(
     path: str,
     offline: bool = False,
     show_transitive: bool = False,
+    coverage: list[dict[str, Any]] | None = None,
 ) -> tuple[list[Finding], int]:
     """
     Scan dependencies in `path` for known CVEs.
@@ -480,12 +541,60 @@ def scan_dependencies(
     with root-to-leaf dependency chains.
     Returns (findings, checks_run) where checks_run = number of dependencies parsed.
     """
-    deps = _parse_dependencies(path)
+    issues: list[str] = []
+    deps = _parse_dependencies(path, issues)
     checks_run = len(deps)
     if not deps:
+        if coverage is not None:
+            coverage.append(
+                {
+                    "module": "dependencies",
+                    "status": "INCONCLUSIVE" if issues else "NOT_ASSESSED",
+                    "source": "dependency_declarations",
+                    "reason": "; ".join(issues) or "No supported dependency inputs found",
+                    "checks": 0,
+                    "checks_run": 0,
+                    "inputs_selected": 0,
+                    "limitations": issues or ["No supported dependency inputs found"],
+                }
+            )
         return [], 0
 
-    findings = _scan_offline(deps) if offline else asyncio.run(_scan_live_or_fallback(deps))
+    source = "bundled-offline" if offline else "OSV"
+    incomplete = bool(issues) or offline or any(not _is_exact_version(ver) for _, ver in deps)
+    if offline:
+        issues.append(
+            "Bundled advisories are a limited offline database, not current complete vulnerability coverage"
+        )
+        findings = _scan_offline(deps)
+    else:
+        try:
+            findings = asyncio.run(_scan_live(deps))
+        except OsvUnavailableError:
+            findings = _scan_offline(deps)
+            source, incomplete = "bundled-offline-fallback", True
+            issues.append("Live advisories unavailable; bundled coverage is limited")
+    if any(not _is_exact_version(ver) for _, ver in deps):
+        issues.append(
+            "Declared version ranges do not establish exact installed dependency versions"
+        )
+    if any(f.metadata.get("severity_assessed") is False for f in findings):
+        incomplete = True
+        issues.append("Some advisory severities are unavailable")
+    if coverage is not None:
+        coverage.append(
+            {
+                "module": "dependencies",
+                "status": "INCONCLUSIVE" if incomplete else "COMPLETE",
+                "source": source,
+                "checks": checks_run,
+                "checks_run": checks_run,
+                "inputs_selected": len(deps),
+                "limitations": issues,
+                "exact_versions": sum(_is_exact_version(v) for _, v in deps),
+                "range_versions": sum(not _is_exact_version(v) for _, v in deps),
+            }
+        )
 
     if show_transitive and findings:
         graph = build_dependency_graph(path)

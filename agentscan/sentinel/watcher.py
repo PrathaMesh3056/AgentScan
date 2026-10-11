@@ -7,6 +7,8 @@
 from __future__ import annotations
 
 import asyncio
+import re
+import uuid
 from collections.abc import Callable
 from typing import Any
 
@@ -14,7 +16,28 @@ import httpx
 from loguru import logger
 
 from agentscan.core.models import Finding, Target
+from agentscan.core.outcomes import TargetRequestError
 from agentscan.sentinel.canary import CanarySentinel
+
+
+class SentinelProbeError(TargetRequestError):
+    """An operator-safe monitoring failure; raw transport exceptions stay private."""
+
+    def __init__(self, cause: str = "request", status_code: int | None = None) -> None:
+        messages = {
+            "connection": "Sentinel could not connect to the target. Check its endpoint and availability.",
+            "timeout": "The Sentinel target request timed out. Check target availability.",
+            "unavailable": "The selected connector cannot run Sentinel probes.",
+            "invalid_response": "The target returned an unsupported response; Sentinel could not evaluate it.",
+            "request": "Sentinel could not evaluate the target request. Check endpoint and authentication.",
+        }
+        self.status_code = (
+            status_code if type(status_code) is int and 100 <= status_code <= 599 else None
+        )
+        message = messages.get(cause, messages["request"])
+        if self.status_code is not None:
+            message = f"Sentinel target returned HTTP {self.status_code}. Check endpoint and target authentication."
+        super().__init__(message)
 
 
 class WebhookDispatcher:
@@ -22,6 +45,7 @@ class WebhookDispatcher:
 
     def __init__(self, timeout: float = 10.0) -> None:
         self.timeout = timeout
+        self.last_error: dict[str, Any] | None = None
 
     async def dispatch(
         self,
@@ -69,15 +93,41 @@ class WebhookDispatcher:
             ),
         }
 
+        self.last_error = None
         try:
             if client:
                 res = await client.post(webhook_url, json=payload, timeout=self.timeout)
-                return res.status_code in (200, 201, 204)
-            async with httpx.AsyncClient(timeout=self.timeout) as http:
-                res = await http.post(webhook_url, json=payload)
-                return res.status_code in (200, 201, 204)
-        except Exception as e:
-            logger.error(f"Failed to dispatch webhook to {webhook_url}: {e}")
+            else:
+                async with httpx.AsyncClient(
+                    timeout=self.timeout, trust_env=False, follow_redirects=False
+                ) as http:
+                    res = await http.post(webhook_url, json=payload)
+            if res.status_code in (200, 201, 204):
+                return True
+            reference = str(uuid.uuid4())
+            self.last_error = {
+                "error": f"Webhook delivery returned HTTP {res.status_code}. Check the destination and webhook authentication.",
+                "error_id": reference,
+                "status_code": res.status_code,
+            }
+            logger.error(
+                "Sentinel webhook delivery failed [reference {}]: HTTP {}",
+                reference,
+                res.status_code,
+            )
+            return False
+        except Exception as error:
+            reference = str(uuid.uuid4())
+            self.last_error = {
+                "error": "Webhook delivery failed. Check destination availability and configuration.",
+                "error_id": reference,
+                "status_code": None,
+            }
+            logger.error(
+                "Sentinel webhook delivery failed [reference {}]: {}",
+                reference,
+                type(error).__name__[:80],
+            )
             return False
 
 
@@ -117,22 +167,34 @@ class ContinuousWatcher:
                 elif hasattr(client, "send_message"):
                     response = await client.send_message(prompt)
                 else:
-                    response = ""
+                    raise SentinelProbeError("unavailable")
                 raw_text: object
                 if isinstance(response, str):
                     raw_text = response
                 elif isinstance(response, dict):
                     raw_text = response.get("response", response.get("text", ""))
                 else:
-                    raw_text = response
-
-                resp_text = raw_text if isinstance(raw_text, str) else str(raw_text)
+                    raise SentinelProbeError("invalid_response")
+                if not isinstance(raw_text, str):
+                    raise SentinelProbeError("invalid_response")
+                resp_text = raw_text
                 if self.canary_sentinel.check_leakage(resp_text):
                     finding = self.canary_sentinel.create_finding(self.target.url, resp_text)
                     findings.append(finding)
                     break  # Leaked once, report finding and stop probing this cycle
-            except Exception as e:
-                logger.warning(f"Sentinel probe failed during request: {e}")
+            except SentinelProbeError:
+                raise
+            except httpx.HTTPStatusError as error:
+                raise SentinelProbeError(status_code=error.response.status_code) from None
+            except httpx.TimeoutException:
+                raise SentinelProbeError("timeout") from None
+            except httpx.ConnectError:
+                raise SentinelProbeError("connection") from None
+            except TargetRequestError as error:
+                status = re.fullmatch(r"Target returned HTTP (\d{3})", str(error))
+                raise SentinelProbeError(status_code=int(status[1]) if status else None) from None
+            except Exception:
+                raise SentinelProbeError() from None
 
         # Dispatch webhook alert if configured and findings occurred
         if findings and self.webhook_url:

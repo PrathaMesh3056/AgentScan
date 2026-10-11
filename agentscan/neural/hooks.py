@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from threading import get_ident
 from typing import Any
 
 import torch
@@ -23,13 +24,17 @@ class ActivationCapture:
         self.module = module
         self.captured: torch.Tensor | None = None
         self._handle: torch.utils.hooks.RemovableHandle | None = None
+        self._owner_thread: int | None = None
 
     def _hook(self, module: torch.nn.Module, input: tuple[Any, ...], output: Any) -> None:
+        if get_ident() != self._owner_thread:
+            return
         tensor = output[0] if isinstance(output, tuple) else output
         if isinstance(tensor, torch.Tensor):
             self.captured = tensor.detach()
 
     def __enter__(self) -> ActivationCapture:
+        self._owner_thread = get_ident()
         self._handle = self.module.register_forward_hook(self._hook)
         return self
 
@@ -42,3 +47,4 @@ class ActivationCapture:
         if self._handle is not None:
             self._handle.remove()
             self._handle = None
+        self._owner_thread = None

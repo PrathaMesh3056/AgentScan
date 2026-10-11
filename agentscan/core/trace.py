@@ -11,12 +11,15 @@ from __future__ import annotations
 
 import re
 import sys
+from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from rich.console import Console
+
+from agentscan.core.context import ContextLocal, active_context
 
 _console = Console()
 
@@ -39,6 +42,49 @@ _REDACTION_PATTERNS: list[tuple[re.Pattern[str], str]] = [
 ]
 
 
+def _private_segments(text: str, secret: str) -> list[str | None]:
+    """Remove known values and their supported whitespace-separated representation.
+
+    Privacy matching deliberately has no identifier-boundary requirement. Use
+    string operations so private values never enter the regular-expression cache.
+    Keep replacement markers separate from later short/overlapping values.
+    """
+    compact_secret = "".join(secret.split())
+    if len(secret) < 8 or not compact_secret:
+        parts: list[str | None] = []
+        for index, part in enumerate(text.split(secret)):
+            if index:
+                parts.append(None)
+            if part:
+                parts.append(part)
+        return parts
+    compact = "".join(text.split())
+    found = compact.find(compact_secret)
+    if found < 0:
+        return [text]
+    parts = []
+    compact_index = 0
+    kept_from = 0
+    match_start = 0
+    for index, char in enumerate(text):
+        if char.isspace():
+            continue
+        if compact_index == found:
+            match_start = index
+        if compact_index == found + len(compact_secret) - 1:
+            if kept_from < match_start:
+                parts.append(text[kept_from:match_start])
+            parts.append(None)
+            kept_from = index + 1
+            found = compact.find(compact_secret, compact_index + 1)
+            if found < 0:
+                break
+        compact_index += 1
+    if kept_from < len(text):
+        parts.append(text[kept_from:])
+    return parts
+
+
 def redact_sensitive_data(text: str) -> str:
     """
     Redact API keys, tokens, passwords, and authorization headers from text.
@@ -47,6 +93,27 @@ def redact_sensitive_data(text: str) -> str:
     if not text:
         return text
     result = text
+    context = active_context.get()
+    if context is not None:
+        # Keep inserted markers separate so a later short credential cannot
+        # rewrite the marker itself. Splitting avoids caching private values in
+        # dynamically compiled regular expressions.
+        segments: list[str | None] = []
+        for index, initial_segment in enumerate(result.split("[REDACTED]")):
+            if index:
+                segments.append(None)
+            if initial_segment:
+                segments.append(initial_segment)
+        for secret in sorted(set(context.redaction_secrets), key=len, reverse=True):
+            if secret:
+                replaced: list[str | None] = []
+                for segment in segments:
+                    if segment is None:
+                        replaced.append(None)
+                        continue
+                    replaced.extend(_private_segments(segment, secret))
+                segments = replaced
+        result = "".join("[REDACTED]" if segment is None else segment for segment in segments)
     for pattern, replacement in _REDACTION_PATTERNS:
         result = pattern.sub(replacement, result)
     return result
@@ -107,7 +174,17 @@ class TrafficRecorder:
         self.llm_calls: list[LLMCall] = []
         self._seq = 0
         self._llm_seq = 0
-        self._module = ("?", "?")
+        self._module_context: ContextVar[tuple[str, str]] = ContextVar(
+            "traffic_module", default=("?", "?")
+        )
+
+    @property
+    def _module(self) -> tuple[str, str]:
+        return self._module_context.get()
+
+    @_module.setter
+    def _module(self, value: tuple[str, str]) -> None:
+        self._module_context.set(value)
 
     def reset(self) -> None:
         self.entries.clear()
@@ -234,7 +311,10 @@ class TrafficRecorder:
             f"- Target: {report.target_url}",
             f"- Scan mode: {report.scan_mode}",
             f"- Generated: {datetime.now(UTC).isoformat()}",
-            f"- Score: {report.score}/100",
+            f"- Status: {getattr(report, 'status', 'UNVERIFIED')}",
+            f"- Score: {report.score}/100" if report.score is not None else "- Score: unavailable",
+            f"- Evaluated tests: {getattr(report, 'tests_run', 0)}/{getattr(report, 'tests_selected', 0)} selected",
+            f"- Assessment scope: {getattr(report, 'assessment_scope', 'unverified')}",
             f"- Requests: {len(self.entries)}  |  Findings: {len(report.findings)}",
             "",
             "=" * 72,
@@ -253,6 +333,15 @@ class TrafficRecorder:
                 f"  << REPLY  : {e.response.strip()}",
             ]
 
+        out += ["", "ASSESSMENT COVERAGE"]
+        for outcome in getattr(report, "module_outcomes", []):
+            reason = str(outcome.get("reason", ""))
+            if do_redact:
+                reason = redact_sensitive_data(reason)
+            out.append(
+                f"- {outcome.get('module_id', '?')}: {outcome.get('status', 'UNVERIFIED')}; "
+                f"evaluated {outcome.get('executed_tests', 0)}/{outcome.get('selected_tests', 0)}; {reason}"
+            )
         out += ["", "=" * 72, f"FINDINGS ({len(report.findings)})", "=" * 72]
         if report.findings:
             for f in report.findings:
@@ -262,7 +351,7 @@ class TrafficRecorder:
                     ev = redact_sensitive_data(f.evidence) if do_redact else f.evidence
                     out.append(f"    evidence: {ev}")
         else:
-            out.append("(no findings — the target resisted every payload)")
+            out.append("(no findings recorded; review evaluated coverage and unavailable criteria)")
 
         Path(path).write_text("\n".join(out), encoding="utf-8")
 
@@ -314,4 +403,4 @@ class TrafficRecorder:
             Path(path).write_text(json.dumps(data, indent=2), encoding="utf-8")
 
 
-recorder = TrafficRecorder()
+recorder = ContextLocal("recorder", TrafficRecorder)

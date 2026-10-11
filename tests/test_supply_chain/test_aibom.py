@@ -19,7 +19,7 @@ def test_cyclonedx_aibom_contains_packages_model_and_mcp(tmp_path: Path) -> None
     assert doc["specVersion"] == "1.6"
     names = {c["name"] for c in doc["components"]}
     assert "httpx" in names
-    assert "Qwen/Qwen2.5-0.5B-Instruct" in names
+    assert "Qwen/Qwen2.5-0.5B-Instruct" not in names
     assert "demo.mcp.json" in names
     mcp = next(c for c in doc["components"] if c["name"] == "demo.mcp.json")
     props = {p["name"]: p["value"] for p in mcp["properties"]}

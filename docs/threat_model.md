@@ -66,9 +66,10 @@ By default, AgentScan is **strictly non-destructive**:
 - **Credential Redaction**: By default, transcripts, traffic logs, and output reports redact detected API keys (`sk-...`, Bearer tokens) and passwords unless `--include-sensitive-data` is explicitly enabled.
 - **Local Dashboard**: The `agentscan ui` web interface binds to `127.0.0.1` by default and does not transmit telemetry to external cloud servers.
 
-### External LLM Provider Privacy
-When using AI-driven red-teaming features:
-- `--attacker-model` (PAIR iterative refinement)
-- `--judge-model` (LLM-as-a-Judge scoring)
+### Analysis destinations and sensitive data
 
-Paylod strings and target agent responses are sent to the configured provider (OpenAI, Anthropic, Google, Ollama, etc.) via `litellm`. Users are responsible for ensuring that their choice of LLM provider complies with their organization's data governance and privacy policies. When scanning confidential systems, use local models via Ollama (`--judge-model ollama/llama3`) to prevent external data transmission.
+Analysis defaults to deterministic checks and sensitive classification. An explicit local mode uses installed Ollama weights at a literal loopback address, with no automatic cloud fallback. Configure the daemon with cloud features disabled and restrict its outbound network access independently when offline operation is required.
+
+External analysis is optional for client-designated non-sensitive scans only. It requires explicit mode, classification, provider/model and a locally configured OpenAI, Anthropic or Gemini key; API tenants also need administrator permission. A key by itself never enables a provider call. Sensitive or undesignated external work is rejected before analysis I/O.
+
+External opt-in can send relevant objectives and target responses to the selected provider. Credential redaction does not classify arbitrary confidential prose, so clients must determine which scans can be designated non-sensitive. No provider URL or key is accepted in an API scan body or dashboard scan form. See [data policy](DATA_POLICY.md) for setup, encrypted service jobs, report retention and the distinction between analysis traffic and explicitly selected target/OSV traffic.

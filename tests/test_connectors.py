@@ -22,6 +22,7 @@ from agentscan.core.connectors import (
     set_by_path,
 )
 from agentscan.core.models import BrowserConfig, RequestTemplate, ScanMode, Target
+from agentscan.core.outcomes import AssessmentInconclusiveError
 
 # ── path helpers ──────────────────────────────────────────────────────────────
 
@@ -123,15 +124,19 @@ async def test_default_target_still_uses_json_post() -> None:
 async def test_prompt_injection_module_works_over_template_connector() -> None:
     """ATK-001 was written for the JSON endpoint; it must work unchanged when the
     target is a captured request, because it only calls send_message()."""
-    target = _template_target()
+    private = "SYNTHETIC_TEMPLATE_REFERENCE_001"
+    target = _template_target().model_copy(update={"canary_token": private})
     with respx.mock(assert_all_called=False) as mock:
-        # A vulnerable agent that echoes the classic override confirmation.
-        mock.post("https://site.example/api/agent").mock(
-            return_value=httpx.Response(200, json={"data": {"reply": "OVERRIDE SUCCESSFUL"}})
+        # The synthetic target discloses an out-of-band private reference.
+        route = mock.post("https://site.example/api/agent").mock(
+            return_value=httpx.Response(200, json={"data": {"reply": private}})
         )
-        findings = await PromptInjectionModule().run(target)
+        module = PromptInjectionModule()
+        findings = await module.run(target)
 
     assert any(f.attack_id == "ATK-001" for f in findings)
+    assert route.call_count == module.variant_count()
+    assert all(private not in call.request.content.decode() for call in route.calls)
 
 
 # ── SSE streaming ─────────────────────────────────────────────────────────────
@@ -391,7 +396,7 @@ def test_select_connector_mcp_and_ws_schemes() -> None:
 
 
 @pytest.mark.asyncio
-async def test_mcp_stdio_echo_and_atk001() -> None:
+async def test_mcp_stdio_echo_delivers_transport_without_proving_atk001() -> None:
     from urllib.parse import quote
 
     server = Path(__file__).parent / "fixtures" / "mcp_stdio_server.py"
@@ -404,8 +409,12 @@ async def test_mcp_stdio_echo_and_atk001() -> None:
         result = await client.send_message("OVERRIDE SUCCESSFUL")
     assert "OVERRIDE SUCCESSFUL" in result.get("response", "")
 
-    findings = await PromptInjectionModule().run(target)
-    assert any(f.attack_id == "ATK-001" for f in findings)
+    with pytest.raises(AssessmentInconclusiveError, match="out-of-band"):
+        await PromptInjectionModule().run(target)
+    findings = await PromptInjectionModule().run(
+        target.model_copy(update={"canary_token": "SYNTHETIC_MCP_REFERENCE_001"})
+    )
+    assert not findings
 
 
 @pytest.mark.asyncio
@@ -427,7 +436,7 @@ async def test_mcp_sse_tools_call() -> None:
                 json={"jsonrpc": "2.0", "id": mid, "result": {"protocolVersion": "2024-11-05"}},
             )
         if method == "notifications/initialized":
-            return httpx.Response(200, json={"ok": True})
+            return httpx.Response(202)
         if method == "tools/list":
             return httpx.Response(
                 200,

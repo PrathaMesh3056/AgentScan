@@ -19,6 +19,7 @@ from pathlib import Path
 from loguru import logger
 
 from agentscan.core.models import Finding, Severity
+from agentscan.supply_chain.coverage import collect_inputs, record_coverage
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -87,7 +88,7 @@ def _shannon_entropy(s: str) -> float:
 # ── Public scanner ────────────────────────────────────────────────────────────
 
 
-def scan_secrets(path: str) -> tuple[list[Finding], int]:
+def scan_secrets(path: str, *, coverage: list[dict] | None = None) -> tuple[list[Finding], int]:
     """
     Scan all files under `path` for hardcoded high-entropy secrets.
 
@@ -98,15 +99,24 @@ def scan_secrets(path: str) -> tuple[list[Finding], int]:
         (findings, checks_run) where checks_run = number of files scanned.
     """
     root = Path(path)
-    all_files = [f for f in root.rglob("*") if f.is_file() and _should_scan_file(f, root)]
-    checks_run = len(all_files)
+    issues: list[str] = []
+    candidates = collect_inputs(
+        root, "*", issues, ignored_dirs=_SKIP_DIR_NAMES, skip_hidden_dirs=True
+    )
+    relative_root = root if root.is_dir() else root.parent
+    all_files = [f for f in candidates if _should_scan_file(f, relative_root)]
+    checks_run = 0
 
     findings: list[Finding] = []
     for filepath in all_files:
         try:
-            text = filepath.read_text(encoding="utf-8", errors="ignore")
+            text = filepath.read_text(encoding="utf-8")
+            if "\x00" in text:
+                raise ValueError("Binary file is unsupported")
+            checks_run += 1
         except Exception as e:
-            logger.warning(f"Skipping {filepath}: {e}")
+            issues.append(f"{filepath.name}: {type(e).__name__}; file was not assessed.")
+            logger.warning(f"Skipping {filepath}: {type(e).__name__}")
             continue
 
         for match in _SECRET_RE.finditer(text):
@@ -126,7 +136,7 @@ def scan_secrets(path: str) -> tuple[list[Finding], int]:
                     attack_id="SC-015",
                     attack_name="Hardcoded secret detected",
                     severity=Severity.CRITICAL,
-                    owasp_id="LLM05",
+                    owasp_id="LLM02",
                     description=(
                         f"High-entropy value assigned to '{var_name}' in "
                         f"'{filepath.name}' (entropy={entropy:.2f} bits). "
@@ -151,4 +161,12 @@ def scan_secrets(path: str) -> tuple[list[Finding], int]:
                 )
             )
 
+    record_coverage(
+        coverage,
+        "secrets",
+        checks_run,
+        source="text_secret_heuristics",
+        issues=issues,
+        selected=len(all_files),
+    )
     return findings, checks_run

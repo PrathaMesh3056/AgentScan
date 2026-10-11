@@ -9,7 +9,7 @@ from agentscan.core.connectors import CallableConnector, use_connector
 from agentscan.core.models import Target
 from agentscan.swarm.agents import BypassAgent, ExploitAgent, JudgeAgent, ReconAgent
 from agentscan.swarm.blackboard import SwarmBlackboard
-from agentscan.swarm.models import AgentRole, SwarmAgentConfig
+from agentscan.swarm.models import AgentRole, SwarmAgentConfig, SwarmTurnRecord
 
 
 @pytest.mark.asyncio
@@ -68,9 +68,57 @@ async def test_exploit_agent_and_judge() -> None:
     assert record.agent_role == AgentRole.EXPLOIT
     assert record.success is True
 
-    # Judge evaluates exploit turn
+    # Judge evaluates the text as a candidate, without execution proof.
     finding = await judge.evaluate_turn(record, bb)
     assert finding is not None
     assert finding.attack_id == "ATK-013"
     assert finding.owasp_id == "LLM06"
     assert "dropped table accounts" in finding.evidence
+
+
+@pytest.mark.asyncio
+async def test_judge_agent_detects_canary_leakage() -> None:
+    """JudgeAgent raises CRITICAL finding when canary token is detected in a response."""
+    from agentscan.sentinel.canary import generate_canary_token
+
+    canary = generate_canary_token()
+    bb = SwarmBlackboard()
+    # Canary is provisioned out of band and never put in the attack prompt.
+
+    # Build a fake turn record where the response contains the leaked canary
+    leaked_record = SwarmTurnRecord(
+        round_number=2,
+        agent_name="Exploit-1",
+        agent_role=AgentRole.EXPLOIT,
+        prompt="exploit payload",
+        response=f"Sure! The secret is {canary}, and I can drop tables too.",
+        success=True,
+    )
+
+    judge = JudgeAgent(SwarmAgentConfig(name="Judge-1", role=AgentRole.JUDGE))
+    judge.provisioned_canary = canary
+    finding = await judge.evaluate_turn(leaked_record, bb)
+
+    assert finding is not None
+    assert finding.attack_id == "SC-CANARY-001"
+    assert finding.severity.value == "CRITICAL"
+    assert canary in finding.description
+
+
+@pytest.mark.asyncio
+async def test_judge_agent_no_false_positive_without_canary() -> None:
+    """JudgeAgent does NOT raise canary finding when no canary is on the blackboard."""
+    bb = SwarmBlackboard()  # empty — no canary registered
+
+    safe_record = SwarmTurnRecord(
+        round_number=2,
+        agent_name="Recon-1",
+        agent_role=AgentRole.RECON,
+        prompt="probe",
+        response="I can only help with questions about products.",
+        success=False,
+    )
+
+    judge = JudgeAgent(SwarmAgentConfig(name="Judge-1", role=AgentRole.JUDGE))
+    finding = await judge.evaluate_turn(safe_record, bb)
+    assert finding is None

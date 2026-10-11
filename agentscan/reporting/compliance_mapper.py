@@ -3,6 +3,7 @@ from pathlib import Path
 import yaml
 
 from agentscan.core.models import Finding
+from agentscan.core.taxonomy import ATLAS_VERSION, OWASP_VERSION, atlas_for_finding
 
 MAPPINGS_FILE = Path(__file__).parent / "compliance_mappings.yaml"
 
@@ -28,7 +29,12 @@ def map_finding_to_compliance(finding: Finding) -> dict:
             "mitre_atlas_technique": "Not mapped",
             "eu_ai_act_article": "Not mapped",
         }
-    return _MAPPINGS[owasp_id]
+    return {
+        **_MAPPINGS[owasp_id],
+        "mitre_atlas_technique": atlas_for_finding(finding) or "Not mapped",
+        "owasp_version": OWASP_VERSION,
+        "atlas_version": ATLAS_VERSION,
+    }
 
 
 def generate_compliance_summary(findings: list[Finding]) -> dict[str, list]:

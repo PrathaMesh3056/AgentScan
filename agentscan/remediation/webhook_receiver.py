@@ -6,16 +6,21 @@
 
 from __future__ import annotations
 
+import os
+import secrets
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException
 from loguru import logger
 from pydantic import BaseModel, Field
 
 from agentscan.core.models import Finding, Severity
+from agentscan.guard.path import PathSecurityError
 from agentscan.remediation.engine import RemediationEngine
+from agentscan.remediation.models import FixConflictError
 from agentscan.remediation.patch_generator import generate_github_pr_payload, generate_unified_patch
+from agentscan.remediation.paths import contained_path
 
 app = FastAPI(
     title="AgentScan Self-Healing Webhook Receiver",
@@ -93,8 +98,33 @@ def health() -> dict[str, str]:
     return {"status": "ok", "service": "agentscan-self-healing"}
 
 
+def _authorized_root(authorization: str | None = Header(default=None)) -> Path:
+    """Require a deployment-owned credential and repository, independent of alert contents."""
+    token = os.environ.get("AGENTSCAN_HEAL_TOKEN", "")
+    configured_root = os.environ.get("AGENTSCAN_HEAL_ROOT", "")
+    if not token or not configured_root:
+        raise HTTPException(
+            status_code=503, detail="Webhook token and project root are not configured"
+        )
+    supplied = authorization.removeprefix("Bearer ") if authorization else ""
+    if (
+        not authorization
+        or not authorization.startswith("Bearer ")
+        or not secrets.compare_digest(supplied, token)
+    ):
+        raise HTTPException(status_code=401, detail="Valid webhook bearer token required")
+    root = Path(configured_root).resolve()
+    if not root.is_dir():
+        raise HTTPException(
+            status_code=503, detail="Configured webhook project root is unavailable"
+        )
+    return root
+
+
 @app.post("/webhook/alert")
-def receive_alert(payload: AlertPayload) -> dict[str, Any]:
+def receive_alert(
+    payload: AlertPayload, repo_path: Annotated[Path, Depends(_authorized_root)]
+) -> dict[str, Any]:
     """Ingest security alert, plan remediation, and generate unified git patch."""
     findings = _parse_findings(payload)
     if not findings:
@@ -102,24 +132,43 @@ def receive_alert(payload: AlertPayload) -> dict[str, Any]:
             status_code=400, detail="No valid findings or finding_ids provided in alert."
         )
 
-    repo_path = Path(payload.target_repo).resolve()
-    if not repo_path.exists():
-        raise HTTPException(status_code=404, detail=f"Target repo path not found: {repo_path}")
+    requested_root = (
+        repo_path if payload.target_repo == "." else Path(payload.target_repo).resolve()
+    )
+    if requested_root != repo_path:
+        raise HTTPException(status_code=403, detail="Alert cannot select a different project root")
+    if payload.apply and os.environ.get("AGENTSCAN_HEAL_ALLOW_APPLY") != "1":
+        raise HTTPException(status_code=403, detail="Remote remediation application is disabled")
+    try:
+        out_file = contained_path(repo_path, payload.patch_out) if payload.patch_out else None
+        if out_file is not None and out_file.suffix not in (".patch", ".diff"):
+            raise HTTPException(status_code=400, detail="Patch output must use .patch or .diff")
+        if out_file is not None and out_file.exists():
+            raise HTTPException(status_code=409, detail="Patch output already exists")
+    except PathSecurityError as error:
+        raise HTTPException(status_code=403, detail=str(error)) from error
 
     engine = RemediationEngine(repo_path)
-    plan = engine.plan(findings)
+    try:
+        plan = engine.plan(findings)
+    except PathSecurityError as error:
+        raise HTTPException(status_code=403, detail=str(error)) from error
 
     patch_content = generate_unified_patch(plan, base_dir=repo_path)
     pr_payload = generate_github_pr_payload(plan, branch_name=payload.branch_name)
 
     applied_count = 0
     if payload.apply:
-        applied_count = engine.apply(plan).applied_count
+        try:
+            applied_count = engine.apply(plan).applied_count
+        except FixConflictError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
 
-    if payload.patch_out and patch_content:
-        out_file = Path(payload.patch_out)
+    if out_file is not None and patch_content:
         out_file.parent.mkdir(parents=True, exist_ok=True)
-        out_file.write_text(patch_content, encoding="utf-8")
+        contained_path(repo_path, out_file)
+        with out_file.open("x", encoding="utf-8") as stream:
+            stream.write(patch_content)
         logger.info(f"Wrote self-healing patch to {out_file}")
 
     return {
@@ -133,9 +182,11 @@ def receive_alert(payload: AlertPayload) -> dict[str, Any]:
 
 
 @app.post("/webhook/heal")
-def trigger_heal(payload: AlertPayload) -> dict[str, Any]:
+def trigger_heal(
+    payload: AlertPayload, repo_path: Annotated[Path, Depends(_authorized_root)]
+) -> dict[str, Any]:
     """Alias for /webhook/alert specifically for automated remediation workflows."""
-    return receive_alert(payload)
+    return receive_alert(payload, repo_path)
 
 
 def run_heal_server(host: str = "127.0.0.1", port: int = 8766) -> None:

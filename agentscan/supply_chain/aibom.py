@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from agentscan.core.models import _installed_version
-from agentscan.supply_chain.dep_scanner import _parse_dependencies
+from agentscan.supply_chain.dep_scanner import _is_exact_version, _parse_dependencies
 
 
 def _purl(name: str, version: str) -> str:
@@ -26,32 +26,42 @@ def _package_components(root: str) -> list[dict[str, Any]]:
         if key in seen:
             continue
         seen.add(key)
+        exact = _is_exact_version(version)
         components.append(
             {
                 "type": "library",
                 "bom-ref": f"pkg:pypi/{name}@{version}",
                 "name": name,
-                "version": version,
-                "purl": _purl(name, version),
+                **({"version": version, "purl": _purl(name, version)} if exact else {}),
+                "properties": [
+                    {"name": "agentscan:declared-requirement", "value": version},
+                    {
+                        "name": "agentscan:version-status",
+                        "value": "resolved" if exact else "unresolved",
+                    },
+                ],
             }
         )
     return components
 
 
-def _model_stubs() -> list[dict[str, Any]]:
+def _model_stubs(model: str | None = None) -> list[dict[str, Any]]:
+    if model is None:
+        return []
     return [
         {
             "type": "machine-learning-model",
-            "bom-ref": "model:qwen2.5-0.5b-instruct",
-            "name": "Qwen/Qwen2.5-0.5B-Instruct",
-            "version": "local-reference",
+            "bom-ref": f"model:{model}",
+            "name": model,
             "description": (
-                "Optional DEEP-mode local reference model. Weights stay on-box; "
-                "listed so AIBOMs record neural-probe inventory."
+                "Explicit operator-declared scanner reference model; target usage and installed weights are unverified."
             ),
             "properties": [
                 {"name": "agentscan:role", "value": "deep-reference"},
-                {"name": "agentscan:remote-weights", "value": "false"},
+                {
+                    "name": "agentscan:provenance",
+                    "value": "operator-declared; not observed target inventory",
+                },
             ],
         }
     ]
@@ -60,10 +70,14 @@ def _model_stubs() -> list[dict[str, Any]]:
 def _mcp_stubs(root: str) -> list[dict[str, Any]]:
     components: list[dict[str, Any]] = []
     for path in Path(root).rglob("*.mcp.json"):
+        issue = ""
         try:
             config = json.loads(path.read_text(encoding="utf-8"))
-        except Exception:
+            if not isinstance(config, dict):
+                raise ValueError("MCP configuration must be an object")
+        except (OSError, ValueError) as exc:
             config = {}
+            issue = type(exc).__name__
         tools = config.get("tools") if isinstance(config, dict) else None
         tool_names: list[str] = []
         if isinstance(tools, list):
@@ -74,6 +88,8 @@ def _mcp_stubs(root: str) -> list[dict[str, Any]]:
             servers = config.get("mcpServers") or config.get("servers") or {}
             if isinstance(servers, dict):
                 tool_names.extend(str(k) for k in servers)
+            else:
+                issue = "invalid server inventory shape"
         ref = f"mcp:{path.as_posix()}"
         components.append(
             {
@@ -85,24 +101,39 @@ def _mcp_stubs(root: str) -> list[dict[str, Any]]:
                     {"name": "agentscan:mcp-path", "value": str(path)},
                     {"name": "agentscan:mcp-tools", "value": ",".join(tool_names)},
                     {"name": "agentscan:auth-present", "value": str(bool(config.get("auth")))},
+                    {
+                        "name": "agentscan:provenance",
+                        "value": "source declaration; deployed permissions unverified",
+                    },
+                    {
+                        "name": "agentscan:inventory-status",
+                        "value": "unavailable" if issue else "declared",
+                    },
+                    {"name": "agentscan:inventory-error", "value": issue},
                 ],
             }
         )
     return components
 
 
-def build_cyclonedx_aibom(path: str) -> dict[str, Any]:
+def build_cyclonedx_aibom(path: str, *, reference_model: str | None = None) -> dict[str, Any]:
     """Build a CycloneDX 1.6 JSON document for the project at `path`."""
     root = str(Path(path).resolve())
     now = datetime.now(UTC).isoformat()
     serial = f"urn:uuid:{uuid.uuid4()}"
-    components = _package_components(root) + _model_stubs() + _mcp_stubs(root)
+    components = _package_components(root) + _model_stubs(reference_model) + _mcp_stubs(root)
     return {
         "bomFormat": "CycloneDX",
         "specVersion": "1.6",
         "serialNumber": serial,
         "version": 1,
         "metadata": {
+            "properties": [
+                {
+                    "name": "agentscan:inventory-provenance",
+                    "value": "project source declarations; runtime inventory is not assessed",
+                }
+            ],
             "timestamp": now,
             "tools": {
                 "components": [

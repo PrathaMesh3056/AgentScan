@@ -5,31 +5,37 @@ on:
     tags:
       - 'v*.*.*'
 
+permissions:
+  contents: read
+
 jobs:
-  build-and-publish:
+  validation:
+    uses: ./.github/workflows/validate.yml
+
+  publish:
+    needs: validation
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: pypi
     permissions:
       id-token: write  # Mandatory for PyPI Trusted Publishing
       contents: write  # Mandatory for GitHub Releases
 
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up uv
-        uses: astral-sh/setup-uv@v3
+      - name: Download validated distributions from this workflow run
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          enable-cache: true
-
-      - name: Build sdist and wheel
-        run: uv build
+          name: agentscan-distributions-3.12
+          path: dist/
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           files: dist/*
           generate_release_notes: true
+          fail_on_unmatched_files: true
 
       - name: Publish to PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # release/v1
         with:
           packages-dir: dist/

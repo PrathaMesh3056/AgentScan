@@ -40,7 +40,7 @@ class TestNativeSemgrepEngine:
 
         pickle_rule = rules["agentscan.unsafe-pickle-loads"]
         assert pickle_rule.agentscan_id == "SC-015"
-        assert pickle_rule.owasp_id == "LLM05"
+        assert pickle_rule.owasp_id == "LLM03"
         assert pickle_rule.severity == Severity.CRITICAL
 
     def test_scan_fixture_file_detects_all_vulnerabilities(self) -> None:
@@ -97,7 +97,7 @@ class TestNativeSemgrepEngine:
         broken_file = tmp_path / "broken.py"
         broken_file.write_text("def broken_syntax(:\n    pass\n", encoding="utf-8")
         findings, checks = scan_native_rules(str(broken_file))
-        assert checks == 1
+        assert checks == 0
         assert findings == []
 
     def test_semgrep_auditor_fallback_integration(self) -> None:

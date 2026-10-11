@@ -25,6 +25,7 @@ from agentscan.attacks.base import AttackModule
 from agentscan.core.ai_client import AIClient
 from agentscan.core.client import AgentScanClient
 from agentscan.core.evaluator import LLMJudge
+from agentscan.core.evidence import asserted_matches, is_prompt_echo
 from agentscan.core.models import Finding, ScanMode, Severity, Target
 
 
@@ -182,6 +183,17 @@ class YamlScanRunner(AttackModule, ABC):
     async def run(self, target: Target) -> list[Finding]:
         """Execute all payload variants from YAML against the target."""
         self._current_target = target
+        from agentscan.core.outcomes import (
+            AssessmentInconclusiveError,
+            execution_ledger,
+            record_evaluated_variant,
+            record_execution_error,
+            record_inconclusive,
+        )
+
+        ledger = execution_ledger.get()
+        if ledger is not None:
+            ledger.evaluated = 0
         findings: list[Finding] = []
         variants = self._load_payload_variants()
 
@@ -193,7 +205,12 @@ class YamlScanRunner(AttackModule, ABC):
                 is_local = judge_model.startswith(("ollama/", "ollama_chat/"))
                 if is_local or ai_client.validate_environment()[0]:
                     judge = LLMJudge(ai_client)
+                else:
+                    record_execution_error(
+                        "Configured judge credentials are unavailable; static checks only"
+                    )
             except Exception as e:
+                record_execution_error(f"Configured judge initialization failed: {e}")
                 logger.warning(
                     f"Could not initialize LLMJudge ({e}); continuing with static checks."
                 )
@@ -206,15 +223,22 @@ class YamlScanRunner(AttackModule, ABC):
             variant_list = expand_variants(variant_list, budget=mutation_budget)
 
         concurrency = getattr(target, "concurrency", 10) or 10
+        if ledger is not None:
+            ledger.selected = len(variant_list)
         sem = asyncio.Semaphore(concurrency)
 
         async def _test_one(idx: int, var: dict[str, Any]) -> tuple[int, Finding | None]:
             async with sem:
                 try:
                     finding = await self._test_variant(client, var, judge=judge)
+                    record_evaluated_variant()
                     return idx, finding
+                except AssessmentInconclusiveError as error:
+                    record_inconclusive(f"Variant {var.get('id', '?')}: {error}")
+                    return idx, None
                 except Exception as e:
                     logger.error(f"Error testing variant {var.get('id', '?')}: {e}")
+                    record_execution_error(f"Variant {var.get('id', '?')}: {e}")
                     return idx, None
 
         async with AgentScanClient(target) as client:
@@ -258,26 +282,43 @@ class YamlScanRunner(AttackModule, ABC):
         detection_method = variant["detection_method"]
         detection_target = variant["detection_target"]
 
-        if self._check_detection(
-            detection_method, response_text, detection_target, response=response
-        ):
+        from agentscan.core.outcomes import AssessmentInconclusiveError
+
+        inconclusive: AssessmentInconclusiveError | None = None
+        # Exact input echo carries no evidence of accepting its instructions.
+        echo = (
+            is_prompt_echo(response_text, payload_text)
+            and self._extract_tool_calls(response) is None
+        )
+        if echo:
+            return None
+        try:
+            detected = not echo and self._check_detection(
+                detection_method, response_text, detection_target, response=response
+            )
+        except AssessmentInconclusiveError as error:
+            detected = False
+            inconclusive = error
+        if detected:
+            evidence_method = getattr(self, "deterministic_evidence_method", detection_method)
             evidence = self._build_evidence(detection_method, response_text, response)
             return self.make_finding(
                 severity=Severity(variant["severity"]),
-                description=self.build_finding_description(
-                    variant, detection_method, response_text
-                ),
+                description=self.build_finding_description(variant, evidence_method, response_text),
                 evidence=evidence,
                 remediation=self.get_remediation(variant),
                 payload_used=payload_text,
                 turn_number=1,
-                metadata=self._variant_metadata(variant, detection_method),
+                metadata=self._variant_metadata(variant, evidence_method),
             )
 
         if judge is not None and detection_method not in _JUDGE_SKIP_METHODS:
             objective = self.build_judge_objective(variant, payload_text, detection_target)
             use_cache = getattr(self._current_target, "judge_cache", True)
             verdict = await self._cached_judge(judge, objective, response_text, use_cache=use_cache)
+            if verdict.status != "VALID":
+                raise RuntimeError(f"Judge verdict is {verdict.status.lower()}: {verdict.reason}")
+            inconclusive = None
             if verdict.success:
                 return self.make_finding(
                     severity=Severity(variant["severity"]),
@@ -293,6 +334,8 @@ class YamlScanRunner(AttackModule, ABC):
                     ),
                 )
 
+        if inconclusive is not None:
+            raise inconclusive
         return None
 
     async def _test_variant_with_mutations(
@@ -525,14 +568,14 @@ class YamlScanRunner(AttackModule, ABC):
     ) -> bool:
         """Check whether attack succeeded using the specified detection method."""
         if method == "contains":
-            return target.lower() in response_text.lower()
+            return asserted_matches(response_text, re.compile(re.escape(target), re.IGNORECASE))
         if method == "not_contains":
             return target.lower() not in response_text.lower()
         if method == "regex":
             compiled = _compile_regex(target)
             if compiled is None:
                 return False
-            return bool(compiled.search(response_text))
+            return asserted_matches(response_text, compiled)
         if method == "semantic_similarity":
             return YamlScanRunner._semantic_similarity_match(response_text, target)
         if method == "timeout":
@@ -594,7 +637,7 @@ class YamlScanRunner(AttackModule, ABC):
             raw_fragment = json.dumps(tool_calls_data)
             if target.lower() in raw_fragment.lower():
                 return True
-        return target.lower() in response_text.lower()
+        return False
 
     @staticmethod
     def _semantic_similarity_match(response_text: str, target: str) -> bool:

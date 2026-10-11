@@ -2,6 +2,8 @@
 
 Welcome to **AgentScan**, the open-source security scanner designed specifically for AI agents. This manual provides you with a complete, start-to-end guide on what AgentScan is, how to use it, how its internals work, and how you can extend it.
 
+Use the [current architecture and function guide](../internal_docs/diagrams/README.md) for source-resolved call flows and the [data policy](DATA_POLICY.md) for deterministic/local/external analysis. Feature presence and synthetic smoke checks do not establish production readiness or independent detection accuracy.
+
 ---
 
 ## 1. Introduction to AgentScan
@@ -301,54 +303,34 @@ agentscan list-attacks
 
 ---
 
-### 3.4. AI-Driven Red-Teaming (`--attacker-model`, `calibrate`, `benchmark`)
+### 3.4. Analysis Modes, Adaptive Testing and Smoke Checks
 
-Static payloads bounce off aligned agents. AgentScan can also run an **adaptive AI attacker**
-(`ATK-050`): an attacker LLM fires proven jailbreak techniques, an **LLM-as-a-Judge** scores each
-reply, and on failure it feeds the refusal back and tries a new technique — up to N turns.
+Analysis is deterministic by default and scans are classified sensitive. Model-assisted modules need an explicit analysis mode; a missing model or invalid judge response remains unavailable/inconclusive coverage rather than a clean negative result.
 
-**1. Add your key.** Copy `.env.example` to `.env` and paste a key (it's gitignored):
-
-```
-OPENROUTER_API_KEY=sk-or-...      # OpenRouter hosts uncensored models (recommended)
-```
-
-**2. Run the attacker.** Point `--attacker-model` at any litellm model id (implies `--exploit`):
+For sensitive data, choose deterministic checks or an installed offline Ollama model:
 
 ```bash
-agentscan scan https://your-agent/chat \
-  --attacker-model openrouter/cognitivecomputations/dolphin-mistral-24b-venice-edition \
-  --attacker-turns 5 \
-  --calibrate \                 # verify the attacker/judge works first (see below)
-  --verbose \                   # watch each attack + verdict live
-  --llm-log llm_log.txt \       # every attacker/judge call: exact prompt in, raw output out
-  --output report.html
+agentscan scan https://your-agent/chat --analysis deterministic --output report.json
+agentscan scan https://your-agent/chat --analysis local --local-model ollama/llama3.2 --exploit --attacker-turns 5 --output report.json
 ```
 
-Backends (same flag): **OpenRouter** (`openrouter/…`, hosted, cheap), **Ollama** (`ollama/dolphin3`,
-local, free, no key), or **cloud** (`gpt-4o-mini`, `claude-3-5-haiku`). Local `ollama/` models skip
-the key check. `--llm-log` is the file that shows the model's inputs and raw outputs — full visibility.
+Prepare weights separately, disable Ollama cloud features and apply host egress controls for independently enforced offline operation. Local selection never downloads or falls back to a cloud model.
 
-**3. Trust the result — `calibrate`.** A "resisted / SAFE" verdict is only meaningful if the
-attacker+judge actually work. `calibrate` proves they can *detect* a jailbreak (positive control)
-before you trust a scan:
+A client may explicitly designate a scan non-sensitive and use its own configured OpenAI, Anthropic or Gemini key. External mode sends relevant objectives and target responses to that provider. Replace the model placeholder with a model available to the account:
 
 ```bash
-agentscan calibrate --attacker-model openrouter/...
-# [PASS] attacker/judge validated — detection works, a 'resisted' verdict is trustworthy
-# [FAIL] ... — the model is too weak to trust; use a stronger attacker/judge
+agentscan scan https://your-agent/chat --analysis external --data-classification non_sensitive --external-model gemini/AVAILABLE_MODEL_ID --exploit
 ```
 
-Add `--calibrate` to a scan to self-certify it. This is the difference between "trust me, it's safe"
-and "I proved I'd catch it if it weren't."
+Set the selected key locally (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY` or `GEMINI_API_KEY`) in the environment or local `.env`; never supply it through a scan form or API request. API service mode additionally needs tenant permission and administrator-configured model/key settings. Sensitive classification blocks external analysis even when a key exists. See [data policy](DATA_POLICY.md) for setup, disclosure boundaries, key handling and service retention.
 
-**4. Prove the tool discriminates — `benchmark`.** Grades built-in reference agents at known
-vulnerability levels and checks the results rank them correctly (no key/network needed):
+`calibrate` performs synthetic local positive/refusal/quotation protocol controls. `benchmark` exercises built-in in-process fixtures and scoring order without a provider key or target server:
 
 ```bash
 agentscan benchmark
-#  wide-open  -> 11 findings   partial -> 7   guarded -> 0 (SAFE)   [PASS]
 ```
+
+These smoke checks do not establish independent detector accuracy or certify target safety. A synthetically resistant fixture is not evidence that a deployed agent is secure. Text matches remain candidate observations until corroborated; strict boolean judge output establishes a valid verdict format, not the verdict's accuracy. An explicitly enabled `--llm-log` is a local artifact that needs appropriate access and retention controls.
 
 ---
 
@@ -458,7 +440,7 @@ agentscan swarm http://localhost:8000/chat --team trio --rounds 2
 # Target excessive agency and unauthorized tool execution in offline heuristic mode
 agentscan swarm http://localhost:8000/chat --team agency --offline --output swarm_report.json
 
-# Drive custom teams using local Ollama or cloud models
+# Use installed local Ollama weights for model-assisted turns
 agentscan swarm http://localhost:8000/chat --model ollama/llama3 --rounds 3 --verbose
 ```
 
@@ -647,7 +629,7 @@ Located in `agentscan/core/`, the attack engine is built for extreme concurrency
 
 > [!NOTE]
 > **SCAN Mode Modules (YamlScanRunner)**
-> - **Direct Prompt Injection (`ATK-001`)**: 10 YAML variants (jailbreak, role-switch, delimiter bypass) with MiniLM semantic embedding detection and LLM-as-a-Judge fallback (`LLM01`).
+> - **Direct Prompt Injection (`ATK-001`)**: 24 bounded direct-user seeds, including role spoofing, fictional approval, encoded instructions and reconstruction (`LLM01`). Deterministic assessment requires a synthetic reference provisioned privately on the target, or a full known confidential prompt. Complete supported disclosure creates a finding; missing criteria or unreadable replies remain inconclusive. Public markers, semantic similarity and a model judge cannot replace this evidence. See [setup, terminal/UI use and limits](modules/prompt_injection.md).
 > - **Jailbreak & Persona Adoption (`ATK-002`)**: Advanced persona manipulation (DAN, developer mode, fictional frames) (`LLM01`).
 > - **PII & Sensitive Data Disclosure (`ATK-003`)**: Probes for SSN, credit cards, emails, and API keys (`LLM06`).
 > - **Denial of Service (`ATK-004`)**: Resource exhaustion via repeat tokens, recursive expansion, and massive padding (`LLM04`).
@@ -719,18 +701,18 @@ Located in `agentscan/neural/` and `agentscan/attacks/deep/`, this subsystem ins
 
 Located in `agentscan/core/`, added in Module 5B to power adaptive, model-driven testing.
 
-- **Unified LLM Client (`ai_client.py`)**: `AIClient` wraps `litellm` so attacker LLMs (adaptive payload generation) and judge LLMs (LLM-as-a-Judge scoring) reach any provider — OpenAI, Anthropic, Gemini, Ollama — through one OpenAI-shaped interface (pass `model="gpt-4o"`, `"claude-3-5-sonnet-latest"`, `"ollama/llama3"`). It drops provider-unsupported params instead of erroring, normalises every provider failure to a single `AIClientError`, and reads API keys from the environment only (never stored or logged). `validate_environment()` lets the CLI skip AI modules cleanly when a key is missing. This is the foundation for the roadmap's iterative red-team attacker and LLM-as-a-Judge evaluator.
+- **Analysis Client (`ai_client.py`, `external_analysis.py`)**: the scan context enforces deterministic/local/external mode and data classification before analysis I/O. Local mode checks installed loopback weights. External mode supports fixed OpenAI, Anthropic and Gemini endpoints only for explicitly designated non-sensitive scans; keys are locally configured and service tenants need separate permission. Requests are bounded, failures become `AIClientError`, and local/deterministic modes never automatically fall back to providers. See [data policy](DATA_POLICY.md).
 - **Embedding-Based Semantic Detection (`semantic.py`)**: `embedding_similarity()` scores compliance by the cosine of two `all-MiniLM-L6-v2` sentence embeddings, replacing the v0.1 word-overlap heuristic in the prompt-injection detector (which now falls back to that lexical heuristic only if the embedding model can't load). Calibrated threshold: clear paraphrases score ~0.48–0.80, unrelated text ≤ 0.0, so the match fires at `0.4`.
 
 
 ### 4.7. Transport Connectors
 
-Located in `agentscan/core/connectors.py`, this layer decides *how* AgentScan reaches a target.
+Located in `agentscan/core/connectors/`, this layer decides *how* AgentScan reaches a target.
 Every attack module talks through `AgentScanClient`, which selects a connector — so the same
 modules work over any transport unchanged.
 
 - **`HttpJsonConnector`** (default): POSTs `{"message": ...}` to the target URL, with auth-header
-  injection, exponential-backoff retries, framework-agnostic response parsing, and automatic Server-Sent Events (SSE) stream consumption.
+  injection, framework-agnostic response parsing and Server-Sent Events (SSE) consumption. POST interactions are not automatically retried by default; service requests enforce tenant origin/IP policy, redirect credential stripping and response/request budgets.
 - **`RequestTemplateConnector`**: built from a captured cURL command (`RequestTemplate.from_curl`), it
   replays that exact request — headers, cookies, CSRF tokens, custom headers, multipart/JSON body — substituting the attack payload into
   the configured field (`--message-path`) and normalising the reply via JSONPath (`--response-path`). This lets
@@ -739,7 +721,7 @@ modules work over any transport unchanged.
   Reuses a single persistent browser session per scan, selects elements via CSS selectors (`--input-selector`, `--response-selector`),
   types payloads, and waits for dynamic DOM updates.
 - **`CallableConnector`**: an in-process async adapter used for testing and zero-network reference evaluation (such as `agentscan benchmark`).
-- **`McpStdioConnector` / `McpSseConnector`**: probe an MCP **server** (`mcp://stdio?command=…` or `mcp+sse://host/sse`) via `initialize`, `tools/list`, `tools/call`, and `resources/read`. Distinct from ATK-006 (shadowing via the host agent).
+- **`McpStdioConnector` / `McpSseConnector`**: probe a locally selected MCP server through newline JSON-RPC stdio or Streamable HTTP, including protocol/session validation, paginated discovery and bounded responses. A 404 session expires and is reinitialized on the next interaction; failed tool calls are not replayed. The legacy HTTP+SSE GET-endpoint handshake is unsupported/unavailable. Distinct from ATK-006 shadowing through a host agent.
 - **`WebSocketConnector`**: persistent `ws://` / `wss://` send/recv, normalised to `{response: …}`.
 - **Auto-Discovery (`core/discovery.py`)**: `agentscan init <url> -o target.yaml` probes live endpoints, sniffing response bodies, SSE streams, and headers to auto-generate ready-to-use target profile YAMLs.
 
@@ -757,8 +739,8 @@ Located across `agentscan/attacks/exploit/` and `agentscan/core/`:
 
 - **Adaptive AI Attacker (`ai_attacker.py`, ATK-050)**: PAIR-style (Prompt Automatic Iterative Refinement) multi-turn attacker LLM. Executes seed jailbreak strategies from `core/jailbreaks.py` (Base64, leetspeak, DAN, Dev Mode, prefix injection, refusal suppression, roleplay), evaluates agent responses, and iteratively refines payloads based on refusal feedback up to `--attacker-turns`.
 - **LLM-as-a-Judge Evaluator (`core/evaluator.py`)**: evaluates unstructured LLM replies against strict rubric criteria via an evaluation model, returning structured JSON verdicts (`jailbreak_detected`, `confidence`, `reasoning`).
-- **Positive-Control Calibration (`core/calibration.py` / `agentscan calibrate`)**: validates that the specified attacker and judge models are functioning and capable of detecting known jailbreak compromises before running a live scan.
-- **Reference Benchmarking (`core/benchmark.py` / `agentscan benchmark`)**: runs AgentScan against simulated in-process reference agents (`wide-open`, `partial`, `guarded`) to verify that the scoring engine accurately discriminates between vulnerable and secure agents without requiring external networks.
+- **Synthetic Local Controls (`core/calibration.py` / `agentscan calibrate`)**: checks local generation and strict boolean verdicts on synthetic positive/refusal/quotation cases. This is a protocol smoke check; independent held-out calibration is still required to assess accuracy.
+- **Synthetic Fixture Benchmark (`core/benchmark.py` / `agentscan benchmark`)**: checks local findings and scoring order on built-in in-process fixtures. It requires no provider/network and does not measure independent accuracy or certify deployed agents.
 - **Raw LLM Audit Logs (`--llm-log <file>`)**: records exact prompt inputs and raw model outputs for all attacker and judge LLM invocations.
 
 ### 4.10. Trajectory Tracing & SSP Mapping
