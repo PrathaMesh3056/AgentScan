@@ -354,17 +354,39 @@ class Controls(HTMLParser):
             self.ids.add(identifier)
 
 
+def authored_control_ids(html):
+    controls = Controls()
+    controls.feed(html)
+    controls.close()
+    # Certificate controls are authored inside a JavaScript render template.
+    for markup in re.findall(r"<(?:input|select|textarea)\b[^>]*>", html):
+        # Each opening tag is a separate fragment; textarea state must not leak.
+        fragment = Controls()
+        fragment.feed(markup)
+        fragment.close()
+        controls.ids.update(fragment.ids)
+    return controls.ids
+
+
+def test_authored_controls_include_templates_after_textarea(monkeypatch):
+    # Exercise newer raw-text parsing behavior on older Python patch releases too.
+    monkeypatch.setattr(
+        Controls, "CDATA_CONTENT_ELEMENTS", (*Controls.CDATA_CONTENT_ELEMENTS, "textarea")
+    )
+    html = (
+        '<textarea id="task"></textarea>'
+        '<script>const field = `<input id="cert-secret-key" />`;</script>'
+    )
+    assert authored_control_ids(html) == {"task", "cert-secret-key"}
+
+
 def test_every_authored_control_has_validation_and_invalid_value_case():
     node = shutil.which("node")
     if not node:
         pytest.skip("Node is required to test dashboard JavaScript validation")
     root = Path(__file__).resolve().parents[1]
-    controls = Controls()
     html = (root / "agentscan/ui/static/index.html").read_text(encoding="utf-8")
-    controls.feed(html)
-    # Certificate controls are authored inside a JavaScript render template.
-    for markup in re.findall(r"<(?:input|select|textarea)\b[^>]*>", html):
-        controls.feed(markup)
+    control_ids = authored_control_ids(html)
     script = r"""
     const assert = require('node:assert/strict');
     const forms = require('./agentscan/ui/static/form-validation.js');
@@ -390,7 +412,7 @@ def test_every_authored_control_has_validation_and_invalid_value_case():
         [node, "-e", script], cwd=root, check=True, capture_output=True, text=True, timeout=20
     )
     inventory = json.loads(result.stdout)
-    assert controls.ids == {field["id"] for field in inventory}
+    assert control_ids == {field["id"] for field in inventory}
 
 
 @pytest.mark.parametrize(

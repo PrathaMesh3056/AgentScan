@@ -7,6 +7,8 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from click import unstyle
+from typer import rich_utils
 from typer.testing import CliRunner
 
 from agentscan.cli import app
@@ -198,13 +200,23 @@ def test_cli_designated_external_scan_and_role_models():
     assert ScanMode.EXPLOIT in modes
 
 
-def test_cli_external_role_model_does_not_bypass_sensitive_default():
+@pytest.mark.parametrize("color", [False, True])
+@pytest.mark.parametrize("columns", ["40", "80", "120"])
+def test_cli_external_role_model_does_not_bypass_sensitive_default(monkeypatch, color, columns):
+    # Typer reads its terminal flags at import time, before CliRunner sets env.
+    monkeypatch.setattr(rich_utils, "FORCE_TERMINAL", color)
+    monkeypatch.setattr(rich_utils, "COLOR_SYSTEM", "standard" if color else None)
+    monkeypatch.setattr(rich_utils, "MAX_WIDTH", int(columns))
     with patch("agentscan.cli.run_scan_multi", new_callable=AsyncMock) as run:
         response = CliRunner().invoke(
-            app, ["scan", "https://owned.invalid/chat", "--attacker-model", "openai/synthetic"]
+            app,
+            ["scan", "https://owned.invalid/chat", "--attacker-model", "openai/synthetic"],
+            color=color,
+            env={"COLUMNS": columns, "FORCE_COLOR": "1"},
         )
-    assert response.exit_code != 0
-    assert "require --analysis external" in response.output
+    output = " ".join(unstyle(response.output).replace("│", " ").split())
+    assert response.exit_code == 2
+    assert "require --analysis external" in output
     run.assert_not_called()
 
 
