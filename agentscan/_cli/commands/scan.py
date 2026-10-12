@@ -503,6 +503,13 @@ def scan(  # noqa: PLR0913
         recorder.write_llm_log(llm_log)
         console.print(f"LLM log written to {llm_log} ({len(recorder.llm_calls)} calls)")
 
+    if report.status != "COMPLETE":
+        console.print(
+            "[yellow]Assessment is incomplete. Review module outcomes and errors in the report; "
+            "completed findings and requested exports have been retained.[/yellow]"
+        )
+        raise typer.Exit(code=3)
+
     # Fail-on threshold check
     if fail_on is not None and _fail_on_should_exit(report.findings, fail_on):
         raise typer.Exit(code=1)

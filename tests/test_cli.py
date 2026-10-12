@@ -51,6 +51,55 @@ def _make_finding(severity: Severity, attack_id: str = "ATK-001") -> Finding:
 
 
 class TestScanCommand:
+    @pytest.mark.parametrize("status", ["ERROR", "INCONCLUSIVE"])
+    def test_incomplete_scan_exits_nonzero_after_exporting_report_and_transcript(
+        self, tmp_path: Path, status: str
+    ) -> None:
+        report = _make_report([], 100)
+        report.tests_selected = 7
+        report.complete(None, status=status)
+        output = tmp_path / "incomplete-report.json"
+        transcript = tmp_path / "incomplete-transcript.txt"
+        with patch("agentscan.cli.run_scan_multi", new_callable=AsyncMock, return_value=report):
+            result = runner.invoke(
+                app,
+                [
+                    "scan",
+                    "http://test-agent.example.com/chat",
+                    "--output",
+                    str(output),
+                    "--transcript",
+                    str(transcript),
+                ],
+            )
+        assert result.exit_code == 3
+        assert json.loads(output.read_text(encoding="utf-8"))["status"] == status
+        assert transcript.exists()
+        assert status in result.output
+
+    def test_incomplete_scan_with_finding_keeps_exports_and_incomplete_exit_precedence(
+        self, tmp_path: Path
+    ) -> None:
+        report = _make_report([_make_finding(Severity.HIGH)], 50)
+        report.complete(None, status="INCONCLUSIVE")
+        output = tmp_path / "partial-report.json"
+        with patch("agentscan.cli.run_scan_multi", new_callable=AsyncMock, return_value=report):
+            result = runner.invoke(
+                app,
+                [
+                    "scan",
+                    "http://test-agent.example.com/chat",
+                    "--fail-on",
+                    "HIGH",
+                    "--output",
+                    str(output),
+                ],
+            )
+        assert result.exit_code == 3
+        exported = json.loads(output.read_text(encoding="utf-8"))
+        assert exported["status"] == "INCONCLUSIVE"
+        assert len(exported["findings"]) == 1
+
     def test_document_adapter_profile_reaches_scan(self, tmp_path) -> None:
         profile = tmp_path / "document.yaml"
         profile.write_text(

@@ -174,6 +174,8 @@ def test_cli_external_denied_without_designation(classification):
 
 def test_cli_designated_external_scan_and_role_models():
     report = ScanReport(target_url="https://owned.invalid/chat", scan_mode=ScanMode.SCAN)
+    report.tests_selected = 1
+    report.complete(100, tests_run=1)
     with patch("agentscan.cli.run_scan_multi", new_callable=AsyncMock, return_value=report) as run:
         response = CliRunner().invoke(
             app,

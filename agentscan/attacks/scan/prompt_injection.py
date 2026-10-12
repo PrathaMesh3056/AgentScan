@@ -159,6 +159,10 @@ class PromptInjectionModule(YamlScanRunner):
         """Legacy lexical method arguments cannot replace the configured reference."""
         return self._reference_match(response_text) is not None
 
+    def _provenance_input(self, variant: dict[str, Any], payload_text: str) -> str:
+        """Text supplied to the target that cannot establish private disclosure."""
+        return payload_text
+
     async def _test_variant(
         self,
         client: AgentScanClient,
@@ -167,7 +171,7 @@ class PromptInjectionModule(YamlScanRunner):
     ) -> Finding | None:
         """Assess complete private disclosure, preserving unknown observations."""
         payload_text = self._build_payload(variant)
-        provenance_text = payload_text
+        provenance_text = self._provenance_input(variant, payload_text)
         if variant.get("mutation"):
             source_id = str(variant.get("id", "")).partition(":")[0]
             source = next(
@@ -175,7 +179,9 @@ class PromptInjectionModule(YamlScanRunner):
                 None,
             )
             if source is not None:
-                provenance_text += "\n" + self._build_payload(source)
+                provenance_text += "\n" + self._provenance_input(
+                    source, self._build_payload(source)
+                )
         self._reference_match("", provenance_text)
         response = await self._deliver_variant(client, variant, payload_text=payload_text)
         response_text = next(

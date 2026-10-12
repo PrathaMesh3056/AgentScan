@@ -37,6 +37,14 @@ class IndirectInjectionModule(PromptInjectionModule):
     )
     default_judge_remediation = default_remediation
 
+    @staticmethod
+    def _user_task(variant: dict[str, Any]) -> str:
+        return str(variant.get("user_task") or "Answer using the retrieved document.")
+
+    def _provenance_input(self, variant: dict[str, Any], payload_text: str) -> str:
+        """Public task echoes are no more private than supplied document content."""
+        return self._user_task(variant) + "\n" + payload_text
+
     async def run(self, target: Target) -> list[Finding]:
         if target.indirect_adapter != "document_v1":
             raise ModuleUnavailableError(
@@ -58,7 +66,7 @@ class IndirectInjectionModule(PromptInjectionModule):
                 "ATK-005 currently supports document ingestion only; tool/unknown channels are unassessed."
             )
         document = payload_text if payload_text is not None else self._build_payload(variant)
-        task = str(variant.get("user_task") or "Answer using the retrieved document.")
+        task = self._user_task(variant)
         self._reference_match("", task + "\n" + document)
         probe_id = uuid4().hex
         source_id = str(variant["id"])

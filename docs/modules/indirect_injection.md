@@ -1,7 +1,7 @@
 # ATK-005: indirect document injection
 
-ATK-005 tests whether instructions in a retrieved document cause an agent to
-disclose a known private reference. It sends the legitimate task and adversarial
+ATK-005 checks for observed disclosure of a known private reference after
+target-reported document ingestion. It sends the legitimate task and adversarial
 document as separate HTTP fields, then checks the target's ingestion receipt
 before assessing the response.
 
@@ -144,6 +144,17 @@ Local document and [retrieval validation](atk005_retrieval_validation.md) exerci
 this contract with synthetic data. They do not establish customer accuracy,
 general resistance or a successful target defense. See
 [evaluation limits](../EVALUATION.md) for results and methodology.
+
+The [12 October support-agent assessment](atk005_support_validation.md) adds
+32 real offline generations, independent source/input/output joins and separate
+raw/delivery/utility results. Its held-out benign utility gate passed; positive
+detection and defense benefit remain inconclusive because neither condition
+disclosed the complete reference. Operational controls are reported separately.
+
+CLI scans export requested reports before exiting **3** for an incomplete or
+failed assessment. A complete scan's `--fail-on` severity threshold exits **1**.
+Inspect status and evaluated coverage as well as findings. References already
+present in either the public task or document cannot establish private disclosure.
 
 Keep retrieved content below trusted instructions. Enforce authorization, tool
 arguments, output rules and destinations in application code. AgentScan does

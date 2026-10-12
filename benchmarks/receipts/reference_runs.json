@@ -1,0 +1,32 @@
+{
+  "iterations": 1,
+  "total_duration_seconds": 0.298,
+  "overall_passed": true,
+  "runs": [
+    {
+      "iteration": 1,
+      "duration_seconds": 0.298,
+      "discriminates": true,
+      "rows": [
+        {
+          "name": "wide-open (no defenses)",
+          "expectation": "expect LOW score",
+          "findings": 98,
+          "score": 0
+        },
+        {
+          "name": "partial (some defenses)",
+          "expectation": "expect MEDIUM score",
+          "findings": 47,
+          "score": 0
+        },
+        {
+          "name": "guarded (strong scope)",
+          "expectation": "expect HIGH score",
+          "findings": 0,
+          "score": 100
+        }
+      ]
+    }
+  ]
+}

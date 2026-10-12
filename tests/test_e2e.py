@@ -1,9 +1,9 @@
 # tests/test_e2e.py
 #
 # End-to-end integration tests for AgentScan CLI:
-# - Live HTTP scan against mock target
+# - Mocked HTTP scan against a controlled target
 # - SARIF report generation & schema verification
-# - --fail-on exit code behavior
+# - Incomplete-coverage exit precedence and preserved findings/exports
 # - --transcript generation and redaction verification
 
 from __future__ import annotations
@@ -19,6 +19,15 @@ from typer.testing import CliRunner
 from agentscan.cli import app
 
 runner = CliRunner()
+
+
+def _assert_incomplete_coverage(report: dict) -> None:
+    assert report["status"] == "INCONCLUSIVE"
+    assert report["score"] is None
+    assert 0 < report["tests_run"] < report["tests_selected"]
+    assert any(
+        outcome["status"] in {"INCONCLUSIVE", "SKIPPED"} for outcome in report["module_outcomes"]
+    )
 
 
 class TestEndToEndScan:
@@ -46,7 +55,7 @@ class TestEndToEndScan:
             ],
         )
 
-        assert result.exit_code == 0, f"CLI output: {result.output}"
+        assert result.exit_code == 3, f"CLI output: {result.output}"
         assert sarif_out.exists()
 
         data = json.loads(sarif_out.read_text(encoding="utf-8"))
@@ -55,10 +64,14 @@ class TestEndToEndScan:
         assert "runs" in data and len(data["runs"]) > 0
         driver = data["runs"][0]["tool"]["driver"]
         assert driver["name"] == "AgentScan"
+        _assert_incomplete_coverage(data["runs"][0]["properties"]["agentscanAssessment"])
+        assert data["runs"][0]["invocations"][0]["executionSuccessful"] is False
 
     @respx.mock
-    def test_e2e_fail_on_threshold(self) -> None:
-        """Verify --fail-on triggers non-zero exit code when matching findings exist."""
+    def test_e2e_incomplete_coverage_keeps_findings_and_takes_exit_precedence(
+        self, tmp_path: Path
+    ) -> None:
+        """Incomplete full-suite coverage takes exit precedence over severity findings."""
         # Mock target that naively complies, triggering findings
         respx.post("http://e2e-vulnerable.test/chat").mock(
             side_effect=lambda request: httpx.Response(
@@ -67,11 +80,19 @@ class TestEndToEndScan:
             )
         )
 
-        # 1. Without --fail-on, exits 0
-        res_normal = runner.invoke(app, ["scan", "http://e2e-vulnerable.test/chat"])
-        assert res_normal.exit_code == 0
+        # The echo target supplies no private reference or document adapter.
+        # Some modules still evaluate and retain findings, without complete coverage.
+        normal_output = tmp_path / "normal.json"
+        res_normal = runner.invoke(
+            app, ["scan", "http://e2e-vulnerable.test/chat", "--output", str(normal_output)]
+        )
+        assert res_normal.exit_code == 3
+        normal_report = json.loads(normal_output.read_text(encoding="utf-8"))
+        _assert_incomplete_coverage(normal_report)
+        assert normal_report["findings"]
 
-        # 2. With --fail-on low, exits 1 because vulnerabilities were found
+        # --fail-on remains distinct from incomplete-assessment exit semantics.
+        fail_output = tmp_path / "fail-on.json"
         res_fail = runner.invoke(
             app,
             [
@@ -79,9 +100,18 @@ class TestEndToEndScan:
                 "http://e2e-vulnerable.test/chat",
                 "--fail-on",
                 "low",
+                "--output",
+                str(fail_output),
             ],
         )
-        assert res_fail.exit_code == 1
+        assert res_fail.exit_code == 3
+        fail_report = json.loads(fail_output.read_text(encoding="utf-8"))
+        _assert_incomplete_coverage(fail_report)
+        assert fail_report["findings"]
+        assert any(
+            finding["severity"] in {"LOW", "MEDIUM", "HIGH", "CRITICAL"}
+            for finding in fail_report["findings"]
+        )
 
     @respx.mock
     def test_e2e_transcript_and_redaction(self, tmp_path: Path) -> None:
@@ -113,7 +143,7 @@ class TestEndToEndScan:
             ],
         )
 
-        assert result.exit_code == 0
+        assert result.exit_code == 3
         assert transcript_path.exists()
         content = transcript_path.read_text(encoding="utf-8")
         assert "AgentScan Transcript" in content
@@ -157,9 +187,12 @@ class TestEndToEndScan:
                 str(transcript),
             ],
         )
-        assert result.exit_code == 0
+        assert result.exit_code == 3
         content = transcript.read_text(encoding="utf-8")
         assert "<< REPLY" in content
+        assert "Status: INCONCLUSIVE" in content
+        assert "Score: unavailable" in content
+        assert "ASSESSMENT COVERAGE" in content
         assert "Bare protected value: [REDACTED]" in content
         assert credential not in content
         assert active_context.get() is previous_context
