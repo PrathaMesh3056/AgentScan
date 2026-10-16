@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from rich.console import Console
+from rich.text import Text
 
 from agentscan.core.context import ContextLocal, active_context
 
@@ -120,11 +121,21 @@ def redact_sensitive_data(text: str) -> str:
 
 
 def _safe(text: str) -> str:
+    """Render untrusted text literally, without terminal controls or Rich tags.
+
+    Neutralization applies only at the live display boundary. Stored UTF-8
+    evidence retains its content and existing redaction policy.
     """
-    Make text printable on the current console encoding (e.g. legacy Windows cp1252),
-    replacing characters it can't encode. The transcript FILE keeps full UTF-8 — this
-    only guards live console printing so a zero-width/emoji payload can't crash the run.
-    """
+    parts = []
+    for char in text:
+        code = ord(char)
+        if (code < 32 and char not in "\t\n") or 127 <= code <= 159:
+            parts.append(f"\\x{code:02x}")
+        elif char in "\u061c\u200e\u200f\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069":
+            parts.append(f"\\u{code:04x}")
+        else:
+            parts.append(char)
+    text = "".join(parts)
     enc = sys.stdout.encoding or "utf-8"
     return text.encode(enc, "replace").decode(enc, "replace")
 
@@ -197,7 +208,9 @@ class TrafficRecorder:
     def set_module(self, module_id: str, module_name: str) -> None:
         self._module = (module_id, module_name)
         if self.live:
-            _console.print(f"\n[bold cyan]== {module_id} - {_safe(module_name)} ==[/bold cyan]")
+            _console.print(
+                Text(f"\n== {_safe(module_id)} - {_safe(module_name)} ==", style="bold cyan")
+            )
 
     def record(
         self,
@@ -225,10 +238,18 @@ class TrafficRecorder:
         self.entries.append(entry)
         if self.live:
             _console.print(
-                f"[dim][{entry.seq}][/dim] [yellow]>> payload:[/yellow] {_safe(req_text.strip()[:400])}"
+                Text.assemble(
+                    (f"[{entry.seq}] ", "dim"),
+                    (">> payload: ", "yellow"),
+                    _safe(req_text.strip()[:400]),
+                )
             )
             _console.print(
-                f"[dim][{entry.seq}][/dim] [green]<< reply  :[/green] {_safe(reply_text.strip()[:400])}"
+                Text.assemble(
+                    (f"[{entry.seq}] ", "dim"),
+                    ("<< reply  : ", "green"),
+                    _safe(reply_text.strip()[:400]),
+                )
             )
 
     def record_finding(
@@ -244,7 +265,9 @@ class TrafficRecorder:
         desc = redact_sensitive_data(description) if do_redact else description
         self.findings.append((module_id, severity, desc))
         if self.live:
-            _console.print(f"   [bold red]!! FINDING [{severity}][/bold red] {_safe(desc)}")
+            _console.print(
+                Text.assemble((f"   !! FINDING [{_safe(severity)}] ", "bold red"), _safe(desc))
+            )
 
     def record_llm(
         self,
@@ -282,8 +305,11 @@ class TrafficRecorder:
             )
             role = "attacker" if "red-teamer" in sys else "judge" if "evaluator" in sys else "llm"
             _console.print(
-                f"[magenta][LLM {call.seq}] {model} ({role})[/magenta] "
-                f"[dim]→[/dim] {_safe(sanitized_output.strip()[:300])}"
+                Text.assemble(
+                    (f"[LLM {call.seq}] {_safe(model)} ({role}) ", "magenta"),
+                    ("→ ", "dim"),
+                    _safe(sanitized_output.strip()[:300]),
+                )
             )
 
     def write_llm_log(self, path: Path) -> None:

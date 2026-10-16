@@ -92,8 +92,8 @@
   }
 
   function scopeLabel(scope) {
-    const labels = { target: 'Target assessment', direct_text_known_reference: 'Direct text · known reference',
-      local_reference_model: 'Local reference diagnostics', mixed: 'Mixed assessment scopes',
+    const labels = { target: 'Target assessment', output_text_indicator_inventory: 'Output text · impact unassessed', direct_text_known_reference: 'Direct text · known reference',
+      local_reference_model: 'Local reference diagnostics', local_consumer_validation: 'Local consumer validation · excluded from target score', owned_synthetic_target: 'Owned synthetic consumer · excluded from target score', local_consumer_lab: 'Local consumer lab · excluded from target score', mixed: 'Mixed assessment scopes',
       unavailable: 'Assessment scope unavailable' };
     return Object.hasOwn(labels, scope) ? labels[scope] : scope.replaceAll('_', ' ');
   }

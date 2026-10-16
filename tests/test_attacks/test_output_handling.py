@@ -5,16 +5,17 @@
 from __future__ import annotations
 
 import html
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 
 import httpx
 import pytest
 import respx
 
 from agentscan.attacks.scan.output_handling import OutputHandlingModule
-from agentscan.core.models import Severity, Target
+from agentscan.core.models import Target
+from agentscan.core.outcomes import ExecutionLedger, execution_ledger
 
-VULNERABLE_ECHO = (
+SYNTAX_ECHO = (
     "<script>alert(1)</script>\n"
     '<a href="javascript:alert(document.cookie)">click</a>\n'
     "' OR 1=1 --\n"
@@ -27,7 +28,7 @@ VULNERABLE_ECHO = (
     "echo `id`\n"
 )
 
-SAFE_REFUSAL = (
+REFUSAL = (
     "I will not echo untrusted markup, SQL fragments, terminal escapes, "
     "or shell metacharacters. Please rephrase without executable syntax."
 )
@@ -45,77 +46,92 @@ def oh_target() -> Target:
 
 class TestOutputHandlingIntegration:
     @pytest.mark.asyncio
-    async def test_vulnerable_echo_produces_finding(
+    async def test_raw_syntax_is_observed_without_claiming_exploitation(
         self, module: OutputHandlingModule, oh_target: Target
     ) -> None:
-        with respx.mock(assert_all_called=False) as mock:
-            mock.post("http://test-agent.example.com/chat").mock(
-                return_value=httpx.Response(200, json={"response": VULNERABLE_ECHO})
-            )
-            findings = await module.run(oh_target)
+        ledger = ExecutionLedger()
+        token = execution_ledger.set(ledger)
+        try:
+            with respx.mock(assert_all_called=False) as mock:
+                route = mock.post("http://test-agent.example.com/chat").mock(
+                    return_value=httpx.Response(200, json={"response": SYNTAX_ECHO})
+                )
+                findings = await module.run(oh_target)
 
-        assert len(findings) >= 1
-        finding = findings[0]
-        assert finding.attack_id == "ATK-007"
-        assert finding.owasp_id == "LLM05"
-        assert finding.severity in (Severity.HIGH, Severity.MEDIUM, Severity.CRITICAL)
-        assert "yaml_variant_id" in finding.metadata
+            assert findings == []
+            assert route.call_count == module.variant_count()
+            assert ledger.evaluated == 0
+            assert ledger.inconclusive_reasons
+            assert len(ledger.observations) == module.variant_count()
+            assert any(item["seed_indicator_present"] for item in ledger.observations)
+            assert all(item["downstream_impact"] == "unassessed" for item in ledger.observations)
+            assert ledger.errors == []
+        finally:
+            execution_ledger.reset(token)
 
     @pytest.mark.asyncio
-    async def test_sanitized_or_refusal_produces_no_finding(
-        self, module: OutputHandlingModule, oh_target: Target
+    @pytest.mark.parametrize(
+        "reply", [html.escape(SYNTAX_ECHO), REFUSAL], ids=["encoded", "refusal"]
+    )
+    async def test_encoding_or_refusal_does_not_prove_destination_safety(
+        self, module: OutputHandlingModule, oh_target: Target, reply: str
     ) -> None:
-        escaped = html.escape(VULNERABLE_ECHO)
-        with respx.mock(assert_all_called=False) as mock:
-            mock.post("http://test-agent.example.com/chat").mock(
-                return_value=httpx.Response(200, json={"response": escaped})
-            )
-            escaped_findings = await module.run(oh_target)
+        ledger = ExecutionLedger()
+        token = execution_ledger.set(ledger)
+        try:
+            with respx.mock(assert_all_called=False) as mock:
+                mock.post("http://test-agent.example.com/chat").mock(
+                    return_value=httpx.Response(200, json={"response": reply})
+                )
+                findings = await module.run(oh_target)
 
-        # html.escape removes raw <script> / CSI; remaining variants (javascript:, SQL,
-        # markdown, shell) still look unsafe — a refusing agent must not echo them.
-        with respx.mock(assert_all_called=False) as mock:
-            mock.post("http://test-agent.example.com/chat").mock(
-                return_value=httpx.Response(200, json={"response": SAFE_REFUSAL})
-            )
-            findings = await module.run(oh_target)
-
-        assert len(findings) == 0
-        xss_ids = {f.metadata.get("yaml_variant_id") for f in escaped_findings}
-        assert "OH-001" not in xss_ids
+            assert findings == []
+            assert ledger.evaluated == 0
+            assert ledger.inconclusive_reasons
+            assert len(ledger.observations) == module.variant_count()
+            assert all(item["downstream_impact"] == "unassessed" for item in ledger.observations)
+            assert ledger.errors == []
+        finally:
+            execution_ledger.reset(token)
 
     @pytest.mark.asyncio
-    async def test_llm_judge_catches_paraphrased_copy(self, module: OutputHandlingModule) -> None:
+    async def test_configured_model_cannot_infer_execution(
+        self, module: OutputHandlingModule
+    ) -> None:
         target_with_judge = Target(
             url="http://test-agent.example.com/chat",
             judge_model="gpt-4o-mini",
+            attacker_model="ollama/local-test",
         )
-        fake_judge_response = '{"success": true, "reason": "agent echoed raw script tag"}'
+        original = target_with_judge.model_dump()
+        ledger = ExecutionLedger()
+        token = execution_ledger.set(ledger)
 
-        with (
-            patch(
-                "agentscan.attacks.scan.output_handling.AIClient.validate_environment",
-                return_value=(True, []),
-            ),
-            patch(
-                "agentscan.attacks.scan.output_handling.AIClient.complete",
-                new=AsyncMock(return_value=fake_judge_response),
-            ),
-            respx.mock(assert_all_called=False) as mock,
-        ):
-            mock.post("http://test-agent.example.com/chat").mock(
-                return_value=httpx.Response(
-                    200,
-                    json={"response": "Here is the markup you asked for, unchanged as requested."},
+        try:
+            with (
+                patch(
+                    "agentscan.attacks.scan.runner.AIClient",
+                    side_effect=AssertionError("Text observations must not initialize a judge"),
+                ) as ai_client,
+                respx.mock(assert_all_called=False) as mock,
+            ):
+                mock.post("http://test-agent.example.com/chat").mock(
+                    return_value=httpx.Response(
+                        200,
+                        json={"response": "The script was executed successfully."},
+                    )
                 )
-            )
-            findings = await module.run(target_with_judge)
+                findings = await module.run(target_with_judge)
 
-        judge_findings = [f for f in findings if f.metadata.get("detection_method") == "llm_judge"]
-        assert len(judge_findings) >= 1
-        assert judge_findings[0].attack_id == "ATK-007"
+            ai_client.assert_not_called()
+            assert findings == []
+            assert ledger.evaluated == 0
+            assert ledger.errors == []
+            assert target_with_judge.model_dump() == original
+        finally:
+            execution_ledger.reset(token)
 
 
 class TestVariantCount:
     def test_variant_count_matches_yaml(self, module: OutputHandlingModule) -> None:
-        assert module.variant_count() == 10
+        assert module.variant_count() == 12

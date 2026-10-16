@@ -101,7 +101,7 @@ def test_html_report_trust_and_validation_passed():
     html = render_html_report(report)
     assert "Attacker validated against control ✓" in html
     assert "Control agent was jailbroken as expected" in html
-    assert "Resisted [gpt-4o-mini · 5 turns · bypass guardrails]" in html
+    assert "Unassessed [gpt-4o-mini · 5 turns · bypass guardrails]" in html
     assert "Jailbroken" not in html
     assert "claude-3-5-sonnet" in html
     assert "[UNRELIABLE]" not in html
@@ -124,7 +124,7 @@ def test_html_report_attack_depth_jailbroken_when_atk050_hits():
         goal="default canary objective",
     )
     html = render_html_report(report)
-    assert "Jailbroken [gpt-4o-mini · 4 turns · default canary objective]" in html
+    assert "ATK-050 finding recorded [gpt-4o-mini · 4 turns · default canary objective]" in html
     assert "Resisted [" not in html
 
 
@@ -149,3 +149,24 @@ def test_empty_identity_report_renders_unscored():
     html = render_html_report(report)
     assert "N/A" in html
     assert "INCONCLUSIVE" in html
+
+
+def test_output_inventory_is_visible_without_a_finding_or_impact_score():
+    report = _make_report([])
+    report.module_outcomes = [
+        {
+            "module_id": "ATK-007",
+            "status": "INCONCLUSIVE",
+            "selected_tests": 12,
+            "executed_tests": 0,
+            "assessment_scope": "output_text_indicator_inventory",
+            "observation_count": 12,
+            "reason": "12 output observations recorded. Downstream impact is unassessed.",
+        }
+    ]
+    html = render_html_report(report)
+    assert "12 output observations recorded" in html
+    assert "Downstream impact is unassessed" in html
+    assert "INCONCLUSIVE" in html
+    assert "0 / 12" in html
+    assert "N/A" in html

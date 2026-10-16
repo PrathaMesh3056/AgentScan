@@ -23,6 +23,7 @@ from agentscan.core.outcomes import (
     ModuleUnavailableError,
     execution_ledger,
 )
+from agentscan.core.output_witness import CONSUMER_VALIDATION_SCOPES
 from agentscan.core.scorer import calculate_score
 from agentscan.core.ssp_mapper import classify_ssp
 from agentscan.core.trace import recorder
@@ -43,16 +44,22 @@ def _finish(report: ScanReport) -> ScanReport:
     target_tests = sum(
         int(o.get("executed_tests", 0))
         for o in report.module_outcomes
-        if o.get("assessment_scope") != "local_reference_model"
+        if o.get("assessment_scope") not in CONSUMER_VALIDATION_SCOPES | {"local_reference_model"}
     )
-    local = any(
-        o.get("assessment_scope") == "local_reference_model" for o in report.module_outcomes
-    )
-    report.assessment_scope = (
-        ("mixed" if target_tests else "local_reference_model") if local else "target"
-    )
+    scopes = {
+        "local_consumer_validation"
+        if outcome.get("assessment_scope") in CONSUMER_VALIDATION_SCOPES
+        else "local_reference_model"
+        if outcome.get("assessment_scope") == "local_reference_model"
+        else "target"
+        for outcome in report.module_outcomes
+    }
+    # Missing/failed selected checks still belong to the assessment's scope.
+    # Successful-test counts are a scoring denominator, not a presence test.
+    report.assessment_scope = "mixed" if len(scopes) > 1 else next(iter(scopes), "target")
     report.complete(
-        None if incomplete else calculate_score(report.findings, target_tests), status=status
+        None if incomplete or target_tests == 0 else calculate_score(report.findings, target_tests),
+        status=status,
     )
     _attach_trajectory(report)
     return report
@@ -111,7 +118,7 @@ async def run_scan(target: Target, *, reset_trajectory: bool = True) -> ScanRepo
         selected = 0
         ledger = ExecutionLedger()
         token = execution_ledger.set(ledger)
-        outcome = {
+        outcome: dict[str, Any] = {
             "module_id": module.attack_id,
             "module_name": module.attack_name,
             "status": "COMPLETE",
@@ -148,10 +155,18 @@ async def run_scan(target: Target, *, reset_trajectory: bool = True) -> ScanRepo
             outcome["executed_tests"] = ledger.evaluated or 0
         finally:
             execution_ledger.reset(token)
+        if ledger.assessment_scope is not None:
+            outcome["assessment_scope"] = ledger.assessment_scope
         for finding in findings:
             recorder.record_finding(finding.attack_id, finding.severity.value, finding.description)
         reasons = ledger.errors + ledger.inconclusive_reasons
         outcome["reason"] = "; ".join(reasons)
+        if ledger.observations:
+            outcome["observations"] = ledger.observations
+            outcome["observation_count"] = len(ledger.observations)
+            outcome["reason"] = (
+                f"{len(ledger.observations)} output observations recorded. " + outcome["reason"]
+            )
         return findings, outcome, reasons
 
     own_session = False
@@ -174,7 +189,16 @@ async def run_scan(target: Target, *, reset_trajectory: bool = True) -> ScanRepo
                 await asyncio.gather(*tasks, return_exceptions=True)
                 raise
         for findings, outcome, errors in results:
-            if outcome.get("assessment_scope") == "local_reference_model":
+            if outcome.get("assessment_scope") in CONSUMER_VALIDATION_SCOPES:
+                outcome["consumer_findings"] = [
+                    finding.model_dump(mode="json") for finding in findings
+                ]
+                outcome["consumer_finding_count"] = len(findings)
+                outcome["reason"] = (
+                    f"{len(findings)} independently observed local consumer effects. "
+                    + str(outcome.get("reason", ""))
+                )
+            elif outcome.get("assessment_scope") == "local_reference_model":
                 report.reference_observations.extend(findings)
             else:
                 report.findings.extend(findings)

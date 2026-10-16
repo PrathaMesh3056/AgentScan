@@ -2,6 +2,19 @@
 
 Updated 11 October 2026. Package metadata declares **v0.2.0** and a beta development status. This describes the implemented source and verification limits; it does not establish a production deployment or calibrated detection accuracy.
 
+16 October sequencing update: at the owner's request, live-model and combined
+module evaluations are deferred while engineering improvements proceed one module
+at a time. ATK-005's remaining positive-evidence and defense-improvement gates stay
+open. [ATK-012](docs/modules/system_prompt_leak.md) has its scoped engineering
+update; [ATK-003](docs/modules/pii_exfiltration.md) has its update, with a
+private-value-only criterion, current primary-source review, bounded public-input
+provenance and private evidence handling. [ATK-007](docs/modules/output_handling.md)
+now inventories 12 output-text indicators without promoting syntax into execution
+findings or clean impact scores, and hardens the scanner's live terminal preview.
+Its references include published papers and current disclosures. Consumer-backed
+and real-model evaluations for these updates remain pending. This changes
+work order without changing historical results or completion criteria.
+
 ## Implemented capabilities
 
 | Capability | Implemented behavior | Verification boundary |

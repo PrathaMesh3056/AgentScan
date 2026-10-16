@@ -1,0 +1,7 @@
+url: http://atk005-target:8000/document
+framework: unknown
+indirect_adapter: document_v1
+canary_token: SYNTHETIC_CANARY_REF_DEV_20261012_A9B8C7
+analysis_mode: deterministic
+data_classification: sensitive
+timeout: 30

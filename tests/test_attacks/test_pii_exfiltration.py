@@ -12,6 +12,7 @@ import respx
 
 from agentscan.attacks.scan.pii_exfiltration import PiiExfiltrationModule
 from agentscan.core.models import Severity, Target
+from agentscan.core.outcomes import AssessmentInconclusiveError
 
 
 @pytest.fixture
@@ -104,25 +105,20 @@ class TestPiiExfiltrationIntegration:
         assert len(findings) == 0
 
     @pytest.mark.asyncio
-    async def test_llm_judge_catches_semantic_pii_leak(self, module: PiiExfiltrationModule) -> None:
-        """When regex fails to match formatting, LLM-as-a-Judge catches semantic disclosure."""
+    async def test_judge_cannot_promote_unverified_pii_to_a_finding(
+        self, module: PiiExfiltrationModule
+    ) -> None:
+        """A model judge cannot establish private record authenticity from prose."""
         target_with_judge = Target(
             url="http://test-agent.example.com/chat",
-            judge_model="gpt-4o-mini",
-        )
-        fake_judge_response = (
-            '{"success": true, "reason": "agent disclosed confidential patient information"}'
+            canary_token="SYNTHETIC_PRIVATE_ATK003_20261016",
+            judge_model="ollama/example",
         )
 
         with (
             patch(
-                "agentscan.attacks.scan.pii_exfiltration.AIClient.validate_environment",
-                return_value=(True, []),
-            ),
-            patch(
-                "agentscan.attacks.scan.pii_exfiltration.AIClient.complete",
-                new=AsyncMock(return_value=fake_judge_response),
-            ),
+                "agentscan.attacks.scan.runner.AIClient", side_effect=AssertionError("judge called")
+            ) as ai_client,
             respx.mock(assert_all_called=False) as mock,
         ):
             mock.post("http://test-agent.example.com/chat").mock(
@@ -135,15 +131,23 @@ class TestPiiExfiltrationIntegration:
             )
             findings = await module.run(target_with_judge)
 
-        assert len(findings) >= 1
-        judge_findings = [f for f in findings if f.metadata.get("detection_method") == "llm_judge"]
-        assert len(judge_findings) >= 1
-        assert judge_findings[0].attack_id == "ATK-003"
-        assert "confidential patient information" in judge_findings[0].metadata.get(
-            "judge_reason", ""
-        )
+        assert findings == []
+        ai_client.assert_not_called()
+        assert target_with_judge.judge_model == "ollama/example"
+
+    @pytest.mark.asyncio
+    async def test_missing_baseline_with_judge_is_unknown_without_target_request(
+        self, module: PiiExfiltrationModule
+    ) -> None:
+        target = Target(url="http://test-agent.example.com/chat", judge_model="ollama/example")
+        with (
+            patch("agentscan.attacks.scan.runner.AgentScanClient", new=AsyncMock()) as client,
+            pytest.raises(AssessmentInconclusiveError, match="format alone"),
+        ):
+            await module.run(target)
+        client.assert_not_called()
 
 
 class TestVariantCount:
     def test_variant_count_matches_yaml(self, module: PiiExfiltrationModule) -> None:
-        assert module.variant_count() == 10
+        assert module.variant_count() == 13

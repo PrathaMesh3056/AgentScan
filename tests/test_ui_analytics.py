@@ -29,6 +29,7 @@ def js(node, script, payload):
         check=True,
         capture_output=True,
         text=True,
+        encoding="utf-8",
         timeout=20,
     )
     return json.loads(result.stdout)
@@ -427,6 +428,23 @@ def test_render_keeps_literal_hostile_labels_and_never_uses_html(node):
     assert marker in rendered["text"]
     assert "SYNTHETIC_PRIVATE_TEXT_001" not in rendered["text"]
     assert not any(element["tag"] in {"IMG", "SCRIPT"} for element in descendants(rendered["tree"]))
+    assert rendered["networkCalls"] == 0
+
+
+def test_output_inventory_displays_count_scope_and_unknown_impact(node):
+    inventory = outcome(
+        module_id="ATK-007",
+        selected=12,
+        evaluated=0,
+        status="INCONCLUSIVE",
+        scope="output_text_indicator_inventory",
+    )
+    inventory["reason"] = "12 output observations recorded. Downstream impact is unassessed."
+    payload = report(selected=12, evaluated=0, status="INCONCLUSIVE", outcomes=[inventory])
+    rendered = js(node, RENDER_SCRIPT, payload)
+    assert "Output text · impact unassessed" in rendered["text"]
+    assert inventory["reason"] in rendered["text"]
+    assert "INCONCLUSIVE" in rendered["text"]
     assert rendered["networkCalls"] == 0
 
 

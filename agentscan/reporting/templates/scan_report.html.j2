@@ -23,7 +23,7 @@
                 AI Agent Security Posture &amp; Vulnerability Audit Report
             </div>
             <div style="font-size: 8.5pt; color: #64748b; font-weight: 500; margin-top: 3px;">
-                INDEPENDENT RED TEAM EVALUATION · OWASP LLM TOP 10 · ADVERSARIAL TRAJECTORY ASSURANCE
+                RECORDED ASSESSMENT EVIDENCE · OWASP LLM TOP 10 MAPPINGS
             </div>
         </div>
         <div style="display: table-cell; vertical-align: top; text-align: right; width: 180px;">
@@ -79,12 +79,8 @@
             <div style="margin-top: 14px; font-size: 8pt; color: #64748b; line-height: 1.4;">
                 {% if report.status != 'COMPLETE' or report.score is none %}
                 Coverage is {{ report.status|lower }}. An unavailable target score cannot establish safety.
-                {% elif report.score >= 90 %}
-                The target demonstrated robust defensive barriers, successfully repelling the majority of adversarial probes and injection payloads.
-                {% elif report.score >= 50 %}
-                The target exhibited moderate security resilience, but contains vulnerabilities requiring prompt remediation before production exposure.
                 {% else %}
-                The target is critically vulnerable to prompt injection, excessive agency, or systemic safety bypasses requiring immediate containment.
+                This score summarizes finding weights within evaluated checks. It does not estimate attack resistance, detector accuracy or overall security.
                 {% endif %}
             </div>
         </div>
@@ -138,7 +134,7 @@
             </div>
             {% if report.module_errors %}
             <div style="margin-top: 8px; padding: 6px 10px; background: #fff1f2; border-left: 3px solid #e11d48; border-radius: 4px; font-size: 8pt; color: #9f1239;">
-                <strong>Notice:</strong> {{ report.module_errors | length }} module(s) encountered exceptions during execution and were safely recorded.
+                <strong>Notice:</strong> {{ report.module_errors | length }} execution or assessment diagnostic(s) were recorded. Review their scope and status below.
             </div>
             {% endif %}
         </div>
@@ -146,7 +142,7 @@
 </div>
 
 <div class="card" style="margin-bottom: 20px;">
-    <h2 style="font-size: 12pt; margin: 0 0 8px;">Assessment coverage and execution errors</h2>
+    <h2 style="font-size: 12pt; margin: 0 0 8px;">Assessment coverage and diagnostics</h2>
     <p>Status: <strong>{{ report.status }}</strong> · Evaluated {{ report.tests_run }} / {{ report.tests_selected }} selected tests · Scope: {{ report.assessment_scope }}</p>
     {% if report.status != 'COMPLETE' %}
     <p style="color: #92400e; font-size: 9pt;">This assessment is incomplete. Missing or failed checks cannot establish that the target is safe.</p>
@@ -173,8 +169,17 @@
     {% else %}
     <p style="font-size: 9pt; color: #64748b;">No module outcome records are available. Per-module coverage is unverified.</p>
     {% endif %}
+    {% for outcome in report.module_outcomes %}
+    {% if outcome.get('consumer_findings') %}
+    <h3 style="font-size: 10pt; margin: 16px 0 8px;">Local consumer effects: {{ outcome.get('consumer_finding_count', 0) }}</h3>
+    <p style="font-size: 8pt;">Scope: {{ outcome.get('assessment_scope') }}. These owned fixture results are excluded from customer target findings and scores.</p>
+    {% for finding in outcome.get('consumer_findings', []) %}
+    <p style="font-size: 8pt; overflow-wrap: anywhere;"><strong>{{ finding.get('severity') }}</strong>: {{ finding.get('description') }}<br>{{ finding.get('evidence') }}</p>
+    {% endfor %}
+    {% endif %}
+    {% endfor %}
     {% if report.module_errors %}
-    <h3 style="font-size: 10pt; margin: 16px 0 8px;">Recorded execution errors ({{ report.module_errors | length }})</h3>
+    <h3 style="font-size: 10pt; margin: 16px 0 8px;">Recorded assessment diagnostics ({{ report.module_errors | length }})</h3>
     <table style="width: 100%; border-collapse: collapse; font-size: 8pt;">
         <thead><tr>
             <th style="text-align: left; padding: 7px; border-bottom: 1px solid #cbd5e1;">Module</th>
@@ -243,7 +248,13 @@
                 <p style="margin-top: 10px; font-size: 8.5pt;">
                     <strong>Attack Depth:</strong>
                     {% set ai_hits = report.findings | selectattr("attack_id", "equalto", "ATK-050") | list %}
-                    {% if ai_hits %}Jailbroken{% else %}Resisted{% endif %} [{{ report.attacker_config.model }} · {{ report.attacker_config.turns }} turns · {{ report.attacker_config.goal }}]
+                    {% set ai_coverage = namespace(evaluated=false) %}
+                    {% for outcome in report.module_outcomes %}
+                    {% if outcome.get('module_id') == 'ATK-050' and outcome.get('status') == 'COMPLETE' and outcome.get('executed_tests', 0) > 0 %}
+                    {% set ai_coverage.evaluated = true %}
+                    {% endif %}
+                    {% endfor %}
+                    {% if ai_hits %}ATK-050 finding recorded{% elif ai_coverage.evaluated %}No ATK-050 finding in evaluated tests{% else %}Unassessed{% endif %} [{{ report.attacker_config.model }} · {{ report.attacker_config.turns }} turns · {{ report.attacker_config.goal }}]
                 </p>
                 {% if report.attacker_config.escalation_model %}
                 <p style="margin-top: 5px;"><small><strong>Escalation Model:</strong> {{ report.attacker_config.escalation_model }}</small></p>
@@ -373,36 +384,16 @@
         {% endfor %}
     {% else %}
     <div class="card" style="text-align: center; padding: 36px 20px;">
-        <div style="font-size: 28pt; color: #16a34a; margin-bottom: 8px;">✓</div>
-        <div style="font-size: 12pt; font-weight: 700; color: #0f172a;">Zero Vulnerabilities Detected</div>
+        <div style="font-size: 12pt; font-weight: 700; color: #0f172a;">No target findings recorded</div>
         <p style="font-size: 9pt; color: #64748b; margin-top: 4px;">No findings to report.</p>
+        <p style="font-size: 9pt; color: #64748b;">Status: {{ report.status }}. Review evaluated and selected coverage above. This result does not establish safety or certify security.</p>
     </div>
     {% endif %}
 </div>
 
-<!-- ==========================================
-     CRYPTOGRAPHIC AUDIT SEAL & VERIFICATION
-     ========================================== -->
-<div class="card avoid-break" style="background: #0f172a; color: #f8fafc; border: none; padding: 20px; margin-top: 24px;">
-    <div style="display: table; width: 100%;">
-        <div style="display: table-cell; vertical-align: middle; width: 50px;">
-            <div style="width: 42px; height: 42px; border: 2px solid #38bdf8; border-radius: 50%; text-align: center; line-height: 38px; color: #38bdf8; font-size: 18px; font-weight: bold;">
-                ✓
-            </div>
-        </div>
-        <div style="display: table-cell; vertical-align: middle; padding-left: 14px;">
-            <div style="font-size: 10pt; font-weight: 800; letter-spacing: 1px; text-transform: uppercase; color: #38bdf8;">
-                Cryptographic Audit Assurance &amp; Integrity Seal
-            </div>
-            <div style="font-size: 8pt; color: #94a3b8; margin-top: 2px;">
-                This document was autonomously compiled by AgentScan Security Engine v{{ report.agentscan_version }}.
-                Report findings and telemetry are signed using HMAC-SHA256 tamper-evident digital certificates.
-            </div>
-        </div>
-        <div style="display: table-cell; vertical-align: middle; text-align: right; width: 150px;">
-            <div style="font-size: 7.5pt; color: #64748b; text-transform: uppercase; font-weight: 600;">Status</div>
-            <div style="font-size: 9pt; font-weight: 700; color: #4ade80;">CERTIFIED VALID</div>
-        </div>
-    </div>
+<div class="card avoid-break" style="padding: 16px; margin-top: 24px; font-size: 8pt; color: #64748b;">
+    <strong>Assessment provenance</strong>
+    <p>AgentScan engine v{{ report.agentscan_version }}. Assessment status: {{ report.status }}.</p>
+    <p>This HTML/PDF artifact has no independently verified signature state here. It is not a security certification. Separately exported audit certificates apply only to the exact artifact they sign.</p>
 </div>
 {% endblock %}

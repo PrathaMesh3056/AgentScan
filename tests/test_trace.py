@@ -6,11 +6,13 @@ from __future__ import annotations
 
 import json
 import re
+from io import StringIO
 from pathlib import Path
 
 import httpx
 import pytest
 import respx
+from rich.console import Console
 
 from agentscan.attacks.registry import AttackRegistry
 from agentscan.attacks.scan.prompt_injection import PromptInjectionModule
@@ -230,3 +232,90 @@ def test_private_values_never_enter_the_dynamic_regex_cache() -> None:
     assert redact_sensitive_data("\n".join(PRIVATE)) == "[REDACTED]"
     assert set(re._cache) == before
     assert all(PRIVATE not in str(key) for key in re._cache)
+
+
+def _capture_live_preview(sink: str, text: str, monkeypatch: pytest.MonkeyPatch) -> tuple[str, str]:
+    """Keep synthetic controls inside a memory stream, never the test terminal."""
+    from agentscan.core import trace
+
+    capture = StringIO()
+    monkeypatch.setattr(
+        trace,
+        "_console",
+        Console(file=capture, force_terminal=False, color_system=None, width=1000),
+    )
+    traffic = TrafficRecorder()
+    traffic.enabled = True
+    traffic.live = True
+    if sink == "request":
+        traffic.record("message", text, {"response": "synthetic reply"})
+        stored = traffic.entries[0].request
+    elif sink == "response":
+        traffic.record("message", "synthetic request", {"response": text})
+        stored = traffic.entries[0].response
+    elif sink == "finding":
+        traffic.record_finding("ATK-007", "HIGH", text)
+        stored = traffic.findings[0][2]
+    else:
+        assert sink == "llm"
+        traffic.record_llm("synthetic/local-fixture", [], text)
+        stored = traffic.llm_calls[0].output
+    return capture.getvalue(), stored
+
+
+@pytest.mark.parametrize("sink", ["request", "response", "finding", "llm"])
+@pytest.mark.parametrize(
+    "fragment",
+    ["\x1b[2J", "\x1b]0;SYNTHETIC-TITLE\x1b\\", "\x9b2J"],
+    ids=["csi-clear", "osc-title", "c1-csi"],
+)
+def test_live_preview_neutralizes_terminal_controls_but_preserves_stored_evidence(
+    sink: str, fragment: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    text = f"SYNTHETIC-BEGIN {fragment} SYNTHETIC-END"
+    preview, stored = _capture_live_preview(sink, text, monkeypatch)
+    assert "SYNTHETIC-BEGIN" in preview
+    assert "SYNTHETIC-END" in preview
+    assert not any(ord(char) < 32 and char not in "\t\n" for char in preview)
+    assert not any(127 <= ord(char) <= 159 for char in preview)
+    assert stored == text
+
+
+@pytest.mark.parametrize("sink", ["request", "response", "finding", "llm"])
+@pytest.mark.parametrize(
+    "text",
+    [
+        "[bold]SYNTHETIC[/bold]",
+        "[link=https://synthetic.invalid]SYNTHETIC[/link]",
+        "[/forged]SYNTHETIC",
+    ],
+    ids=["style-tag", "link-tag", "unmatched-close"],
+)
+def test_live_preview_renders_untrusted_rich_markup_literally(
+    sink: str, text: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    preview, stored = _capture_live_preview(sink, text, monkeypatch)
+    assert text in preview
+    assert stored == text
+
+
+@pytest.mark.parametrize("sink", ["request", "response", "finding", "llm"])
+def test_live_preview_preserves_backslashes_and_emoji_names(
+    sink: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    text = "SYNTHETIC \\[1] :warning: ends\\"
+    preview, stored = _capture_live_preview(sink, text, monkeypatch)
+    assert text in preview
+    assert stored == text
+
+
+@pytest.mark.parametrize("sink", ["request", "response", "finding", "llm"])
+def test_live_preview_visibly_encodes_directional_format_controls(
+    sink: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    text = "SYNTHETIC \u202eORDER\u202c \u2066LABEL\u2069"
+    preview, stored = _capture_live_preview(sink, text, monkeypatch)
+    for control in ("\u202e", "\u202c", "\u2066", "\u2069"):
+        assert control not in preview
+        assert f"\\u{ord(control):04x}" in preview
+    assert stored == text

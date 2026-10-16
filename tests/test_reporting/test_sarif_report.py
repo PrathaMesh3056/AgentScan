@@ -111,3 +111,25 @@ def test_sarif_complete_assessment_marks_execution_successful():
     run = to_sarif(report)["runs"][0]
     assert run["invocations"] == [{"executionSuccessful": True}]
     assert run["properties"]["agentscanAssessment"]["score"] == 100
+
+
+def test_sarif_retains_output_inventory_without_vulnerability_results():
+    report = _make_report([])
+    report.tests_selected = 12
+    report.status = "INCONCLUSIVE"
+    report.module_outcomes = [
+        {
+            "module_id": "ATK-007",
+            "status": "INCONCLUSIVE",
+            "selected_tests": 12,
+            "executed_tests": 0,
+            "assessment_scope": "output_text_indicator_inventory",
+            "observations": [{"downstream_impact": "unassessed", "response_sha256": "0" * 64}],
+        }
+    ]
+    run = to_sarif(report)["runs"][0]
+    assessment = run["properties"]["agentscanAssessment"]
+    assert assessment["module_outcomes"] == report.module_outcomes
+    assert assessment["score"] is None
+    assert run["results"] == []
+    assert run["invocations"] == [{"executionSuccessful": False}]
