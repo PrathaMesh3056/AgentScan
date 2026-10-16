@@ -199,3 +199,6 @@ constraint-dependencies = [
     "urllib3>=2.8.0",
     "virtualenv>=21.7.13",
 ]
+# Semgrep pins vulnerable mcp==1.29.0; replace only that pin for CVE-2026-59951.
+# uv-only: remove when upstream Semgrep accepts the patched 1.x SDK.
+override-dependencies = ["mcp>=1.30.0,<2"]
