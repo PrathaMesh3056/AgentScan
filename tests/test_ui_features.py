@@ -166,7 +166,7 @@ def test_html_download_includes_every_error_and_outcome_safely(client):
     state.report = report
     response = client.get("/api/report/download", params={"format": "html"})
     assert response.status_code == 200
-    assert "Recorded execution errors (14)" in response.text
+    assert "Recorded assessment diagnostics (14)" in response.text
     for index in range(14):
         assert f"ERROR-MARKER-{index:02d}" in response.text
         assert f"OUTCOME-{index:02d}" in response.text

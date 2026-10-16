@@ -31,8 +31,10 @@ class OutputHandlingModule(YamlScanRunner):
 
     Quoted examples, refusals and raw echoes can all contain these indicators.
     Neither their presence nor absence verifies a browser, terminal, database,
-    shell or network effect. This response-only profile therefore never emits a
-    vulnerability finding or counts an impact-evaluated negative.
+    shell or network effect. The default response-only profile never emits a
+    vulnerability finding or counts an impact-evaluated negative. An optional
+    trusted in-process consumer witness supports separately scoped local
+    findings and evaluated outcomes, excluded from customer target scores.
     """
 
     is_abstract = False

@@ -1,0 +1,2 @@
+# Preserve the frozen evaluation's exact-byte SHA-256 across Git checkouts.
+benchmarks/evaluation/atk007_cases.json -text

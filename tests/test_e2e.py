@@ -151,7 +151,13 @@ class TestEndToEndScan:
         assert "Status: INCONCLUSIVE" in content
         assert "Score: unavailable" in content
         assert "ASSESSMENT COVERAGE" in content
-        assert "Provision a confidential canary" in content
+        for module_id in ("ATK-001", "ATK-003", "ATK-012"):
+            coverage = next(
+                line for line in content.splitlines() if line.startswith(f"- {module_id}:")
+            )
+            assert f"{module_id}: INCONCLUSIVE; evaluated 0/" in coverage
+            assert "needs an out-of-band confidential canary" in coverage
+            assert "not evidence of private disclosure" in coverage
         assert "resisted every payload" not in content
         # Ensure credentials were redacted
         assert "sk-1234567890abcdef1234567890" not in content

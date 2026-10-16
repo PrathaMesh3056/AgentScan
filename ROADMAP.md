@@ -11,9 +11,14 @@ private-value-only criterion, current primary-source review, bounded public-inpu
 provenance and private evidence handling. [ATK-007](docs/modules/output_handling.md)
 now inventories 12 output-text indicators without promoting syntax into execution
 findings or clean impact scores, and hardens the scanner's live terminal preview.
-Its references include published papers and current disclosures. Consumer-backed
-and real-model evaluations for these updates remain pending. This changes
-work order without changing historical results or completion criteria.
+Its optional trusted in-process consumer profile keeps local browser/SQLite
+findings outside customer target scores. All 48 frozen fixed-control consumer
+runs passed their declared thresholds. A separate 24-generation offline model
+smoke completed only 5/24 consumer assessments per arm and 0/12 benign tasks;
+it is INCONCLUSIVE for real-agent efficacy. The model smoke reused 17 preserved
+generations with input/response hashes, but lacks their contemporaneous weight
+receipt. Published papers/current disclosures inform this work. Other modules'
+deferred live gates and historical results remain unchanged.
 
 ## Implemented capabilities
 
