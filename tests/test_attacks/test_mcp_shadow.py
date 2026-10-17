@@ -9,7 +9,8 @@ import pytest
 import respx
 
 from agentscan.attacks.scan.mcp_shadow import McpShadowModule
-from agentscan.core.models import Severity, Target
+from agentscan.core.models import Target
+from agentscan.core.outcomes import AssessmentInconclusiveError, ExecutionLedger, execution_ledger
 
 
 @pytest.fixture
@@ -23,7 +24,12 @@ def mcp_target() -> Target:
 
 
 class TestCheckDetection:
-    def test_tool_call_contains_shadow_host(self, module: McpShadowModule) -> None:
+    @pytest.mark.asyncio
+    async def test_target_tool_call_is_only_an_unverified_proposal(
+        self, module: McpShadowModule
+    ) -> None:
+        from unittest.mock import AsyncMock
+
         response = {
             "choices": [
                 {
@@ -40,17 +46,16 @@ class TestCheckDetection:
                 }
             ]
         }
-        assert module._check_detection(
-            "tool_call_contains",
-            "ok",
-            "agentscan-mcp-shadow.invalid",
-            response=response,
-        )
+        client = AsyncMock()
+        client.target = Target(url="http://test-agent.example.com/chat")
+        client.send_message.return_value = response
+        with pytest.raises(AssessmentInconclusiveError):
+            await module._test_variant(client, module._load_payload_variants()[0])
 
 
 class TestMcpShadowIntegration:
     @pytest.mark.asyncio
-    async def test_vulnerable_tool_call_produces_finding(
+    async def test_target_reported_tool_call_does_not_produce_execution_finding(
         self, module: McpShadowModule, mcp_target: Target
     ) -> None:
         with respx.mock(assert_all_called=False) as mock:
@@ -70,17 +75,21 @@ class TestMcpShadowIntegration:
                     },
                 )
             )
-            findings = await module.run(mcp_target)
+            ledger = ExecutionLedger()
+            token = execution_ledger.set(ledger)
+            try:
+                findings = await module.run(mcp_target)
+            finally:
+                execution_ledger.reset(token)
 
-        assert len(findings) >= 1
-        finding = findings[0]
-        assert finding.attack_id == "ATK-006"
-        assert finding.owasp_id == "LLM01"
-        assert finding.severity in (Severity.CRITICAL, Severity.HIGH, Severity.MEDIUM)
-        assert "agentscan-mcp-shadow.invalid" in finding.evidence
+        assert findings == []
+        assert ledger.selected == 8
+        assert ledger.evaluated == 0
+        assert len(ledger.observations) == 8
+        assert ledger.inconclusive_reasons
 
     @pytest.mark.asyncio
-    async def test_safe_response_produces_no_finding(
+    async def test_refusal_has_no_finding_but_is_not_a_verified_safe_result(
         self, module: McpShadowModule, mcp_target: Target
     ) -> None:
         with respx.mock(assert_all_called=False) as mock:
@@ -92,9 +101,16 @@ class TestMcpShadowIntegration:
                     },
                 )
             )
-            findings = await module.run(mcp_target)
+            ledger = ExecutionLedger()
+            token = execution_ledger.set(ledger)
+            try:
+                findings = await module.run(mcp_target)
+            finally:
+                execution_ledger.reset(token)
 
         assert len(findings) == 0
+        assert ledger.evaluated == 0
+        assert ledger.inconclusive_reasons
 
 
 class TestVariantCount:

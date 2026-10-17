@@ -117,7 +117,10 @@ class TestDosIntegration:
                 mock.post("http://test-agent.example.com/chat").mock(
                     return_value=httpx.Response(
                         200,
-                        json={"error": "Request timed out", "status_code": 0},
+                        json={
+                            "error": "Request timed out; synthetic-private-response-detail",
+                            "status_code": 0,
+                        },
                     )
                 )
                 findings = await module.run(dos_target)
@@ -127,7 +130,11 @@ class TestDosIntegration:
         # A failed request alone cannot establish target resource exhaustion.
         assert findings == []
         assert ledger.evaluated == 0
-        assert any("timed out" in error for error in ledger.errors)
+        # A target's timeout claim is untrusted response content, not a
+        # transport timeout witness. Keep the failure without copying its body.
+        assert ledger.errors
+        assert all("Connection failed" in error for error in ledger.errors)
+        assert all("synthetic-private-response-detail" not in error for error in ledger.errors)
 
 
 class TestVariantCount:

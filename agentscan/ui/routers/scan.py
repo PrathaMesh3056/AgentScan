@@ -18,6 +18,7 @@ from loguru import logger
 from pydantic import ValidationError
 
 from agentscan.core.ai_client import AIClientError
+from agentscan.core.mcp_inventory import McpInventoryBaseline
 from agentscan.core.models import Framework, ScanMode, Target
 from agentscan.ui.state import event_bus, state
 from agentscan.ui.validation import Fields, model_field_errors, validation_error_response
@@ -117,6 +118,42 @@ async def api_start_scan(payload: dict[str, Any]) -> Any:
             "already provisioned privately on the target. Leave empty if unavailable."
         )
     attacker_turns = fields.integer("attacker_turns", 1, 20)
+    baseline = None
+    raw_baseline = fields.value("mcp_inventory_baseline")
+    if raw_baseline is not None:
+        try:
+            if (
+                not isinstance(raw_baseline, dict)
+                or len(
+                    json.dumps(raw_baseline, ensure_ascii=False, allow_nan=False).encode("utf-8")
+                )
+                > 262144
+            ):
+                raise ValueError
+            baseline = McpInventoryBaseline.model_validate(raw_baseline)
+        except (ValidationError, ValueError, TypeError, RecursionError):
+            fields.errors["mcp_inventory_baseline"] = (
+                "Provide an approved catalog JSON object of at most 256 KB with an exact endpoint, "
+                "at most 1000 exact ASCII tool names and lowercase SHA256 hashes."
+            )
+        if baseline is not None and (
+            target_url is None
+            or target_url != baseline.endpoint
+            or not target_url.startswith(("mcp+sse://", "mcp+sses://"))
+            or mode != "FAST"
+            or exploit
+            or deep
+            or mutate
+            or indirect_adapter != "none"
+            or analysis["analysis_mode"] != "deterministic"
+            or any(optional_text[key] for key in ("attacker_model", "attacker_goal", "judge_model"))
+            or attacker_turns is not None
+        ):
+            fields.errors["mcp_inventory_baseline"] = (
+                "Catalog-only checks require the exact MCP SSE endpoint, standard mode and "
+                "deterministic analysis, without active/deep probes, mutation, document adapters "
+                "or attacker/judge settings."
+            )
     if error_response := fields.response():
         return error_response
     assert target_url is not None
@@ -139,11 +176,20 @@ async def api_start_scan(payload: dict[str, Any]) -> Any:
                 "attacker_turns": attacker_turns,
                 "mutate": mutate,
                 "concurrency": concurrency,
+                "mcp_inventory_baseline": baseline,
                 **analysis,
             }
         )
     except ValidationError as error:
-        return validation_error_response(model_field_errors(error))
+        errors = model_field_errors(error)
+        if baseline is not None:
+            errors = {
+                "mcp_inventory_baseline"
+                if key == "analysis_mode" or key.startswith("mcp_inventory_baseline.")
+                else key: message
+                for key, message in errors.items()
+            }
+        return validation_error_response(errors)
     except AIClientError:
         return validation_error_response({"analysis_mode": "Choose a compatible analysis model."})
 
@@ -206,6 +252,7 @@ async def api_start_scan(payload: dict[str, Any]) -> Any:
                 "tests_selected": report.tests_selected,
                 "module_errors": report.module_errors,
                 "module_outcomes": report.module_outcomes,
+                "assessment_scope": report.assessment_scope,
                 "progress": 100,
                 "current_module": "Done",
             }
@@ -225,6 +272,7 @@ async def api_start_scan(payload: dict[str, Any]) -> Any:
                         "tests_selected": report.tests_selected,
                         "module_errors": report.module_errors,
                         "module_outcomes": report.module_outcomes,
+                        "assessment_scope": report.assessment_scope,
                     },
                 }
             )

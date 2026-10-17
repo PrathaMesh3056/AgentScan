@@ -33,7 +33,9 @@ from agentscan.telemetry.otel import observe_scan
 
 def _attach_trajectory(report: ScanReport) -> None:
     report.trajectory = trajectory_recorder.turns()
-    report.ssp_class = classify_ssp(report.trajectory)
+    report.ssp_class = (
+        None if report.assessment_scope == "mcp_catalog_policy" else classify_ssp(report.trajectory)
+    )
 
 
 def _finish(report: ScanReport) -> ScanReport:
@@ -44,13 +46,16 @@ def _finish(report: ScanReport) -> ScanReport:
     target_tests = sum(
         int(o.get("executed_tests", 0))
         for o in report.module_outcomes
-        if o.get("assessment_scope") not in CONSUMER_VALIDATION_SCOPES | {"local_reference_model"}
+        if o.get("assessment_scope")
+        not in CONSUMER_VALIDATION_SCOPES | {"local_reference_model", "mcp_catalog_policy"}
     )
     scopes = {
         "local_consumer_validation"
         if outcome.get("assessment_scope") in CONSUMER_VALIDATION_SCOPES
         else "local_reference_model"
         if outcome.get("assessment_scope") == "local_reference_model"
+        else "mcp_catalog_policy"
+        if outcome.get("assessment_scope") == "mcp_catalog_policy"
         else "target"
         for outcome in report.module_outcomes
     }
@@ -88,6 +93,25 @@ async def run_scan(target: Target, *, reset_trajectory: bool = True) -> ScanRepo
             }
         )
     report = ScanReport(target_url=target.url, scan_mode=target.mode, framework=target.framework)
+    if target.mcp_inventory_baseline is not None:
+        try:
+            # model_copy does not run validators. Reject alternate connectors
+            # before browser initialization or any target interaction.
+            target = Target.model_validate(target.model_dump(warnings=False))
+        except ValueError:
+            report.module_outcomes.append(
+                {
+                    "module_id": "ATK-006",
+                    "module_name": "MCP catalog policy",
+                    "assessment_scope": "mcp_catalog_policy",
+                    "status": "INCONCLUSIVE",
+                    "selected_tests": 1,
+                    "executed_tests": 0,
+                    "reason": "Invalid catalog-only target or baseline; no target connection was opened.",
+                }
+            )
+            report.tests_selected = 1
+            return _finish(report)
     try:
         registry.load_all()
         modules, selection_errors = registry.select_for_target(target)
@@ -189,7 +213,17 @@ async def run_scan(target: Target, *, reset_trajectory: bool = True) -> ScanRepo
                 await asyncio.gather(*tasks, return_exceptions=True)
                 raise
         for findings, outcome, errors in results:
-            if outcome.get("assessment_scope") in CONSUMER_VALIDATION_SCOPES:
+            if outcome.get("assessment_scope") == "mcp_catalog_policy":
+                outcome["catalog_findings"] = [
+                    finding.model_dump(mode="json") for finding in findings
+                ]
+                outcome["catalog_finding_count"] = len(findings)
+                outcome["reason"] = (
+                    f"{len(findings)} catalog policy findings; execution and agent compromise unassessed. "
+                    + str(outcome.get("reason", ""))
+                )
+                findings = []
+            elif outcome.get("assessment_scope") in CONSUMER_VALIDATION_SCOPES:
                 outcome["consumer_findings"] = [
                     finding.model_dump(mode="json") for finding in findings
                 ]
@@ -260,6 +294,23 @@ async def run_scan_multi(target: Target, modes: list[ScanMode]) -> ScanReport:
         scan_mode=modes[0] if modes else target.mode,
         framework=target.framework,
     )
+    if target.mcp_inventory_baseline is not None:
+        # Never enter eager browser setup or additional modes for this profile.
+        if modes != [ScanMode.SCAN]:
+            merged.module_outcomes.append(
+                {
+                    "module_id": "ATK-006",
+                    "module_name": "MCP catalog policy",
+                    "assessment_scope": "mcp_catalog_policy",
+                    "status": "INCONCLUSIVE",
+                    "selected_tests": 1,
+                    "executed_tests": 0,
+                    "reason": "Catalog-only assessment requires SCAN mode alone; no target connection was opened.",
+                }
+            )
+            merged.tests_selected = 1
+            return _finish(merged)
+        return await run_scan(target, reset_trajectory=False)
     own_session = False
     try:
         if modes and target.browser is not None and not browser_session_active():

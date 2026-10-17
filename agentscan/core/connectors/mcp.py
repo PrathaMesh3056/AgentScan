@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import copy
 import json
 import os
 import sys
@@ -184,6 +185,7 @@ class _McpClientMixin:
         )
 
     async def _handshake(self) -> None:
+        self._catalog_complete = False
         self._rpc_id = 0
         self._tools = []
         self._resources = []
@@ -206,6 +208,17 @@ class _McpClientMixin:
         capabilities = initialized.get("result", {}).get("capabilities", {})
         if isinstance(capabilities, dict) and "resources" in capabilities:
             self._resources = await self._list_all("resources/list", "resources")
+        self._catalog_complete = True
+
+    async def get_mcp_tools(self) -> list[dict[str, Any]] | None:
+        """Return detached tools/list metadata observed during initialization.
+
+        No tool call or refresh occurs. This snapshot cannot establish later
+        metadata changes, dispatch, execution, or capability enforcement.
+        """
+        if not getattr(self, "_catalog_complete", False):
+            return None
+        return copy.deepcopy(self._tools)
 
     async def _list_all(self, method: str, key: str) -> list[dict[str, Any]]:
         entries: list[dict[str, Any]] = []
@@ -303,6 +316,7 @@ class McpStdioConnector(_McpClientMixin, Connector):
         return self
 
     async def __aexit__(self, *exc: Any) -> None:
+        self._catalog_complete = False
         process, self._proc = self._proc, None
         if process is not None and process.returncode is None:
             with contextlib.suppress(ProcessLookupError):
@@ -340,7 +354,10 @@ class McpStdioConnector(_McpClientMixin, Connector):
         return message
 
     async def _rpc(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        from agentscan.core.client import consume_target_request
+
         async with self._lock, asyncio.timeout(self.target.timeout):
+            consume_target_request()
             self._rpc_id += 1
             req_id = self._rpc_id
             await self._write_frame(_jsonrpc_request(req_id, method, params))
@@ -361,7 +378,10 @@ class McpStdioConnector(_McpClientMixin, Connector):
                     return msg
 
     async def _notify(self, method: str, params: dict[str, Any] | None = None) -> None:
+        from agentscan.core.client import consume_target_request
+
         async with self._lock:
+            consume_target_request()
             payload: dict[str, Any] = {"jsonrpc": "2.0", "method": method}
             if params is not None:
                 payload["params"] = params
@@ -429,6 +449,7 @@ class McpSseConnector(_McpClientMixin, Connector):
         return self
 
     async def __aexit__(self, *exc: Any) -> None:
+        self._catalog_complete = False
         if self._legacy_reader is not None:
             self._legacy_reader.cancel()
             with contextlib.suppress(asyncio.CancelledError, TimeoutError):
@@ -695,7 +716,10 @@ class McpSseConnector(_McpClientMixin, Connector):
         return obj
 
     async def _rpc(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        from agentscan.core.client import consume_target_request
+
         async with self._lock, asyncio.timeout(self.target.timeout):
+            consume_target_request()
             self._rpc_id += 1
             payload = _jsonrpc_request(self._rpc_id, method, params)
             if self._transport == "legacy":
@@ -707,10 +731,13 @@ class McpSseConnector(_McpClientMixin, Connector):
                 return await self._legacy_rpc(payload)
 
     async def _notify(self, method: str, params: dict[str, Any] | None = None) -> None:
+        from agentscan.core.client import consume_target_request
+
         payload: dict[str, Any] = {"jsonrpc": "2.0", "method": method}
         if params is not None:
             payload["params"] = params
         async with self._lock, asyncio.timeout(self.target.timeout):
+            consume_target_request()
             if self._transport == "legacy":
                 await self._legacy_post(payload)
             else:

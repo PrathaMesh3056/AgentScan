@@ -1563,6 +1563,15 @@
           <p id="scan-indirect-help" class="text-[11px] text-[#666666]">ATK-005 requires an HTTP target with a document ingestion adapter and a private synthetic reference. Select v1 only after implementing its receipt contract on your agent. Ordinary chat and tool-result ingestion remain unassessed; missing evidence stays visible in the report.</p>
         </div>
 
+        <div class="space-y-1.5">
+          <label for="scan-mcp-inventory-baseline" class="font-bold text-[#1A1A1A] uppercase text-[10px] tracking-wider">Approved MCP catalog JSON · optional catalog-only check</label>
+          <textarea id="scan-mcp-inventory-baseline" rows="4" autocomplete="off" spellcheck="false"
+            aria-describedby="scan-mcp-inventory-help"
+            placeholder='{"endpoint":"mcp+sses://your-agent.example/mcp","tools":{},"algorithm":"mcp-tool-json-sha256-v1"}'
+            class="w-full px-3.5 py-2 rounded-xl bg-[#F7F5EE] border border-[#1A1A1A]/10 text-xs font-mono text-[#1A1A1A] focus:outline-none focus:border-[#1A1A1A]"></textarea>
+          <p id="scan-mcp-inventory-help" class="text-[11px] text-[#666666]">Leave blank for a regular scan. Supplying an independently approved baseline selects ATK-006 catalog comparison only: initialization and tool listing, without calling tools. Use the exact MCP SSE endpoint, standard mode and deterministic analysis with no document adapter. Tool keys map to approved lowercase SHA256 metadata hashes; an empty tools object approves no tools. Observed metadata is never approved automatically. Catalog deviations are separate from target vulnerability findings and have no security score. This checks your target's catalog; the MCP Tools panel exposes AgentScan's own tools.</p>
+        </div>
+
         <!-- Scan Progress Box -->
         <div id="scan-progress-box" class="space-y-2 pt-2">
           <div class="flex items-center justify-between text-[11px] font-mono">

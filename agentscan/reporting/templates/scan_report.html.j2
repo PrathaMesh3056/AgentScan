@@ -170,6 +170,21 @@
     <p style="font-size: 9pt; color: #64748b;">No module outcome records are available. Per-module coverage is unverified.</p>
     {% endif %}
     {% for outcome in report.module_outcomes %}
+    {% if outcome.get('assessment_scope') == 'mcp_catalog_policy' %}
+    <h3 style="font-size: 10pt; margin: 16px 0 8px;">MCP catalog policy comparison</h3>
+    <p style="font-size: 8pt;">{{ outcome.get('catalog_finding_count', 0) }} catalog policy findings. This snapshot is excluded from overall agent-security scoring. Tool execution, endpoint migration and later metadata changes remain unassessed.</p>
+    {% for finding in outcome.get('catalog_findings', []) %}
+    <p style="font-size: 8pt; overflow-wrap: anywhere;"><strong>{{ finding.get('severity') }}</strong>: {{ finding.get('description') }}</p>
+    {% set meta = finding.get('metadata', {}) %}
+    <p style="font-size: 8pt;">Deviation counts: {{ meta.get('deviation_counts', {}) }}{% if meta.get('truncated') %}. Detail list truncated; all deviations are counted.{% endif %}</p>
+    <table style="width: 100%; border-collapse: collapse; font-size: 8pt;">
+        <thead><tr><th style="text-align: left;">Tool</th><th style="text-align: left;">Policy deviation</th><th style="text-align: left;">Metadata hashes</th></tr></thead>
+        <tbody>{% for deviation in meta.get('deviations', []) %}
+        <tr><td style="overflow-wrap: anywhere;">{{ deviation.get('name') }}</td><td>{{ deviation.get('kind') }}</td><td style="overflow-wrap: anywhere;">Expected: {{ deviation.get('expected_sha256', 'not enrolled') }}<br>Observed: {{ deviation.get('observed_sha256', 'not advertised') }}</td></tr>
+        {% endfor %}</tbody>
+    </table>
+    {% endfor %}
+    {% endif %}
     {% if outcome.get('consumer_findings') %}
     <h3 style="font-size: 10pt; margin: 16px 0 8px;">Local consumer effects: {{ outcome.get('consumer_finding_count', 0) }}</h3>
     <p style="font-size: 8pt;">Scope: {{ outcome.get('assessment_scope') }}. These owned fixture results are excluded from customer target findings and scores.</p>

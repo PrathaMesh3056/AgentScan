@@ -87,6 +87,13 @@ def feature_manifest() -> dict[str, Any]:
         "workflows": [
             {"id": "scan", "label": "Endpoint scan", "surface": "dashboard", "action": "scan"},
             {
+                "id": "mcp_inventory",
+                "label": "Approved target MCP catalog comparison",
+                "surface": "dashboard",
+                "action": "scan",
+                "note": "Optional approved catalog JSON selects ATK-006 only: initialize and list tools without invoking them. Requires an exact MCP SSE endpoint, standard mode and deterministic analysis. Catalog deviations are separate from target findings and have no security score; observed catalogs are never approved automatically.",
+            },
+            {
                 "id": "audit",
                 "label": "Source and dependency audit",
                 "surface": "dashboard",
@@ -134,7 +141,13 @@ def feature_manifest() -> dict[str, Any]:
                 "surface": "dashboard",
                 "action": "sentinel",
             },
-            {"id": "mcp", "label": "AgentScan MCP tools", "surface": "dashboard", "action": "mcp"},
+            {
+                "id": "mcp",
+                "label": "AgentScan MCP tools",
+                "surface": "dashboard",
+                "action": "mcp",
+                "note": "This panel exposes AgentScan's own tools through /api/mcp. Use the endpoint scan's approved catalog field to compare a target MCP server's tool inventory.",
+            },
             {
                 "id": "aibom",
                 "label": "AI bill of materials",

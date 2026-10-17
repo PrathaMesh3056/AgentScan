@@ -118,6 +118,10 @@ class AttackRegistry:
         modules = []
         errors = []
         for module in self._modules.values():
+            # A baseline requests catalog-only assessment, never dispatch through
+            # the server's first tool via another attack module.
+            if target.mcp_inventory_baseline is not None and module.attack_id != "ATK-006":
+                continue
             try:
                 if module.is_applicable(target):
                     modules.append(copy.deepcopy(module))

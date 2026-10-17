@@ -35,7 +35,16 @@ def _validate_response(resp: dict[str, Any]) -> None:
     with contextlib.suppress(Exception):
         record_connector_request(status if isinstance(status, int) else 0)
     if resp.get("error") or (isinstance(status, int) and (status == 0 or status >= 400)):
-        reason = str(resp.get("error") or f"Target returned HTTP {status}")
+        # Arbitrary returned error bodies can contain credentials or private
+        # target data. Do not promote them into logs, module reasons or raises.
+        if type(status) is int and 400 <= status <= 599:
+            reason = f"Target returned HTTP {status}"
+        elif status == 0 and resp.get("error") == "Target or redirect host is not enrolled":
+            reason = "Target or redirect host is not enrolled"
+        elif status == 0:
+            reason = "Connection failed before a valid target response"
+        else:
+            reason = "Target reported an error response"
         record_execution_error(reason)
         raise TargetRequestError(reason)
 
@@ -72,13 +81,19 @@ class AgentScanClient:
         self.target = target
         self._connector: Connector = select_connector(target)
         self._auto_init = False
+        self._connected = False
+        self._connect_lock = asyncio.Lock()
 
     async def __aenter__(self) -> AgentScanClient:
         await self._connector.__aenter__()
+        self._connected = True
         return self
 
     async def __aexit__(self, *exc: Any) -> None:
-        await self._connector.__aexit__(*exc)
+        try:
+            await self._connector.__aexit__(*exc)
+        finally:
+            self._connected = False
 
     @classmethod
     def from_target(cls, target: Target) -> AgentScanClient:
@@ -90,16 +105,22 @@ class AgentScanClient:
     async def open(self) -> AgentScanClient:
         """Explicitly open the underlying connector."""
         await self._connector.__aenter__()
+        self._connected = True
         return self
 
     async def close(self) -> None:
         """Explicitly close the underlying connector."""
-        await self._connector.__aexit__(None, None, None)
+        try:
+            await self._connector.__aexit__(None, None, None)
+        finally:
+            self._connected = False
 
     async def _ensure_connected(self) -> None:
         """Lazily initialize connector only if created via from_target."""
-        if self._auto_init and getattr(self._connector, "_client", None) is None:
-            await self._connector.__aenter__()
+        if self._auto_init and not self._connected:
+            async with self._connect_lock:
+                if not self._connected:
+                    await self.open()
 
     async def send_message(
         self, message: str, extra_body: dict[str, Any] | None = None
@@ -118,6 +139,15 @@ class AgentScanClient:
             recorder.record("message", message, resp)
         _validate_response(resp)
         return resp
+
+    async def inspect_mcp_tools(self) -> list[dict[str, Any]] | None:
+        """Inspect the selected connector's snapshot without calling any tool.
+
+        Discovery is not a conversation and raw metadata is not added to traces.
+        This does not discover another endpoint or refresh a live catalog.
+        """
+        await self._ensure_connected()
+        return await self._connector.get_mcp_tools()
 
     async def send_indirect_document(
         self, task: str, document: str, probe_id: str, source_id: str

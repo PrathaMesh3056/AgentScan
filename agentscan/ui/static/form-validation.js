@@ -12,7 +12,7 @@
     descriptor(`${prefix}-external-consent`, 'data_classification', 'consent', { when: 'external' })
   ];
   const definitions = {
-    scan: [descriptor('scan-target-url', 'target_url', 'url', { protocols: scanRemote }), descriptor('scan-mode', 'mode', 'choice', { choices: ['FAST', 'ACTIVE', 'DEEP'] }), descriptor('scan-concurrency', 'concurrency', 'integer', { min: 1, max: 10 }), descriptor('scan-canary-token', 'canary_token', 'canary', { optional: true }), descriptor('scan-indirect-adapter', 'indirect_adapter', 'choice', { choices: ['none', 'document_v1'] }), ...analysis('scan')],
+    scan: [descriptor('scan-target-url', 'target_url', 'url', { protocols: scanRemote }), descriptor('scan-mode', 'mode', 'choice', { choices: ['FAST', 'ACTIVE', 'DEEP'] }), descriptor('scan-concurrency', 'concurrency', 'integer', { min: 1, max: 10 }), descriptor('scan-canary-token', 'canary_token', 'canary', { optional: true }), descriptor('scan-indirect-adapter', 'indirect_adapter', 'choice', { choices: ['none', 'document_v1'] }), descriptor('scan-mcp-inventory-baseline', 'mcp_inventory_baseline', 'mcpBaseline', { optional: true }), ...analysis('scan')],
     discovery: [descriptor('discovery-target', 'url', 'url', { protocols: remote }), descriptor('discovery-mode', 'mode', 'choice', { choices: ['auto', 'http', 'browser'] }), descriptor('discovery-auto-probe', 'allow_probe', 'boolean')],
     audit: [descriptor('audit-codebase-path', 'path', 'path'), descriptor('audit-ruleset', 'ruleset', 'choice', { choices: ['default'] }),
       descriptor('audit-offline', 'offline', 'boolean'), descriptor('audit-show-transitive', 'show_transitive', 'boolean'),
@@ -69,6 +69,19 @@
         return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? { value: parsed } : { error: 'Enter a JSON object, for example {}. Arrays, null and scalar values are not accepted.' };
       } catch { return { error: 'Enter valid JSON with double-quoted keys and no trailing commas.' }; }
     }
+    if (spec.type === 'mcpBaseline') {
+      const error = 'Use approved catalog JSON with an exact endpoint, at most 1000 exact ASCII tool names and lowercase SHA256 hashes; the supported algorithm is mcp-tool-json-sha256-v1.';
+      if (bytes(raw) > 262144) return { error: 'Use an approved catalog JSON object of at most 256 KB.' };
+      try {
+        const parsed = JSON.parse(value);
+        const object = item => item !== null && typeof item === 'object' && !Array.isArray(item);
+        if (!object(parsed) || Object.keys(parsed).some(key => !['endpoint', 'tools', 'algorithm'].includes(key)) ||
+            typeof parsed.endpoint !== 'string' || !parsed.endpoint || parsed.endpoint.length > 8192 || /[\s\x00-\x1f\x7f]/.test(parsed.endpoint) ||
+            (Object.hasOwn(parsed, 'algorithm') && parsed.algorithm !== 'mcp-tool-json-sha256-v1') || !object(parsed.tools) || Object.keys(parsed.tools).length > 1000 ||
+            Object.entries(parsed.tools).some(([name, hash]) => !name.length || name.length > 128 || /[^A-Za-z0-9_.-]/.test(name) || typeof hash !== 'string' || hash.length !== 64 || /[^0-9a-f]/.test(hash))) return { error };
+        return { value: parsed };
+      } catch { return { error }; }
+    }
     if (value.length > (spec.max || 65536) || value.includes('\0')) return { error: 'Use text within the field size limit without null characters.' };
     return { value };
   }
@@ -77,6 +90,7 @@
   function fieldFor(workflow, key) {
     const aliases = { target: 'target_url', max_rounds: 'max_rounds', rounds: 'max_rounds', interval: 'interval_seconds', name: 'tool', model: workflow === 'swarm' ? 'local_model' : 'model', attacker_model: workflow === 'calibration' ? 'model' : 'local_model', strategy: 'team', vulnerability_type: 'vulnerability_type', data_classification: 'data_classification' };
     if (key.startsWith('arguments.')) key = 'arguments';
+    if (key.startsWith('mcp_inventory_baseline.')) key = 'mcp_inventory_baseline';
     if (workflow === 'discovery' && ['target', 'target_url'].includes(key)) key = 'url';
     const normalized = aliases[key] || key;
     return specs(workflow).find(spec => spec.field === normalized) || (key === 'body' ? specs(workflow)[0] : null);
@@ -122,6 +136,12 @@
       values.data_classification = mode === 'external' ? values.data_classification : 'sensitive';
       if (mode === 'external' && values.external_provider && values.external_model) values.external_model = `${values.external_provider}/${values.external_model}`;
       delete values.external_provider;
+    }
+    if (workflow === 'scan' && values.mcp_inventory_baseline) {
+      if (!/^mcp\+sses?:\/\//.test(values.target_url || '') || values.mcp_inventory_baseline.endpoint !== values.target_url ||
+          values.mode !== 'FAST' || mode !== 'deterministic' || values.indirect_adapter !== 'none') {
+        errors.mcp_inventory_baseline = 'Catalog-only checks require the exact MCP SSE endpoint, standard mode, deterministic analysis and no document adapter.';
+      }
     }
     if (workflow === 'discovery') { values.no_exploit = !values.allow_probe; delete values.allow_probe; }
     if (workflow === 'audit' && !specs('audit').filter(spec => spec.field.startsWith('scan_')).some(spec => values[spec.field] === true)) errors.ruleset = 'Select at least one audit check.';

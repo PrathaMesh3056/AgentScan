@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 import typer
+from pydantic import ValidationError
 from rich.table import Table
 
 from agentscan._cli._shared import (
@@ -25,6 +26,7 @@ from agentscan._cli._shared import (
 from agentscan.core.context import ScanContext, active_context, begin_scan_context
 from agentscan.core.models import (
     BrowserConfig,
+    Finding,
     Framework,
     RequestTemplate,
     ScanMode,
@@ -335,6 +337,22 @@ def scan(  # noqa: PLR0913
 
     explicit_analysis = analysis_mode is not None or "analysis_mode" in cfg
     analysis_mode = analysis_mode or cfg.get("analysis_mode") or "deterministic"
+    mcp_baseline = cfg.get("mcp_inventory_baseline")
+    if mcp_baseline is not None and (
+        analysis_mode != "deterministic"
+        or exploit
+        or deep
+        or mutate
+        or calibrate
+        or calibrate_required
+        or attacker_model
+        or judge_model
+        or escalation_model
+    ):
+        raise typer.BadParameter(
+            "mcp_inventory_baseline selects catalog-only SCAN: use deterministic analysis "
+            "without exploit/deep, mutations, calibration or role models."
+        )
     external_model = external_model or cfg.get("external_model") or ""
     data_classification = data_classification or cfg.get("data_classification") or "sensitive"
     if data_classification not in {"sensitive", "non_sensitive"}:
@@ -373,27 +391,37 @@ def scan(  # noqa: PLR0913
         raise typer.BadParameter(
             "indirect_adapter must be document_v1 or omitted from the profile."
         )
-    target_obj = Target(
-        analysis_mode=analysis_mode,
-        local_model=local_model,
-        external_model=external_model,
-        data_classification=data_classification,
-        canary_token=cfg.get("canary_token"),
-        indirect_adapter=cfg.get("indirect_adapter"),
-        url=url,
-        framework=Framework(framework),
-        system_prompt=system_prompt,
-        auth_header=auth_header,
-        request_template=request_template,
-        browser=browser_cfg,
-        attacker_model=attacker_model,
-        attacker_turns=attacker_turns,
-        attacker_goal=attacker_goal,
-        judge_model=judge_model,
-        escalation_model=escalation_model,
-        escalation_turns=escalation_turns,
-        mutate=mutate,
-    )
+    try:
+        target_obj = Target(
+            analysis_mode=analysis_mode,
+            local_model=local_model,
+            external_model=external_model,
+            data_classification=data_classification,
+            canary_token=cfg.get("canary_token"),
+            indirect_adapter=cfg.get("indirect_adapter"),
+            url=url,
+            framework=Framework(framework),
+            system_prompt=system_prompt,
+            auth_header=auth_header,
+            request_template=request_template,
+            browser=browser_cfg,
+            attacker_model=attacker_model,
+            attacker_turns=attacker_turns,
+            attacker_goal=attacker_goal,
+            judge_model=judge_model,
+            escalation_model=escalation_model,
+            escalation_turns=escalation_turns,
+            mutate=mutate,
+            mcp_inventory_baseline=mcp_baseline,
+        )
+    except ValidationError:
+        raise typer.BadParameter(
+            "Invalid mcp_inventory_baseline: use the exact MCP target endpoint, supported "
+            "algorithm and an independently approved map of tool names to SHA256 hashes; "
+            "browser and captured-request overrides are unsupported."
+            if mcp_baseline is not None
+            else "Invalid target configuration; review the profile fields."
+        ) from None
 
     # Determine modes
     modes = (
@@ -454,14 +482,25 @@ def scan(  # noqa: PLR0913
             seed_techniques_used=[],
         )
 
-    # Render findings table
-    if report.findings:
-        table = Table(title="AgentScan Findings", show_lines=True)
+    # Keep catalog policy findings separate from agent execution findings.
+    catalog_scope = report.assessment_scope == "mcp_catalog_policy"
+    visible_findings = report.findings
+    if catalog_scope:
+        visible_findings = [
+            Finding.model_validate(finding)
+            for outcome in report.module_outcomes
+            for finding in outcome.get("catalog_findings", [])
+        ]
+    if visible_findings:
+        table = Table(
+            title="MCP Catalog Policy Deviations" if catalog_scope else "AgentScan Findings",
+            show_lines=True,
+        )
         table.add_column("Attack ID", style="cyan", no_wrap=True)
         table.add_column("Severity", no_wrap=True)
         table.add_column("Description")
 
-        for finding in report.findings:
+        for finding in visible_findings:
             severity_str = finding.severity.value
             colour = _SEVERITY_COLOURS.get(severity_str, "")
             table.add_row(
@@ -472,16 +511,27 @@ def scan(  # noqa: PLR0913
 
         console.print(table)
     else:
-        console.print("No findings were recorded in the evaluated tests.")
+        console.print(
+            "No catalog deviations recorded; review snapshot coverage and status."
+            if catalog_scope
+            else "No findings were recorded in the evaluated tests."
+        )
 
     # Print score
     band = score_band(report.score) if report.status == "COMPLETE" else report.status
     score_val = report.score if report.score is not None else "N/A"
-    console.print(f"\nAgentScan Score: {score_val}/100  [{band}]")
+    if catalog_scope:
+        console.print("\nMCP catalog policy comparison; overall agent security is unassessed.")
+    else:
+        console.print(f"\nAgentScan Score: {score_val}/100  [{band}]")
     console.print(
         f"Status: {report.status}; evaluated {report.tests_run}/{report.tests_selected} selected tests"
     )
-    console.print(f"SSP class: {_format_ssp_class(report.ssp_class)}")
+    console.print(
+        "SSP class: Unassessed (catalog-only comparison)"
+        if catalog_scope
+        else f"SSP class: {_format_ssp_class(report.ssp_class)}"
+    )
 
     # Write JSON output
     if output is not None:
@@ -511,5 +561,5 @@ def scan(  # noqa: PLR0913
         raise typer.Exit(code=3)
 
     # Fail-on threshold check
-    if fail_on is not None and _fail_on_should_exit(report.findings, fail_on):
+    if fail_on is not None and _fail_on_should_exit(visible_findings, fail_on):
         raise typer.Exit(code=1)

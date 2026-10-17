@@ -51,6 +51,12 @@
         scope: label(row.assessment_scope, scope === 'mixed' ? 'unavailable' : scope),
         coverage: coverage(row.selected_tests, row.executed_tests),
         reason: safeReason(row.reason || row.error),
+        catalogFindingCount: count(row.catalog_finding_count) ? row.catalog_finding_count : null,
+        catalogFindings: Array.isArray(row.catalog_findings) ? row.catalog_findings.filter(object).slice(0, 100).map(finding => ({
+          description: safeReason(finding.description).slice(0, 2000),
+          deviationCount: count(finding.metadata?.deviation_count) ? finding.metadata.deviation_count : null,
+          deviations: Array.isArray(finding.metadata?.deviations) ? finding.metadata.deviations.filter(object).slice(0, 100).map(item => ({ kind: label(item.kind, 'Unclassified deviation'), name: label(item.name, 'Tool identity unavailable') })) : []
+        })) : [],
       };
     });
     if (reportCoverage.available && modules.length) {
@@ -93,6 +99,7 @@
 
   function scopeLabel(scope) {
     const labels = { target: 'Target assessment', output_text_indicator_inventory: 'Output text · impact unassessed', direct_text_known_reference: 'Direct text · known reference',
+      mcp_tool_proposal_inventory: 'MCP text proposals · execution unassessed', mcp_catalog_policy: 'MCP catalog policy · excluded from target score',
       local_reference_model: 'Local reference diagnostics', local_consumer_validation: 'Local consumer validation · excluded from target score', owned_synthetic_target: 'Owned synthetic consumer · excluded from target score', local_consumer_lab: 'Local consumer lab · excluded from target score', mixed: 'Mixed assessment scopes',
       unavailable: 'Assessment scope unavailable' };
     return Object.hasOwn(labels, scope) ? labels[scope] : scope.replaceAll('_', ' ');
@@ -219,13 +226,25 @@
         counts.append(node('span', item.coverage.available ? `${item.coverage.evaluated} / ${item.coverage.selected}` : 'Unavailable'));
         if (item.coverage.available) meter(counts, item.coverage.evaluated, item.coverage.selected, 'evaluated');
         row.append(counts, node('td', item.coverage.available ? String(item.coverage.remaining) : 'Unavailable'),
-          node('td', [item.reason, item.coverage.reason].filter(Boolean).join(' ') || 'No reason recorded.'));
+          node('td', [item.reason, item.coverage.reason, item.catalogFindingCount === null ? '' : `${item.catalogFindingCount} catalog policy finding(s) · separate from target vulnerability findings.`].filter(Boolean).join(' ') || 'No reason recorded.'));
         body.append(row);
       });
       table.append(body);
       wrapper.append(table);
       modulesCard.append(wrapper);
       content.append(modulesCard);
+    }
+    const catalogModules = summary.modules.filter(item => item.catalogFindings.length);
+    if (catalogModules.length) {
+      const catalogCard = panel('MCP catalog policy deviations', 'Snapshot comparison against independently approved metadata. These findings do not prove tool execution, maliciousness or agent compromise, and are excluded from the target score.');
+      catalogModules.forEach(item => item.catalogFindings.forEach(finding => {
+        catalogCard.append(node('h4', item.name), node('p', finding.description || 'Catalog policy mismatch recorded.'));
+        if (finding.deviationCount !== null) catalogCard.append(node('p', `${finding.deviationCount} recorded catalog deviations. Detail lists are bounded to 100 entries.`));
+        const details = node('ul');
+        finding.deviations.forEach(deviation => details.append(node('li', `${deviation.kind} · ${deviation.name}`)));
+        catalogCard.append(details);
+      }));
+      content.append(catalogCard);
     }
     content.append(node('p', 'These charts describe recorded observations. Coverage and finding counts do not measure attack success, detector accuracy or an agent’s overall security.', 'analytics-footnote'));
     container.replaceChildren(content);

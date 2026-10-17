@@ -147,6 +147,10 @@ class Connector(ABC):
     async def __aexit__(self, *exc: Any) -> None:
         return None
 
+    async def get_mcp_tools(self) -> list[dict[str, Any]] | None:
+        """Completed MCP handshake snapshot, or None when unsupported/unavailable."""
+        return None
+
     @property
     def supports_indirect_document(self) -> bool:
         """Explicit capability; ordinary chat/history transport is insufficient."""

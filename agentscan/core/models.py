@@ -16,6 +16,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from agentscan.core.mcp_inventory import McpInventoryBaseline
+
 
 def _installed_version() -> str:
     try:
@@ -268,6 +270,52 @@ class Target(BaseModel):
     )
     max_response_bytes: int = Field(default=4 * 1024 * 1024, ge=1024, le=16 * 1024 * 1024)
     request_budget: int | None = Field(default=None, ge=1, le=10000)
+    mcp_inventory_baseline: McpInventoryBaseline | None = Field(
+        default=None,
+        description="Approved MCP catalog; selects only ATK-006 catalog comparison, without tool invocation.",
+    )
+
+    @model_validator(mode="after")
+    def mcp_inventory_profile(self):
+        if self.mcp_inventory_baseline is not None:
+            from urllib.parse import urlsplit
+
+            if self.mcp_inventory_baseline.endpoint != self.url:
+                raise ValueError(
+                    "MCP baseline endpoint must exactly match the selected target URL."
+                )
+            endpoint = urlsplit(self.url)
+            if endpoint.scheme not in {"mcp", "mcp+stdio", "mcp+sse", "mcp+sses"}:
+                raise ValueError("An MCP catalog baseline requires an MCP connector URL.")
+            if (
+                endpoint.username is not None
+                or endpoint.password is not None
+                or endpoint.fragment
+                or "\\" in self.url
+            ):
+                raise ValueError(
+                    "Use an MCP endpoint without URL credentials, fragments or backslashes."
+                )
+            if endpoint.scheme in {"mcp+sse", "mcp+sses"} and (
+                not endpoint.hostname or endpoint.port == 0
+            ):
+                raise ValueError("An MCP HTTP endpoint requires a hostname and valid port.")
+            if self.browser is not None or self.request_template is not None:
+                raise ValueError(
+                    "MCP catalog comparison cannot use browser or captured-request overrides."
+                )
+            if self.mode != ScanMode.SCAN or self.analysis_mode != "deterministic":
+                raise ValueError("MCP catalog comparison requires deterministic SCAN mode.")
+            if (
+                self.mutate
+                or self.indirect_adapter is not None
+                or any((self.attacker_model, self.judge_model, self.escalation_model))
+            ):
+                raise ValueError(
+                    "MCP catalog comparison cannot use mutations, document adapters or role models."
+                )
+        return self
+
     analysis_mode: str = Field(default="deterministic", pattern="^(deterministic|local|external)$")
     local_model: str = Field(default="ollama/llama3.2", max_length=136)
     external_model: str = Field(default="", max_length=140)
