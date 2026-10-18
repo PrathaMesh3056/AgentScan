@@ -21,8 +21,10 @@ def extract_tool_names(response: dict[str, Any]) -> list[str]:
         tool_data = response["function_call"]
     else:
         choices = response.get("choices")
-        if isinstance(choices, list) and choices:
+        if isinstance(choices, list) and choices and isinstance(choices[0], dict):
             message = choices[0].get("message", {})
+            if not isinstance(message, dict):
+                return []
             if "tool_calls" in message:
                 tool_data = message["tool_calls"]
             elif "function_call" in message:

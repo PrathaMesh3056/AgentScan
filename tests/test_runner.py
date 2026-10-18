@@ -23,10 +23,10 @@ def runner_target() -> Target:
 
 class TestRunScan:
     @pytest.mark.asyncio
-    async def test_run_scan_retains_findings_when_private_criteria_are_unverified(
+    async def test_run_scan_does_not_promote_untrusted_execution_claims(
         self, runner_target: Target
     ) -> None:
-        """Unknown private/tool criteria retain confirmed findings but suppress a full score."""
+        """Unknown private/tool criteria cannot be resolved by a target's execution claim."""
         with respx.mock(assert_all_called=False) as mock:
             mock.route(method="POST").mock(
                 return_value=httpx.Response(
@@ -44,8 +44,12 @@ class TestRunScan:
         assert report.score is None
         assert any(outcome["status"] == "INCONCLUSIVE" for outcome in report.module_outcomes)
         assert report.target_url == runner_target.url
-        # A separately evidenced tool event survives while ATK-001 lacks its criterion.
-        assert any(finding.attack_id == "ATK-013" for finding in report.findings)
+        # The JSON flag came from the target, with no independent policy/effects channel.
+        assert not any(finding.attack_id == "ATK-013" for finding in report.findings)
+        agency = next(o for o in report.module_outcomes if o["module_id"] == "ATK-013")
+        assert agency["assessment_scope"] == "agency_proposal_inventory"
+        assert agency["executed_tests"] == 0
+        assert agency["observation_count"] == 10
         assert not any(finding.attack_id == "ATK-001" for finding in report.findings)
         direct = next(o for o in report.module_outcomes if o["module_id"] == "ATK-001")
         assert direct["status"] == "INCONCLUSIVE"

@@ -33,8 +33,17 @@ from agentscan.telemetry.otel import observe_scan
 
 def _attach_trajectory(report: ScanReport) -> None:
     report.trajectory = trajectory_recorder.turns()
+    # Trajectory turns do not carry module attribution. In mixed scans we
+    # cannot separate these unverified agency proposals from assessed turns.
+    agency_inventory = any(
+        outcome.get("assessment_scope") == "agency_proposal_inventory"
+        for outcome in report.module_outcomes
+    )
     report.ssp_class = (
-        None if report.assessment_scope == "mcp_catalog_policy" else classify_ssp(report.trajectory)
+        None
+        if agency_inventory
+        or report.assessment_scope in {"mcp_catalog_policy", "agency_proposal_inventory"}
+        else classify_ssp(report.trajectory)
     )
 
 
@@ -47,7 +56,8 @@ def _finish(report: ScanReport) -> ScanReport:
         int(o.get("executed_tests", 0))
         for o in report.module_outcomes
         if o.get("assessment_scope")
-        not in CONSUMER_VALIDATION_SCOPES | {"local_reference_model", "mcp_catalog_policy"}
+        not in CONSUMER_VALIDATION_SCOPES
+        | {"local_reference_model", "mcp_catalog_policy", "agency_proposal_inventory"}
     )
     scopes = {
         "local_consumer_validation"
@@ -56,6 +66,8 @@ def _finish(report: ScanReport) -> ScanReport:
         if outcome.get("assessment_scope") == "local_reference_model"
         else "mcp_catalog_policy"
         if outcome.get("assessment_scope") == "mcp_catalog_policy"
+        else "agency_proposal_inventory"
+        if outcome.get("assessment_scope") == "agency_proposal_inventory"
         else "target"
         for outcome in report.module_outcomes
     }

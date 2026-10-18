@@ -8,6 +8,7 @@ import httpx
 import pytest
 import respx
 
+from agentscan.attacks.registry import AttackRegistry, registry
 from agentscan.core.client import AgentScanClient
 from agentscan.core.models import ScanMode, SspClass, Target, TurnRecord
 from agentscan.core.runner import run_scan
@@ -177,7 +178,17 @@ class TestTrajectoryRecorder:
 
 
 @pytest.mark.asyncio
-async def test_run_scan_attaches_ssp_class() -> None:
+@pytest.mark.parametrize("include_agency", [False, True])
+async def test_run_scan_classification_respects_agency_evidence_scope(
+    include_agency: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    registry.load_all()
+    selected = AttackRegistry()
+    for module in registry.get_all():
+        if include_agency or module.attack_id != "ATK-013":
+            selected.register(module)
+    selected._loaded = True
+    monkeypatch.setattr("agentscan.core.runner.registry", selected)
     target = Target(url="http://agent.example/chat", mode=ScanMode.SCAN)
     trajectory_recorder.reset()
     with respx.mock(assert_all_called=False) as mock:
@@ -189,6 +200,12 @@ async def test_run_scan_attaches_ssp_class() -> None:
         )
         report = await run_scan(target)
 
-    assert report.ssp_class is not None
-    assert report.ssp_class == SspClass.SERVANT
+    assert report.ssp_class == (None if include_agency else SspClass.SERVANT)
+    assert (
+        any(
+            outcome.get("assessment_scope") == "agency_proposal_inventory"
+            for outcome in report.module_outcomes
+        )
+        is include_agency
+    )
     assert len(report.trajectory) >= 1

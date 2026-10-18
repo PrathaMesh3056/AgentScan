@@ -1,6 +1,6 @@
 # AgentScan Roadmap
 
-Updated 17 October 2026. Package metadata declares **v0.2.0** and a beta development status. This describes the implemented source and verification limits; it does not establish a production deployment or calibrated detection accuracy.
+Updated 18 October 2026. Package metadata declares **v0.2.0** and a beta development status. This describes the implemented source and verification limits; it does not establish a production deployment or calibrated detection accuracy.
 
 16 October sequencing update: at the owner's request, live-model and combined
 module evaluations are deferred while engineering improvements proceed one module
@@ -30,6 +30,14 @@ non-slow suite passed 2,189 tests; four actual local CLI cases verified discover
 without tool calls. Actual catalog poisoning, post-approval rug pulls and real-agent
 efficacy remain open.
 
+The next [ATK-013](docs/modules/excessive_agency.md) engineering update retains
+its ten original seeds as a bounded response inventory. Reported tool proposals,
+completion claims and refusals remain authorization/effect-INCONCLUSIVE, with
+zero impact-evaluated tests and a separate dashboard/report panel. Local verification
+passed 2,279 tests on 18 October (32 skipped, eight slow exclusions).
+Independent policy/approval/effect witnesses and
+real-agent defense evaluation remain open.
+
 ## Implemented capabilities
 
 | Capability | Implemented behavior | Verification boundary |
@@ -38,6 +46,7 @@ efficacy remain open.
 | [ATK-001 scoped update](docs/modules/prompt_injection.md) | Completed 10 October: 24 direct-user seeds, complete known-reference disclosure criterion, input-provenance checks, reference validation and transcript redaction | Single-turn supported text representations only; missing criteria stay inconclusive. Independent real-agent accuracy remains unverified. |
 | [ATK-005 document profile](docs/modules/indirect_injection.md) | Seven document patterns, opt-in HTTP adapter, separate source/task delivery and correlated consumption receipts; configured through dashboard, CLI or API | Complete known-reference disclosure only. Receipts are target-reported, tools are unassessed and unsupported connectors stay unavailable. Local model run observed no disclosures and only 1/2 strict benign tasks; independent customer accuracy is unverified. |
 | [ATK-006 MCP profile](docs/modules/mcp_shadow.md) | Eight inconclusive response observations; optional approved exact-endpoint/full-tool-definition catalog comparison through CLI/SDK/local dashboard | A complete catalog comparison is one `mcp_catalog_policy` check, with bounded MEDIUM findings for unexpected, changed or missing entries. No automatic approval, metadata injection, continuous monitoring or downstream execution proof. |
+| [ATK-013 agency inventory](docs/modules/excessive_agency.md) | Ten retained user-message probes; bounded hashed proposal/status observations and separate CLI/dashboard/report presentation | Engineering locally verified, 18 October. No authorization or effect findings/evaluated negatives; pure inventory score and SSP are null. No independent policy/approval/effects adapter or installed defense. |
 | Target connectors | HTTP JSON, captured cURL request profiles, local Playwright browser targets, WebSocket and MCP stdio/Streamable HTTP with bounded GET resumption and legacy HTTP+SSE discovery | Service jobs permit HTTP(S) only. Failed tool calls are not replayed; legacy endpoint announcements must stay on the enrolled origin. |
 | Static audit and identity | Python/configuration checks, dependency advisories, AI component declarations, nested MCP server declarations, permission graphs and minimized reports | Unsupported/partial inputs retain inconclusive status; offline advisories and declarations do not prove deployed behavior or effective tool permissions. |
 | Analysis policy | Deterministic and sensitive defaults; optional offline local analysis; external analysis only with explicit non-sensitive classification and client/operator configuration | Local model runtime must be provisioned. Real external provider calls are outside this verification batch. |

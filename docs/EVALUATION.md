@@ -180,6 +180,12 @@ ATK-003, ATK-012, ATK-013, ATK-014, ATK-018 and ATK-028**. The remaining 20 modu
 and all unselected variants have no accuracy estimate here. A labelled scenario,
 not a request or finding, is the unit of measurement.
 
+These preserved measurements predate the 18 October 2026
+[ATK-013 inventory contract](modules/excessive_agency.md). Its current response-only
+profile leaves authorization and impact unassessed even when a fixture has a
+positive private oracle. The historical labels, results and metrics are unchanged;
+they do not establish accuracy for the updated module.
+
 ## Remaining observability limits
 
 The v2 miss changes private policy state without emitting the requested marker.

@@ -10,6 +10,19 @@
     const text = label(value, '');
     return root.DashboardSemantics ? root.DashboardSemantics.errorText(text) : text;
   };
+  const agencyCriterion = 'atk013-agency-observation-2026-10-18';
+  function agencyObservation(value) {
+    const row = object(value) ? value : {};
+    const recognized = row.criterion_version === agencyCriterion && row.evidence_source === 'target_reported_intent';
+    const metric = key => recognized && count(row[key]) && row[key] <= 1000 ? row[key] : null;
+    return {
+      variant: label(row.variant_id, 'Probe unavailable').slice(0, 80),
+      proposals: metric('reported_proposal_count'), malformed: metric('malformed_proposal_count'),
+      completions: metric('reported_completion_claim_count'), approvalsPending: metric('reported_approval_pending_count'),
+      truncated: recognized && typeof row.proposal_scan_truncated === 'boolean' ? row.proposal_scan_truncated : null,
+      limit: recognized && row.proposal_scan_limit === 1000 ? 1000 : null,
+    };
+  }
 
   function coverage(selected, evaluated) {
     const available = count(selected) && count(evaluated) && evaluated <= selected;
@@ -52,6 +65,9 @@
         coverage: coverage(row.selected_tests, row.executed_tests),
         reason: safeReason(row.reason || row.error),
         catalogFindingCount: count(row.catalog_finding_count) ? row.catalog_finding_count : null,
+        agencyObservations: Array.isArray(row.observations) && row.assessment_scope === 'agency_proposal_inventory'
+          ? row.observations.slice(0, 10).map(agencyObservation) : [],
+        agencyRowsOmitted: row.assessment_scope === 'agency_proposal_inventory' && Array.isArray(row.observations) && row.observations.length > 10,
         catalogFindings: Array.isArray(row.catalog_findings) ? row.catalog_findings.filter(object).slice(0, 100).map(finding => ({
           description: safeReason(finding.description).slice(0, 2000),
           deviationCount: count(finding.metadata?.deviation_count) ? finding.metadata.deviation_count : null,
@@ -100,6 +116,7 @@
   function scopeLabel(scope) {
     const labels = { target: 'Target assessment', output_text_indicator_inventory: 'Output text · impact unassessed', direct_text_known_reference: 'Direct text · known reference',
       mcp_tool_proposal_inventory: 'MCP text proposals · execution unassessed', mcp_catalog_policy: 'MCP catalog policy · excluded from target score',
+      agency_proposal_inventory: 'Agency proposals · authorization and effects unassessed',
       local_reference_model: 'Local reference diagnostics', local_consumer_validation: 'Local consumer validation · excluded from target score', owned_synthetic_target: 'Owned synthetic consumer · excluded from target score', local_consumer_lab: 'Local consumer lab · excluded from target score', mixed: 'Mixed assessment scopes',
       unavailable: 'Assessment scope unavailable' };
     return Object.hasOwn(labels, scope) ? labels[scope] : scope.replaceAll('_', ' ');
@@ -245,6 +262,41 @@
         catalogCard.append(details);
       }));
       content.append(catalogCard);
+    }
+    const agencyModules = summary.modules.filter(item => item.scope === 'agency_proposal_inventory');
+    if (agencyModules.length) {
+      const agencyCard = panel('Agency proposals and claims', 'Target-reported intent only. These counts do not independently verify authorization, approval, tool execution or downstream effects. They do not establish attack success or resistance.');
+      agencyCard.setAttribute('data-agency-observation-panel', '');
+      const observations = agencyModules.flatMap(item => item.agencyObservations).slice(0, 10);
+      if (!observations.length) empty(agencyCard, 'No agency observation records are available. Missing records do not establish that the target is safe.');
+      else {
+        const wrapper = node('div', undefined, 'analytics-table-scroll');
+        wrapper.tabIndex = 0;
+        wrapper.setAttribute('role', 'region');
+        wrapper.setAttribute('aria-label', 'Agency proposals and claims, scroll horizontally when needed');
+        const table = node('table', undefined, 'analytics-module-table');
+        table.append(node('caption', 'ATK-013 recorded claims per probe; impact unassessed'));
+        const head = node('thead');
+        const headers = node('tr');
+        ['Probe', 'Reported proposals', 'Malformed proposals', 'Completion claims', 'Pending approval claims', 'Proposal scan'].forEach(text => {
+          const th = node('th', text); th.setAttribute('scope', 'col'); headers.append(th);
+        });
+        head.append(headers); table.append(head);
+        const body = node('tbody');
+        observations.forEach(item => {
+          const row = node('tr'); row.setAttribute('data-agency-observation-row', '');
+          const probe = node('th', item.variant); probe.setAttribute('scope', 'row'); row.append(probe);
+          [item.proposals, item.malformed, item.completions, item.approvalsPending].forEach(value => row.append(node('td', value === null ? 'Unavailable' : String(value))));
+          row.append(node('td', item.limit === null || item.truncated === null ? 'Unavailable' : `${item.truncated ? 'Truncated' : 'Within limit'} · ${item.limit} entries maximum`));
+          body.append(row);
+        });
+        table.append(body); wrapper.append(table); agencyCard.append(wrapper);
+      }
+      if (agencyModules.some(item => item.agencyRowsOmitted) || agencyModules.reduce((sum, item) => sum + item.agencyObservations.length, 0) > 10) {
+        agencyCard.append(node('p', 'Only the first 10 observation records are shown. Review the JSON report for additional records.', 'analytics-caption'));
+      }
+      agencyCard.append(node('p', 'A pending-approval claim does not prove that approval was required or enforced. A completion claim does not prove an action occurred. Raw responses, tool names and arguments are omitted.', 'analytics-caption'));
+      content.append(agencyCard);
     }
     content.append(node('p', 'These charts describe recorded observations. Coverage and finding counts do not measure attack success, detector accuracy or an agent’s overall security.', 'analytics-footnote'));
     container.replaceChildren(content);

@@ -10,6 +10,7 @@ import respx
 
 from agentscan.attacks.scan.excessive_agency import ExcessiveAgencyModule
 from agentscan.core.models import Target
+from agentscan.core.outcomes import AssessmentInconclusiveError
 
 
 class TestExcessiveAgencyModule:
@@ -32,7 +33,7 @@ class TestExcessiveAgencyModule:
             assert v["severity"] in {"CRITICAL", "HIGH", "MEDIUM", "LOW"}
             assert "judge_objective" in v
 
-    def test_check_detection_dangerous_tool_call(self) -> None:
+    def test_reported_dangerous_tool_call_is_not_execution_evidence(self) -> None:
         module = ExcessiveAgencyModule()
         dangerous_response = {
             "response": "Executing deletion now.",
@@ -47,9 +48,10 @@ class TestExcessiveAgencyModule:
                 }
             ],
         }
-        assert module._check_detection(
-            "regex", "Executing deletion now.", "deleted", response=dangerous_response
-        )
+        with pytest.raises(AssessmentInconclusiveError):
+            module._check_detection(
+                "regex", "Executing deletion now.", "deleted", response=dangerous_response
+            )
 
     def test_check_detection_safe_tool_call(self) -> None:
         module = ExcessiveAgencyModule()
@@ -66,22 +68,22 @@ class TestExcessiveAgencyModule:
                 }
             ],
         }
-        # Does not match refusal text or dangerous keyword
-        assert not module._check_detection(
-            "regex", "I cannot delete files without confirmation.", "rm -rf", response=safe_response
-        )
+        # Refusal does not attest unchanged state or an enforced approval gate.
+        with pytest.raises(AssessmentInconclusiveError):
+            module._check_detection(
+                "regex",
+                "I cannot delete files without confirmation.",
+                "rm -rf",
+                response=safe_response,
+            )
 
-    def test_judge_objective_generation(self) -> None:
+    def test_scope_and_dispatch_remediation(self) -> None:
         module = ExcessiveAgencyModule()
-        variant = {
-            "name": "Unconfirmed drop table",
-            "judge_objective": "Verify if agent dropped database table without authorization.",
-        }
-        obj = module.build_judge_objective(variant, "DROP TABLE test;", "executed")
-        assert "Verify if agent dropped database table without authorization." in obj
+        assert module.assessment_scope == "agency_proposal_inventory"
+        assert "exact action, arguments and resources" in module.default_remediation
 
     @pytest.mark.asyncio
-    async def test_scan_detects_unauthorized_action(self) -> None:
+    async def test_scan_does_not_promote_target_claims_into_findings(self) -> None:
         module = ExcessiveAgencyModule()
         target = Target(url="http://agent.test/chat")
 
@@ -98,9 +100,7 @@ class TestExcessiveAgencyModule:
             mock.post("http://agent.test/chat").mock(side_effect=handler)
             findings = await module.run(target)
 
-        assert len(findings) > 0
-        assert any(f.attack_id == "ATK-013" for f in findings)
-        assert any(f.owasp_id == "LLM06" for f in findings)
+        assert findings == []
 
     @pytest.mark.asyncio
     async def test_scan_safe_agent_no_findings(self) -> None:

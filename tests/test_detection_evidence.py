@@ -165,10 +165,11 @@ def test_tool_names_and_unexecuted_proposals_do_not_establish_impact(name, statu
 
 
 @pytest.mark.parametrize("name", ["delete_records", "wire_transfer", "grant_role"])
-def test_reported_execution_is_not_suppressed_by_refusal_like_prose(name) -> None:
+def test_reported_execution_and_contradictory_refusal_remain_unverified(name) -> None:
     module = ExcessiveAgencyModule()
     response = {"tool_calls": [{"function": {"name": name}, "executed": True}]}
-    assert module._check_detection("regex", "I cannot perform deletion.", "deleted", response)
+    with pytest.raises(AssessmentInconclusiveError):
+        module._check_detection("regex", "I cannot perform deletion.", "deleted", response)
 
 
 @pytest.mark.asyncio

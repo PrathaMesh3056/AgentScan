@@ -3,6 +3,9 @@
 {% block title %}AgentScan AI Security Audit Report · {{ report.target_url }}{% endblock %}
 
 {% block content %}
+{% macro agency_count(value, recognized) -%}
+{{ value if recognized and value is integer and value >= 0 and value <= 1000 else 'Unavailable' }}
+{%- endmacro %}
 <!-- ==========================================
      EXECUTIVE HEADER & BRAND BANNER
      ========================================== -->
@@ -168,6 +171,49 @@
     </table>
     {% else %}
     <p style="font-size: 9pt; color: #64748b;">No module outcome records are available. Per-module coverage is unverified.</p>
+    {% endif %}
+    {% set agency = namespace(present=false, total=0, rows=[]) %}
+    {% for outcome in report.module_outcomes if outcome is mapping and outcome.get('assessment_scope') == 'agency_proposal_inventory' %}
+        {% set agency.present = true %}
+        {% set observations = outcome.get('observations') %}
+        {% if observations is sequence and observations is not string and observations is not mapping %}
+            {% set agency.total = agency.total + observations|length %}
+            {% set agency.rows = (agency.rows + observations[:10])[:10] %}
+        {% endif %}
+    {% endfor %}
+    {% if agency.present %}
+    <section data-agency-observation-panel style="margin-top: 16px;">
+        <h3 style="font-size: 10pt; margin: 16px 0 8px;">Agency proposals and claims</h3>
+        <p style="font-size: 8pt;">Target-reported intent only. These counts do not independently verify authorization, approval, tool execution or downstream effects. They do not establish attack success or resistance.</p>
+        {% if agency.rows %}
+        <table style="width: 100%; border-collapse: collapse; font-size: 8pt;">
+            <caption>ATK-013 recorded claims per probe; impact unassessed</caption>
+            <thead><tr>
+                <th scope="col" style="text-align: left;">Probe</th><th scope="col" style="text-align: left;">Reported proposals</th>
+                <th scope="col" style="text-align: left;">Malformed proposals</th><th scope="col" style="text-align: left;">Completion claims</th>
+                <th scope="col" style="text-align: left;">Pending approval claims</th><th scope="col" style="text-align: left;">Proposal scan</th>
+            </tr></thead>
+            <tbody>
+            {% for observation in agency.rows %}
+                {% set entry = observation if observation is mapping else {} %}
+                {% set recognized = entry.get('criterion_version') == 'atk013-agency-observation-2026-10-18' and entry.get('evidence_source') == 'target_reported_intent' %}
+                <tr data-agency-observation-row>
+                    <th scope="row" style="text-align: left; overflow-wrap: anywhere;">{{ entry.get('variant_id')[:80] if entry.get('variant_id') is string and entry.get('variant_id')|trim else 'Probe unavailable' }}</th>
+                    <td>{{ agency_count(entry.get('reported_proposal_count'), recognized) }}</td>
+                    <td>{{ agency_count(entry.get('malformed_proposal_count'), recognized) }}</td>
+                    <td>{{ agency_count(entry.get('reported_completion_claim_count'), recognized) }}</td>
+                    <td>{{ agency_count(entry.get('reported_approval_pending_count'), recognized) }}</td>
+                    <td>{% if recognized and entry.get('proposal_scan_limit') is integer and entry.get('proposal_scan_limit') == 1000 and entry.get('proposal_scan_truncated') is boolean %}{{ 'Truncated' if entry.get('proposal_scan_truncated') else 'Within limit' }} · 1000 entries maximum{% else %}Unavailable{% endif %}</td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <p style="font-size: 8pt;">No agency observation records are available. Missing records do not establish that the target is safe.</p>
+        {% endif %}
+        {% if agency.total > 10 %}<p style="font-size: 8pt;">Only the first 10 observation records are shown. Review the JSON report for additional records.</p>{% endif %}
+        <p style="font-size: 8pt;">A pending-approval claim does not prove that approval was required or enforced. A completion claim does not prove an action occurred. Raw responses, tool names and arguments are omitted.</p>
+    </section>
     {% endif %}
     {% for outcome in report.module_outcomes %}
     {% if outcome.get('assessment_scope') == 'mcp_catalog_policy' %}

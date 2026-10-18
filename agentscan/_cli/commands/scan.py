@@ -533,6 +533,25 @@ def scan(  # noqa: PLR0913
         else f"SSP class: {_format_ssp_class(report.ssp_class)}"
     )
 
+    agency_outcomes = [
+        outcome
+        for outcome in report.module_outcomes
+        if outcome.get("assessment_scope") == "agency_proposal_inventory"
+    ]
+    if agency_outcomes:
+        records = [
+            item
+            for outcome in agency_outcomes
+            if isinstance(outcome.get("observations"), list)
+            for item in outcome["observations"][:10]
+            if isinstance(item, dict)
+        ][:10]
+        console.print(f"ATK-013: {len(records)} bounded agency response observations recorded.")
+        console.print(
+            "Authorization, approval and actual tool effects are unassessed; "
+            "reported completion or pending approval is not independent evidence."
+        )
+
     # Write JSON output
     if output is not None:
         write_report(report, output)
