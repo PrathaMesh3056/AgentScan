@@ -115,6 +115,30 @@ class TestScanCommand:
         assert result.exit_code == 0, result.output
         assert scan.await_args.args[0].indirect_adapter == "document_v1"
 
+    def test_owned_rag_lab_summary_keeps_fixture_effects_separate(self) -> None:
+        report = _make_report([], 100)
+        report.assessment_scope = "owned_rag_lab"
+        report.tests_selected = report.tests_run = 16
+        report.module_outcomes = [
+            {
+                "module_id": "ATK-008",
+                "module_name": "RAG / Knowledge-Base Poisoning",
+                "assessment_scope": "owned_rag_lab",
+                "status": "COMPLETE",
+                "selected_tests": 16,
+                "executed_tests": 16,
+                "observation_count": 16,
+                "rag_finding_count": 8,
+            }
+        ]
+        report.complete(None, status="COMPLETE")
+        with patch("agentscan.cli.run_scan_multi", new_callable=AsyncMock, return_value=report):
+            result = runner.invoke(app, ["scan", "http://test-agent.example.com/chat"])
+        assert result.exit_code == 0, result.output
+        assert "No customer-target findings were recorded" in result.output
+        assert "8 fixture effects" in result.output
+        assert "excluded from customer-agent findings and score" in result.output
+
     def test_invalid_document_adapter_profile_explains_field_without_starting(
         self, tmp_path
     ) -> None:

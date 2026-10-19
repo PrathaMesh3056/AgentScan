@@ -24,6 +24,7 @@ from agentscan.core.outcomes import (
     execution_ledger,
 )
 from agentscan.core.output_witness import CONSUMER_VALIDATION_SCOPES
+from agentscan.core.rag_witness import RAG_VALIDATION_SCOPES
 from agentscan.core.scorer import calculate_score
 from agentscan.core.ssp_mapper import classify_ssp
 from agentscan.core.trace import recorder
@@ -35,13 +36,14 @@ def _attach_trajectory(report: ScanReport) -> None:
     report.trajectory = trajectory_recorder.turns()
     # Trajectory turns do not carry module attribution. In mixed scans we
     # cannot separate these unverified agency proposals from assessed turns.
-    agency_inventory = any(
-        outcome.get("assessment_scope") == "agency_proposal_inventory"
+    unassessed_trajectory = any(
+        outcome.get("assessment_scope")
+        in {"agency_proposal_inventory", "rag_document_observation"} | RAG_VALIDATION_SCOPES
         for outcome in report.module_outcomes
     )
     report.ssp_class = (
         None
-        if agency_inventory
+        if unassessed_trajectory
         or report.assessment_scope in {"mcp_catalog_policy", "agency_proposal_inventory"}
         else classify_ssp(report.trajectory)
     )
@@ -57,7 +59,13 @@ def _finish(report: ScanReport) -> ScanReport:
         for o in report.module_outcomes
         if o.get("assessment_scope")
         not in CONSUMER_VALIDATION_SCOPES
-        | {"local_reference_model", "mcp_catalog_policy", "agency_proposal_inventory"}
+        | RAG_VALIDATION_SCOPES
+        | {
+            "local_reference_model",
+            "mcp_catalog_policy",
+            "agency_proposal_inventory",
+            "rag_document_observation",
+        }
     )
     scopes = {
         "local_consumer_validation"
@@ -68,6 +76,10 @@ def _finish(report: ScanReport) -> ScanReport:
         if outcome.get("assessment_scope") == "mcp_catalog_policy"
         else "agency_proposal_inventory"
         if outcome.get("assessment_scope") == "agency_proposal_inventory"
+        else "owned_rag_lab"
+        if outcome.get("assessment_scope") in RAG_VALIDATION_SCOPES
+        else "rag_document_observation"
+        if outcome.get("assessment_scope") == "rag_document_observation"
         else "target"
         for outcome in report.module_outcomes
     }
@@ -242,6 +254,13 @@ async def run_scan(target: Target, *, reset_trajectory: bool = True) -> ScanRepo
                 outcome["consumer_finding_count"] = len(findings)
                 outcome["reason"] = (
                     f"{len(findings)} independently observed local consumer effects. "
+                    + str(outcome.get("reason", ""))
+                )
+            elif outcome.get("assessment_scope") in RAG_VALIDATION_SCOPES:
+                outcome["rag_findings"] = [finding.model_dump(mode="json") for finding in findings]
+                outcome["rag_finding_count"] = len(findings)
+                outcome["reason"] = (
+                    f"{len(findings)} owned RAG fixture effects observed; customer impact unassessed. "
                     + str(outcome.get("reason", ""))
                 )
             elif outcome.get("assessment_scope") == "local_reference_model":

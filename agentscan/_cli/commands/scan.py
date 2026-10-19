@@ -484,6 +484,9 @@ def scan(  # noqa: PLR0913
 
     # Keep catalog policy findings separate from agent execution findings.
     catalog_scope = report.assessment_scope == "mcp_catalog_policy"
+    owned_rag_scope = any(
+        outcome.get("assessment_scope") == "owned_rag_lab" for outcome in report.module_outcomes
+    )
     visible_findings = report.findings
     if catalog_scope:
         visible_findings = [
@@ -514,6 +517,8 @@ def scan(  # noqa: PLR0913
         console.print(
             "No catalog deviations recorded; review snapshot coverage and status."
             if catalog_scope
+            else "No customer-target findings were recorded; owned fixture effects appear below."
+            if owned_rag_scope
             else "No findings were recorded in the evaluated tests."
         )
 
@@ -551,6 +556,30 @@ def scan(  # noqa: PLR0913
             "Authorization, approval and actual tool effects are unassessed; "
             "reported completion or pending approval is not independent evidence."
         )
+
+    rag_outcomes = [
+        outcome
+        for outcome in report.module_outcomes
+        if outcome.get("assessment_scope") in {"rag_document_observation", "owned_rag_lab"}
+    ]
+    for outcome in rag_outcomes:
+        scope = outcome["assessment_scope"]
+        observed = outcome.get("observation_count", 0)
+        if scope == "owned_rag_lab":
+            count = outcome.get("rag_finding_count", 0)
+            console.print(
+                f"ATK-008 owned RAG lab: {outcome.get('executed_tests', 0)}/"
+                f"{outcome.get('selected_tests', 0)} assessed; "
+                f"{count} fixture effects; {observed} bounded observations."
+            )
+            console.print(
+                "Owned fixture results are excluded from customer-agent findings and score."
+            )
+        else:
+            console.print(
+                f"ATK-008 document observations: {observed} target-reported responses; "
+                "corpus insertion, retrieval, and answer impact unassessed."
+            )
 
     # Write JSON output
     if output is not None:

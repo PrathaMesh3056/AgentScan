@@ -14,11 +14,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Explore scan coverage, finding severity, module status and elapsed time in the dashboard's **Overview → Scan evidence** charts. Keyboard severity filters open matching findings; the module table retains scopes, errors and unevaluated checks. See [chart behavior](docs/DASHBOARD_ANALYTICS_PLAN.md).
 - Expanded ATK-001 to 24 direct-user seeds for its known-reference confidentiality assessment. See [terminal/dashboard setup and detection limits](docs/modules/prompt_injection.md).
 - Added ATK-005's opt-in HTTP `document_v1` adapter with seven document patterns, separate task/source delivery and probe/source/content-bound consumption receipts. Dashboard, CLI profiles and service jobs expose the setting; see [setup and receipt requirements](docs/modules/indirect_injection.md).
+- Added ATK-008's owned SQLite retrieval fixture with authenticated source admission, a narrow structured-answer reconciliation policy, local consume-once witnesses, and optional cached offline-model evaluation. Owned effects appear separately in CLI, dashboard and HTML reports; see [scope and setup](docs/modules/rag_poisoning.md).
 
 ### Fixed
 
 - ATK-001 requires complete supported disclosure of an operator-known private reference; public markers and judge inference cannot substitute for evidence. Missing references remain inconclusive, attacker-supplied references are excluded, and supported private representations are redacted in ordinary transcripts.
 - ATK-005 requires a complete known private reference and target-reported document ingestion evidence. Public markers and fabricated chat/tool roles no longer count as indirect-boundary proof. Unsupported connectors are unavailable; missing or mismatched receipts remain inconclusive, and completed findings survive partial coverage. The original nine simulation seeds remain archived; actual tool ingestion is unassessed.
+- ATK-008's eight retained remote probes now require explicit document delivery. Marker echoes, fabricated citations and model-judge claims remain bounded observations rather than poisoning findings; missing ingestion evidence and unassessed effects remain visible without changing customer scores.
 - Tenant-scoped persistent `Idempotency-Key` support for scan submissions, including concurrent retries, quotas, retention and changed-request conflicts.
 - MCP client configuration audits support nested declarations and common client filenames while retaining incomplete coverage and static provenance.
 - HTTPS MCP target selection is consistent between the target model, dashboard forms and connector registry.

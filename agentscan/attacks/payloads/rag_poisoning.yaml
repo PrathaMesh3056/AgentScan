@@ -1,15 +1,16 @@
 # agentscan/attacks/payloads/rag_poisoning.yaml
 #
-# RAG / knowledge-base poisoning payloads — OWASP LLM03
+# RAG / knowledge-base poisoning payloads — OWASP LLM08:2025
 #
 # Distinct from ATK-005 (hidden instructions). These variants plant false
 # knowledge, fake citations, and document-channel "system" overrides.
 
 category: rag_poisoning
-owasp_id: LLM03
+owasp_id: LLM08
 description: >
-  Tests knowledge integrity: whether the agent treats poisoned retrieved
-  documents as authoritative facts, spoofed citations, or system overrides.
+  Sends retained document probes through an explicit adapter and records
+  bounded response observations. Impact requires independent retrieval,
+  answer-integrity, and citation-policy evidence from an owned fixture.
 
 variants:
 

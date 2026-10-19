@@ -23,6 +23,41 @@
       limit: recognized && row.proposal_scan_limit === 1000 ? 1000 : null,
     };
   }
+  function ragObservation(value) {
+    const row = object(value) ? value : {};
+    const recognized = row.criterion_version === 'atk008-document-observation-2026-10-18' &&
+      row.evidence_source === 'target_reported_document_response';
+    const readable = recognized && typeof row.response_text_available === 'boolean' ? row.response_text_available : null;
+    return {
+      variant: label(row.variant_id, 'Probe unavailable').slice(0, 80),
+      receipt: recognized && ['correlated', 'missing', 'invalid', 'mismatched'].includes(row.receipt_status) ? row.receipt_status : null,
+      readable,
+      marker: readable === true && typeof row.seed_indicator_present === 'boolean' ? row.seed_indicator_present : null,
+    };
+  }
+  const ragEffects = { answer_integrity_violation: 'Answer integrity violation', citation_policy_violation: 'Citation policy violation' };
+  const ragDispositions = { forbidden_effect: 'Forbidden effect recorded', assessed_no_effect: 'No forbidden effect observed', policy_rejected: 'Rejected by fixture policy' };
+  function ownedRagObservation(value) {
+    const row = object(value) ? value : {};
+    const profile = typeof row.local_profile === 'string' && /^[A-Za-z0-9_.-]{1,64}$/.test(row.local_profile) ? row.local_profile : null;
+    const sha256 = value => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
+    const digest = sha256(row.independent_evidence_sha256) ? row.independent_evidence_sha256 : null;
+    const disposition = typeof row.witness_disposition === 'string' && Object.hasOwn(ragDispositions, row.witness_disposition) ? row.witness_disposition : null;
+    const effect = typeof row.local_effect === 'string' && Object.hasOwn(ragEffects, row.local_effect) ? row.local_effect : null;
+    const consistent = disposition === 'forbidden_effect' ? effect !== null : disposition !== null && row.local_effect === null;
+    const recognized = row.assessment_scope === 'owned_rag_lab' &&
+      row.criterion_version === 'atk008-document-observation-2026-10-18' &&
+      row.evidence_source === 'target_reported_document_response' &&
+      profile !== null && sha256(row.source_sha256) && sha256(row.response_sha256) &&
+      digest !== null && consistent;
+    return {
+      variant: label(row.variant_id, 'Probe unavailable').slice(0, 80),
+      profile: recognized ? profile : null,
+      disposition: recognized ? ragDispositions[disposition] : null,
+      effect: recognized ? effect === null ? 'No forbidden effect recorded' : ragEffects[effect] : null,
+      evidence: recognized ? digest.slice(0, 12) : null,
+    };
+  }
 
   function coverage(selected, evaluated) {
     const available = count(selected) && count(evaluated) && evaluated <= selected;
@@ -68,6 +103,13 @@
         agencyObservations: Array.isArray(row.observations) && row.assessment_scope === 'agency_proposal_inventory'
           ? row.observations.slice(0, 10).map(agencyObservation) : [],
         agencyRowsOmitted: row.assessment_scope === 'agency_proposal_inventory' && Array.isArray(row.observations) && row.observations.length > 10,
+        ragObservations: Array.isArray(row.observations) && row.assessment_scope === 'rag_document_observation'
+          ? row.observations.slice(0, 8).map(ragObservation) : [],
+        ragRowsOmitted: row.assessment_scope === 'rag_document_observation' && Array.isArray(row.observations) && row.observations.length > 8,
+        ownedRagObservations: Array.isArray(row.observations) && row.assessment_scope === 'owned_rag_lab'
+          ? row.observations.slice(0, 64).map(ownedRagObservation) : [],
+        ownedRagRowsOmitted: row.assessment_scope === 'owned_rag_lab' && Array.isArray(row.observations) && row.observations.length > 64,
+        ragFindingCount: row.assessment_scope === 'owned_rag_lab' && count(row.rag_finding_count) && row.rag_finding_count <= 64 ? row.rag_finding_count : null,
         catalogFindings: Array.isArray(row.catalog_findings) ? row.catalog_findings.filter(object).slice(0, 100).map(finding => ({
           description: safeReason(finding.description).slice(0, 2000),
           deviationCount: count(finding.metadata?.deviation_count) ? finding.metadata.deviation_count : null,
@@ -117,6 +159,8 @@
     const labels = { target: 'Target assessment', output_text_indicator_inventory: 'Output text · impact unassessed', direct_text_known_reference: 'Direct text · known reference',
       mcp_tool_proposal_inventory: 'MCP text proposals · execution unassessed', mcp_catalog_policy: 'MCP catalog policy · excluded from target score',
       agency_proposal_inventory: 'Agency proposals · authorization and effects unassessed',
+      rag_document_observation: 'RAG document responses · poisoning and impact unassessed',
+      owned_rag_lab: 'Owned RAG fixture validation · excluded from customer security score',
       local_reference_model: 'Local reference diagnostics', local_consumer_validation: 'Local consumer validation · excluded from target score', owned_synthetic_target: 'Owned synthetic consumer · excluded from target score', local_consumer_lab: 'Local consumer lab · excluded from target score', mixed: 'Mixed assessment scopes',
       unavailable: 'Assessment scope unavailable' };
     return Object.hasOwn(labels, scope) ? labels[scope] : scope.replaceAll('_', ' ');
@@ -297,6 +341,76 @@
       }
       agencyCard.append(node('p', 'A pending-approval claim does not prove that approval was required or enforced. A completion claim does not prove an action occurred. Raw responses, tool names and arguments are omitted.', 'analytics-caption'));
       content.append(agencyCard);
+    }
+    const ragModules = summary.modules.filter(item => item.scope === 'rag_document_observation');
+    if (ragModules.length) {
+      const ragCard = panel('RAG document response observations', 'A receipt is target-reported correlation only. It cannot prove corpus insertion, retrieval ranking, source authenticity or false-fact endorsement. Corpus poisoning, causal attribution and downstream impact remain unassessed.');
+      ragCard.setAttribute('data-rag-observation-panel', '');
+      const observations = ragModules.flatMap(item => item.ragObservations).slice(0, 8);
+      if (!observations.length) empty(ragCard, 'No document observation records are available. Missing records do not establish that the target is safe.');
+      else {
+        const wrapper = node('div', undefined, 'analytics-table-scroll');
+        wrapper.tabIndex = 0;
+        wrapper.setAttribute('role', 'region');
+        wrapper.setAttribute('aria-label', 'RAG document response observations, scroll horizontally when needed');
+        const table = node('table', undefined, 'analytics-module-table');
+        table.append(node('caption', 'ATK-008 recorded document responses per probe; impact unassessed'));
+        const head = node('thead');
+        const headers = node('tr');
+        ['Probe', 'Receipt status', 'Seed indicator present', 'Readable response text'].forEach(text => {
+          const th = node('th', text); th.setAttribute('scope', 'col'); headers.append(th);
+        });
+        head.append(headers); table.append(head);
+        const body = node('tbody');
+        observations.forEach(item => {
+          const row = node('tr'); row.setAttribute('data-rag-observation-row', '');
+          const probe = node('th', item.variant); probe.setAttribute('scope', 'row'); row.append(probe);
+          row.append(node('td', item.receipt ?? 'Unavailable'));
+          [item.marker, item.readable].forEach(value => row.append(node('td', value === null ? 'Unavailable' : value ? 'Yes' : 'No')));
+          body.append(row);
+        });
+        table.append(body); wrapper.append(table); ragCard.append(wrapper);
+      }
+      if (ragModules.some(item => item.ragRowsOmitted) || ragModules.reduce((sum, item) => sum + item.ragObservations.length, 0) > 8) {
+        ragCard.append(node('p', 'Only the first 8 observation records are shown. Review the JSON report for additional records.', 'analytics-caption'));
+      }
+      ragCard.append(node('p', 'A seed indicator is a text observation only. It does not prove the target accepted a false fact. Raw source documents, receipts and response text are omitted.', 'analytics-caption'));
+      content.append(ragCard);
+    }
+    const ownedRagModules = summary.modules.filter(item => item.scope === 'owned_rag_lab');
+    if (ownedRagModules.length) {
+      const ownedCard = panel('Local RAG validation effects', 'These effects apply only to the declared owned application fixture and its independently instrumented policy. They are excluded from customer findings and the customer security score. They are not remote attestation or evidence of general corpus poisoning, retrieval ranking or source authenticity.');
+      ownedCard.setAttribute('data-owned-rag-panel', '');
+      ownedRagModules.forEach(item => ownedCard.append(node('p', `${item.ragFindingCount === null ? 'Unavailable' : item.ragFindingCount} owned fixture effect finding(s).`, 'analytics-caption')));
+      const observations = ownedRagModules.flatMap(item => item.ownedRagObservations).slice(0, 64);
+      if (!observations.length) empty(ownedCard, 'No owned fixture evidence records are available. Missing records do not establish that a policy was enforced.');
+      else {
+        const wrapper = node('div', undefined, 'analytics-table-scroll');
+        wrapper.tabIndex = 0;
+        wrapper.setAttribute('role', 'region');
+        wrapper.setAttribute('aria-label', 'Owned RAG fixture policy evidence, scroll horizontally when needed');
+        const table = node('table', undefined, 'analytics-module-table');
+        table.append(node('caption', 'Owned fixture case outcomes; customer-agent efficacy remains unassessed'));
+        const head = node('thead');
+        const headers = node('tr');
+        ['Case', 'Declared local profile', 'Witness disposition', 'Observed fixture effect', 'Evidence SHA256 prefix'].forEach(text => {
+          const th = node('th', text); th.setAttribute('scope', 'col'); headers.append(th);
+        });
+        head.append(headers); table.append(head);
+        const body = node('tbody');
+        observations.forEach(item => {
+          const row = node('tr'); row.setAttribute('data-owned-rag-row', '');
+          const probe = node('th', item.variant); probe.setAttribute('scope', 'row'); row.append(probe);
+          [item.profile, item.disposition, item.effect, item.evidence].forEach(value => row.append(node('td', value ?? 'Unavailable')));
+          body.append(row);
+        });
+        table.append(body); wrapper.append(table); ownedCard.append(wrapper);
+      }
+      if (ownedRagModules.some(item => item.ownedRagRowsOmitted) || ownedRagModules.reduce((sum, item) => sum + item.ownedRagObservations.length, 0) > 64) {
+        ownedCard.append(node('p', 'Only the first 64 owned fixture records are shown. Review the JSON report for additional records.', 'analytics-caption'));
+      }
+      ownedCard.append(node('p', 'Owned fixture witnesses are independent of target-reported receipt correlation. Missing remote receipts do not invalidate a valid local witness. Raw documents, responses and evidence journals are omitted.', 'analytics-caption'));
+      content.append(ownedCard);
     }
     content.append(node('p', 'These charts describe recorded observations. Coverage and finding counts do not measure attack success, detector accuracy or an agent’s overall security.', 'analytics-footnote'));
     container.replaceChildren(content);
