@@ -16,6 +16,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from agentscan.core.factuality import FactualityBaseline
 from agentscan.core.mcp_inventory import McpInventoryBaseline
 
 
@@ -274,6 +275,34 @@ class Target(BaseModel):
         default=None,
         description="Approved MCP catalog; selects only ATK-006 catalog comparison, without tool invocation.",
     )
+    factuality_baseline: FactualityBaseline | None = Field(
+        default=None,
+        description="Independently approved exact-answer policy; selects only ATK-009 factuality checks.",
+    )
+
+    @model_validator(mode="after")
+    def factuality_profile(self):
+        if self.factuality_baseline is not None:
+            if self.factuality_baseline.target_url != self.url:
+                raise ValueError("Factuality baseline must exactly match the selected target URL.")
+            if self.mcp_inventory_baseline is not None:
+                raise ValueError("Factuality and MCP catalog baselines cannot be combined.")
+            if self.browser is not None or self.request_template is not None:
+                raise ValueError(
+                    "Factuality comparison cannot use browser or captured-request overrides."
+                )
+            if self.mode != ScanMode.SCAN or self.analysis_mode != "deterministic":
+                raise ValueError("Factuality comparison requires deterministic SCAN mode.")
+            if (
+                self.mutate
+                or self.retry_state_changing_requests
+                or self.indirect_adapter is not None
+                or any((self.attacker_model, self.judge_model, self.escalation_model))
+            ):
+                raise ValueError(
+                    "Factuality comparison cannot use retries, mutations, document adapters or role models."
+                )
+        return self
 
     @model_validator(mode="after")
     def mcp_inventory_profile(self):

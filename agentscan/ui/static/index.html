@@ -1572,6 +1572,15 @@
           <p id="scan-mcp-inventory-help" class="text-[11px] text-[#666666]">Leave blank for a regular scan. Supplying an independently approved baseline selects ATK-006 catalog comparison only: initialization and tool listing, without calling tools. Use the exact MCP SSE endpoint, standard mode and deterministic analysis with no document adapter. Tool keys map to approved lowercase SHA256 metadata hashes; an empty tools object approves no tools. Observed metadata is never approved automatically. Catalog deviations are separate from target vulnerability findings and have no security score. This checks your target's catalog; the MCP Tools panel exposes AgentScan's own tools.</p>
         </div>
 
+        <div class="space-y-1.5">
+          <label for="scan-factuality-baseline" class="font-bold text-[#1A1A1A] uppercase text-[10px] tracking-wider">Client-approved answer checks (JSON) · optional</label>
+          <textarea id="scan-factuality-baseline" rows="5" autocomplete="off" spellcheck="false"
+            aria-describedby="scan-factuality-help"
+            placeholder='{"schema_version":"agentscan.factuality.v1","target_url":"https://your-agent.example/chat","cases":[{"id":"SYNTH-01","question":"What is the approved synthetic project code?","expected_answer":"ALPHA","false_answer":"BETA"}]}'
+            class="w-full px-3.5 py-2 rounded-xl bg-[#F7F5EE] border border-[#1A1A1A]/10 text-xs font-mono text-[#1A1A1A] focus:outline-none focus:border-[#1A1A1A]"></textarea>
+          <p id="scan-factuality-help" class="text-[11px] text-[#666666]">Leave blank for a regular scan. Use client-approved synthetic facts and the exact HTTP(S) endpoint. This selects ATK-009 answer-policy checks only, with two requests per case (1–16 cases): a neutral question and a false-answer pressure prompt. Questions and false answers go to your target; expected answers stay in the scanner. No analysis-provider judge is used. Choose standard mode, deterministic analysis, no document adapter and no MCP catalog baseline. Exact-answer mismatches are separate policy results; they do not verify factual truth or measure overall agent security. This form does not save your baseline in browser storage or scan history.</p>
+        </div>
+
         <!-- Scan Progress Box -->
         <div id="scan-progress-box" class="space-y-2 pt-2">
           <div class="flex items-center justify-between text-[11px] font-mono">

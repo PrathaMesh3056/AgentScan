@@ -18,6 +18,8 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import contextvars
+import hashlib
+import json
 from typing import Any
 
 from agentscan.core.connectors import Connector, select_connector
@@ -134,11 +136,37 @@ class AgentScanClient:
         else:
             resp = await self._connector.send_message(message, extra_body)
 
-        trajectory_recorder.record(message, resp)
-        if recorder.enabled:
-            recorder.record("message", message, resp)
+        self._record_exchange("message", message, resp)
         _validate_response(resp)
         return resp
+
+    def _record_exchange(self, kind: str, payload: str, response: dict[str, Any]) -> None:
+        if self.target.factuality_baseline is not None:
+            # Approved facts and unexpected target answers may be sensitive.
+            # This profile retains digests even when ordinary redaction is off.
+            if recorder.enabled:
+                request_bytes = payload.encode("utf-8", errors="replace")
+                try:
+                    response_bytes = json.dumps(
+                        response, sort_keys=True, ensure_ascii=True, allow_nan=False
+                    ).encode("utf-8")
+                    reply = (
+                        f"[factuality response sha256={hashlib.sha256(response_bytes).hexdigest()}; "
+                        f"bytes={len(response_bytes)}]"
+                    )
+                except (TypeError, ValueError, RecursionError, UnicodeError):
+                    reply = "[factuality response omitted: no serializable digest]"
+                recorder.record(
+                    kind,
+                    f"[factuality request sha256={hashlib.sha256(request_bytes).hexdigest()}; "
+                    f"bytes={len(request_bytes)}]",
+                    {"response": reply},
+                    redact=False,
+                )
+            return
+        trajectory_recorder.record(payload, response)
+        if recorder.enabled:
+            recorder.record(kind, payload, response)
 
     async def inspect_mcp_tools(self) -> list[dict[str, Any]] | None:
         """Inspect the selected connector's snapshot without calling any tool.
@@ -162,9 +190,14 @@ class AgentScanClient:
                 )
         else:
             resp = await self._connector.send_indirect_document(task, document, probe_id, source_id)
-        trajectory_recorder.record(task, resp)
-        if recorder.enabled:
-            recorder.record("indirect_document", task + "\n[untrusted document]\n" + document, resp)
+        if self.target.factuality_baseline is not None:
+            self._record_exchange("indirect_document", task + "\n" + document, resp)
+        else:
+            trajectory_recorder.record(task, resp)
+            if recorder.enabled:
+                recorder.record(
+                    "indirect_document", task + "\n[untrusted document]\n" + document, resp
+                )
         _validate_response(resp)
         return resp
 
@@ -182,9 +215,13 @@ class AgentScanClient:
             (m.get("content", "") for m in reversed(messages) if m.get("role") == "user"),
             " || ".join(f"{m.get('role')}: {m.get('content', '')}" for m in messages),
         )
-        trajectory_recorder.record(payload, resp)
-        if recorder.enabled:
+        if self.target.factuality_baseline is not None:
             rendered = " || ".join(f"{m.get('role')}: {m.get('content', '')}" for m in messages)
-            recorder.record("conversation", rendered, resp)
+            self._record_exchange("conversation", rendered, resp)
+        else:
+            trajectory_recorder.record(payload, resp)
+            if recorder.enabled:
+                rendered = " || ".join(f"{m.get('role')}: {m.get('content', '')}" for m in messages)
+                recorder.record("conversation", rendered, resp)
         _validate_response(resp)
         return resp

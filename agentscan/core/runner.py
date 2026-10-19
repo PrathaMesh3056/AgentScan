@@ -33,12 +33,21 @@ from agentscan.telemetry.otel import observe_scan
 
 
 def _attach_trajectory(report: ScanReport) -> None:
-    report.trajectory = trajectory_recorder.turns()
+    factuality_policy = any(
+        outcome.get("assessment_scope") == "factuality_policy" for outcome in report.module_outcomes
+    )
+    report.trajectory = [] if factuality_policy else trajectory_recorder.turns()
     # Trajectory turns do not carry module attribution. In mixed scans we
     # cannot separate these unverified agency proposals from assessed turns.
     unassessed_trajectory = any(
         outcome.get("assessment_scope")
-        in {"agency_proposal_inventory", "rag_document_observation"} | RAG_VALIDATION_SCOPES
+        in {
+            "agency_proposal_inventory",
+            "rag_document_observation",
+            "overreliance_response_inventory",
+            "factuality_policy",
+        }
+        | RAG_VALIDATION_SCOPES
         for outcome in report.module_outcomes
     )
     report.ssp_class = (
@@ -65,6 +74,8 @@ def _finish(report: ScanReport) -> ScanReport:
             "mcp_catalog_policy",
             "agency_proposal_inventory",
             "rag_document_observation",
+            "overreliance_response_inventory",
+            "factuality_policy",
         }
     )
     scopes = {
@@ -80,6 +91,10 @@ def _finish(report: ScanReport) -> ScanReport:
         if outcome.get("assessment_scope") in RAG_VALIDATION_SCOPES
         else "rag_document_observation"
         if outcome.get("assessment_scope") == "rag_document_observation"
+        else "overreliance_response_inventory"
+        if outcome.get("assessment_scope") == "overreliance_response_inventory"
+        else "factuality_policy"
+        if outcome.get("assessment_scope") == "factuality_policy"
         else "target"
         for outcome in report.module_outcomes
     }
@@ -117,6 +132,22 @@ async def run_scan(target: Target, *, reset_trajectory: bool = True) -> ScanRepo
             }
         )
     report = ScanReport(target_url=target.url, scan_mode=target.mode, framework=target.framework)
+    if target.factuality_baseline is not None:
+        try:
+            target = Target.model_validate(target.model_dump(warnings=False))
+        except ValueError:
+            report.module_outcomes.append(
+                {
+                    "module_id": "ATK-009",
+                    "module_name": "Approved-answer policy",
+                    "assessment_scope": "factuality_policy",
+                    "status": "INCONCLUSIVE",
+                    "selected_tests": 0,
+                    "executed_tests": 0,
+                    "reason": "Invalid approved-answer profile; no target connection was opened.",
+                }
+            )
+            return _finish(report)
     if target.mcp_inventory_baseline is not None:
         try:
             # model_copy does not run validators. Reject alternate connectors
@@ -247,6 +278,15 @@ async def run_scan(target: Target, *, reset_trajectory: bool = True) -> ScanRepo
                     + str(outcome.get("reason", ""))
                 )
                 findings = []
+            elif outcome.get("assessment_scope") == "factuality_policy":
+                outcome["policy_findings"] = [
+                    finding.model_dump(mode="json") for finding in findings
+                ]
+                outcome["policy_finding_count"] = len(findings)
+                outcome["reason"] = (
+                    f"{len(findings)} approved-answer deviations; factual truth, causation and "
+                    "agent compromise are unassessed. " + str(outcome.get("reason", ""))
+                )
             elif outcome.get("assessment_scope") in CONSUMER_VALIDATION_SCOPES:
                 outcome["consumer_findings"] = [
                     finding.model_dump(mode="json") for finding in findings
@@ -325,6 +365,21 @@ async def run_scan_multi(target: Target, modes: list[ScanMode]) -> ScanReport:
         scan_mode=modes[0] if modes else target.mode,
         framework=target.framework,
     )
+    if target.factuality_baseline is not None:
+        if modes != [ScanMode.SCAN]:
+            merged.module_outcomes.append(
+                {
+                    "module_id": "ATK-009",
+                    "module_name": "Approved-answer policy",
+                    "assessment_scope": "factuality_policy",
+                    "status": "INCONCLUSIVE",
+                    "selected_tests": 0,
+                    "executed_tests": 0,
+                    "reason": "Approved-answer assessment requires SCAN alone; no target connection was opened.",
+                }
+            )
+            return _finish(merged)
+        return await run_scan(target, reset_trajectory=False)
     if target.mcp_inventory_baseline is not None:
         # Never enter eager browser setup or additional modes for this profile.
         if modes != [ScanMode.SCAN]:

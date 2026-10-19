@@ -152,7 +152,8 @@
     const selected = observations ? observations.coverage.selected : validCounts ? selectedCount : null;
     const scope = observations ? observations.scope : typeof report.assessment_scope === 'string' ? report.assessment_scope : 'unavailable';
     const numeric = typeof report.score === 'number' && Number.isFinite(report.score);
-    const score = numeric && evaluated > 0 && ['COMPLETE', 'INCONCLUSIVE'].includes(status) && scope !== 'local_reference_model'
+    const score = numeric && evaluated > 0 && ['COMPLETE', 'INCONCLUSIVE'].includes(status) &&
+      !['local_reference_model', 'factuality_policy', 'overreliance_response_inventory'].includes(scope)
       ? Math.max(0, Math.min(100, Math.round(report.score))) : null;
     const outcomes = Array.isArray(report.module_outcomes) ? report.module_outcomes.map(item => item && typeof item === 'object' ? item : { status: 'UNAVAILABLE', reason: 'Malformed module record. Review the JSON report.' }) : [];
     const referenceCount = Array.isArray(report.reference_observations) ? report.reference_observations.length : 0;
@@ -165,6 +166,12 @@
       : 'This older report has no explicit execution status. Treat coverage as unverified.';
     if (scope === 'local_reference_model') {
       detail = 'Local reference-model diagnostics do not assess this remote target. Target score is unavailable.';
+    }
+    if (scope === 'factuality_policy') {
+      detail = 'These checks compare responses with client-approved exact answers. Policy mismatches do not verify factual truth or downstream security impact. Target score is unavailable.';
+    }
+    if (scope === 'overreliance_response_inventory') {
+      detail = 'These probes record response indicators. Factual truth, tool execution and downstream impact remain unassessed. Target score is unavailable.';
     }
     if (selected === null || evaluated === null) detail = observations?.coverage.reason || 'Coverage counts are unavailable or inconsistent. Review the JSON report.';
     return { status, tone, score, selected, evaluated, referenceCount, outcomes, scope, detail };

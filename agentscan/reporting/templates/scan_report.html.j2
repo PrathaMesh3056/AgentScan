@@ -3,6 +3,8 @@
 {% block title %}AgentScan AI Security Audit Report · {{ report.target_url }}{% endblock %}
 
 {% block content %}
+{% set policy_only = report.assessment_scope in ['factuality_policy', 'overreliance_response_inventory'] %}
+{% set display_score = none if policy_only else report.score %}
 {% macro agency_count(value, recognized) -%}
 {{ value if recognized and value is integer and value >= 0 and value <= 1000 else 'Unavailable' }}
 {%- endmacro %}
@@ -62,25 +64,25 @@
 <div style="display: table; width: 100%; margin-bottom: 20px;">
     <!-- Score Column -->
     <div style="display: table-cell; width: 36%; vertical-align: top; padding-right: 12px;">
-        <div class="card" style="height: 100%; margin-bottom: 0; text-align: center; padding: 22px 16px; border-left: 5px solid {% if report.score is none %}#64748b{% elif report.score >= 80 %}#16a34a{% elif report.score >= 50 %}#d97706{% else %}#dc2626{% endif %};">
+        <div class="card" style="height: 100%; margin-bottom: 0; text-align: center; padding: 22px 16px; border-left: 5px solid {% if display_score is none %}#64748b{% elif display_score >= 80 %}#16a34a{% elif display_score >= 50 %}#d97706{% else %}#dc2626{% endif %};">
             <div style="font-size: 8.5pt; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; color: #64748b;">
                 AgentScan Score
             </div>
-            <div style="font-size: 42pt; font-weight: 900; line-height: 1; margin: 10px 0; color: {% if report.score is none %}#475569{% elif report.score >= 80 %}#16a34a{% elif report.score >= 50 %}#d97706{% else %}#dc2626{% endif %};">
-                {{ report.score if report.score is not none else 'N/A' }}<span style="font-size: 16pt; font-weight: 600; color: #94a3b8;">/100</span>
+            <div style="font-size: 42pt; font-weight: 900; line-height: 1; margin: 10px 0; color: {% if display_score is none %}#475569{% elif display_score >= 80 %}#16a34a{% elif display_score >= 50 %}#d97706{% else %}#dc2626{% endif %};">
+                {{ display_score if display_score is not none else 'N/A' }}<span style="font-size: 16pt; font-weight: 600; color: #94a3b8;">/100</span>
                 {% if report.calibration and not report.calibration.passed %}
                 <div style="color: var(--sev-critical); font-size: 11pt; font-weight: bold; margin-top: 4px;">[UNRELIABLE]</div>
                 {% endif %}
             </div>
 
             <div>
-                <span class="badge {% if report.score is none %}badge-neutral{% elif report.score >= 80 %}badge-low{% elif report.score >= 50 %}badge-medium{% else %}badge-critical{% endif %}" style="font-size: 8.5pt; padding: 4px 12px;">
-                    {{ score_band }}
+                <span class="badge {% if display_score is none %}badge-neutral{% elif display_score >= 80 %}badge-low{% elif display_score >= 50 %}badge-medium{% else %}badge-critical{% endif %}" style="font-size: 8.5pt; padding: 4px 12px;">
+                    {{ 'UNSCORED SCOPE' if policy_only else score_band }}
                 </span>
             </div>
 
             <div style="margin-top: 14px; font-size: 8pt; color: #64748b; line-height: 1.4;">
-                {% if report.status != 'COMPLETE' or report.score is none %}
+                {% if report.status != 'COMPLETE' or display_score is none %}
                 Coverage is {{ report.status|lower }}. An unavailable target score cannot establish safety.
                 {% else %}
                 This score summarizes finding weights within evaluated checks. It does not estimate attack resistance, detector accuracy or overall security.
@@ -312,6 +314,84 @@
         {% endif %}
         {% if owned_rag.total > 64 %}<p style="font-size: 8pt;">Only the first 64 owned fixture records are shown. Review the JSON report for additional records.</p>{% endif %}
         <p style="font-size: 8pt;">Owned fixture witnesses are independent of target-reported receipt correlation. Missing remote receipts do not invalidate a valid local witness. Raw documents, responses and evidence journals are omitted.</p>
+    </section>
+    {% endif %}
+    {% set factuality = namespace(present=false, rows=[], total=0, counts=[]) %}
+    {% set overreliance = namespace(present=false, rows=[], total=0) %}
+    {% for outcome in report.module_outcomes if outcome is mapping and outcome.get('module_id') == 'ATK-009' %}
+        {% set observations = outcome.get('observations') %}
+        {% if outcome.get('assessment_scope') == 'factuality_policy' %}
+            {% set factuality.present = true %}
+            {% set factuality.counts = factuality.counts + [outcome.get('policy_finding_count')] %}
+            {% if observations is sequence and observations is not string and observations is not mapping %}
+                {% set factuality.total = factuality.total + observations|length %}
+                {% set factuality.rows = (factuality.rows + observations[:32])[:32] %}
+            {% endif %}
+        {% elif outcome.get('assessment_scope') == 'overreliance_response_inventory' %}
+            {% set overreliance.present = true %}
+            {% if observations is sequence and observations is not string and observations is not mapping %}
+                {% set overreliance.total = overreliance.total + observations|length %}
+                {% set overreliance.rows = (overreliance.rows + observations[:8])[:8] %}
+            {% endif %}
+        {% endif %}
+    {% endfor %}
+    {% if factuality.present %}
+    <section data-factuality-policy-panel style="margin: 16px 0;">
+        <h3 style="font-size: 10pt;">Client-approved answer policy results</h3>
+        <p style="font-size: 8pt;">These deterministic checks compare complete responses with client-approved exact answers. A mismatch is a policy result; factual truth, causal attribution and downstream security impact remain unassessed. Results are excluded from target vulnerability findings and security scores.</p>
+        {% for amount in factuality.counts %}<p style="font-size: 8pt;">{{ amount if amount is integer and amount >= 0 and amount <= 32 else 'Unavailable' }} approved-answer policy mismatch(es).</p>{% endfor %}
+        {% if factuality.rows %}
+        <table style="width: 100%; border-collapse: collapse; font-size: 8pt;">
+            <caption>ATK-009 exact-answer comparisons; factual truth unassessed</caption>
+            <thead><tr><th scope="col">Case</th><th scope="col">Request arm</th><th scope="col">Policy result</th><th scope="col">Response SHA256 prefix</th></tr></thead>
+            <tbody>
+            {% for observation in factuality.rows %}
+                {% set entry = observation if observation is mapping else {} %}
+                {% set valid = namespace(identity=true, digests=true) %}
+                {% set identity = entry.get('case_id') %}
+                {% if identity is not string or identity|length < 1 or identity|length > 64 %}{% set valid.identity = false %}
+                {% else %}{% for char in identity %}{% if char not in 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_.-' %}{% set valid.identity = false %}{% endif %}{% endfor %}{% endif %}
+                {% for key in ['baseline_sha256', 'question_sha256', 'request_sha256', 'response_sha256'] %}
+                    {% set digest = entry.get(key) %}
+                    {% if key == 'response_sha256' and digest is none %}
+                    {% elif digest is not string or digest|length != 64 %}{% set valid.digests = false %}
+                    {% else %}{% for char in digest %}{% if char not in '0123456789abcdef' %}{% set valid.digests = false %}{% endif %}{% endfor %}{% endif %}
+                {% endfor %}
+                {% set response_bytes = entry.get('response_bytes') %}
+                {% set valid_bytes = response_bytes is none or (response_bytes is integer and response_bytes >= 0 and response_bytes <= 16777216) %}
+                {% set arm_labels = {'neutral':'Neutral question', 'false_answer_pressure':'False-answer pressure'} %}
+                {% set outcome_labels = {'expected_answer':'Matches approved answer', 'answer_mismatch':'Approved-answer mismatch', 'inconclusive':'Inconclusive'} %}
+                {% set arm = entry.get('arm') %}{% set result = entry.get('outcome') %}
+                {% set recognized = entry.get('assessment_scope') == 'factuality_policy' and entry.get('criterion_version') == 'atk009-factuality-exact-v1' and entry.get('evidence_source') == 'operator_approved_exact_answer_comparison' and entry.get('security_impact') == 'unassessed' and entry.get('causal_attribution_verified') is sameas false and valid.identity and valid.digests and valid_bytes and arm is string and arm in arm_labels and result is string and result in outcome_labels and (result == 'inconclusive' or (entry.get('response_sha256') is string and response_bytes is integer)) %}
+                <tr data-factuality-policy-row><th scope="row">{{ identity if recognized else 'Unavailable' }}</th><td>{{ arm_labels[arm] if recognized else 'Unavailable' }}</td><td>{{ outcome_labels[result] if recognized else 'Unavailable' }}</td><td>{{ entry.get('response_sha256')[:12] if recognized and entry.get('response_sha256') is string else 'Unavailable' }}</td></tr>
+            {% endfor %}
+            </tbody>
+        </table>
+        {% else %}<p style="font-size: 8pt;">No approved-answer observation records are available. Missing records do not establish that an answer policy was enforced.</p>{% endif %}
+        {% if factuality.total > 32 %}<p style="font-size: 8pt;">Only the first 32 approved-answer records are shown. Review the JSON report for additional records.</p>{% endif %}
+        <p style="font-size: 8pt;">Questions, approved answers, false answers and raw responses are omitted.</p>
+    </section>
+    {% endif %}
+    {% if overreliance.present %}
+    <section data-overreliance-inventory-panel style="margin: 16px 0;">
+        <h3 style="font-size: 10pt;">Overreliance response inventory</h3>
+        <p style="font-size: 8pt;">These legacy probes record readable text, seed indicators and target-reported tool proposals. Factual truth, tool execution, causal attribution and downstream impact remain unassessed. A text indicator does not prove hallucination or a security violation.</p>
+        {% if overreliance.rows %}
+        <table style="width: 100%; border-collapse: collapse; font-size: 8pt;">
+            <caption>ATK-009 response observations; impact unassessed</caption>
+            <thead><tr><th scope="col">Probe</th><th scope="col">Readable response text</th><th scope="col">Seed indicator present</th><th scope="col">Reported tool proposals</th></tr></thead>
+            <tbody>
+            {% for observation in overreliance.rows %}
+                {% set entry = observation if observation is mapping else {} %}
+                {% set recognized = entry.get('criterion_version') == 'atk009-response-inventory-v1' and entry.get('evidence_source') == 'target_reported_response' and entry.get('tool_execution_verified') is sameas false and entry.get('causal_attribution_verified') is sameas false and entry.get('downstream_impact') == 'unassessed' %}
+                {% set identity = entry.get('variant_id') %}{% set readable = entry.get('response_text_available') %}{% set marker = entry.get('seed_indicator_present') %}{% set proposals = entry.get('reported_tool_proposal_count') %}
+                <tr data-overreliance-inventory-row><th scope="row">{{ (identity|trim)[:80] if identity is string and identity|trim else 'Probe unavailable' }}</th><td>{{ 'Yes' if recognized and readable is sameas true else 'No' if recognized and readable is sameas false else 'Unavailable' }}</td><td>{{ 'Yes' if recognized and readable is sameas true and marker is sameas true else 'No' if recognized and readable is sameas true and marker is sameas false else 'Unavailable' }}</td><td>{{ proposals if recognized and proposals is integer and proposals >= 0 and proposals <= 100 else 'Unavailable' }}</td></tr>
+            {% endfor %}
+            </tbody>
+        </table>
+        {% else %}<p style="font-size: 8pt;">No response inventory records are available. Missing records do not establish that the target is safe.</p>{% endif %}
+        {% if overreliance.total > 8 %}<p style="font-size: 8pt;">Only the first 8 response inventory records are shown. Review the JSON report for additional records.</p>{% endif %}
+        <p style="font-size: 8pt;">Raw responses and tool names or arguments are omitted. Use an approved baseline for exact-answer policy checks.</p>
     </section>
     {% endif %}
     {% for outcome in report.module_outcomes %}

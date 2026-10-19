@@ -9,6 +9,7 @@ from urllib.parse import urlsplit
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from agentscan.core.egress import canonical_origin
+from agentscan.core.factuality import FactualityBaseline
 
 ScanState = Literal["queued", "running", "completed", "inconclusive", "failed", "cancelled"]
 TERMINAL_STATES = frozenset({"completed", "inconclusive", "failed", "cancelled"})
@@ -52,6 +53,7 @@ class ScanRequest(BaseModel):
     scan_mode: Literal["SCAN", "EXPLOIT", "DEEP"] = "SCAN"
     system_prompt: str | None = Field(default=None, max_length=65536)
     indirect_adapter: Literal["document_v1"] | None = None
+    factuality_baseline: FactualityBaseline | None = None
     framework: str = "auto"
     timeout: int = Field(default=30, ge=5, le=300)
     concurrency: int | None = Field(default=None, ge=1, le=50)
@@ -63,6 +65,16 @@ class ScanRequest(BaseModel):
     def sensitive_analysis_policy(self):
         if self.analysis_mode == "external" and self.data_classification != "non_sensitive":
             raise ValueError("External analysis is blocked for sensitive scans.")
+        if self.factuality_baseline is not None and (
+            self.factuality_baseline.target_url != self.target_url
+            or self.scan_mode != "SCAN"
+            or self.analysis_mode != "deterministic"
+            or self.indirect_adapter is not None
+        ):
+            raise ValueError(
+                "Approved-answer checks require their exact target URL, deterministic SCAN "
+                "and no document adapter."
+            )
         return self
 
     @field_validator("headers")

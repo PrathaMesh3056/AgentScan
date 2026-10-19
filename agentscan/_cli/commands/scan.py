@@ -235,7 +235,26 @@ def scan(  # noqa: PLR0913
     if config is not None:
         import yaml
 
-        cfg = yaml.safe_load(config.read_text(encoding="utf-8")) or {}
+        from agentscan.core.factuality import unique_json_object
+
+        class ProfileLoader(yaml.SafeLoader):
+            pass
+
+        def unique_mapping(loader: yaml.SafeLoader, node: yaml.MappingNode) -> dict[str, Any]:
+            return unique_json_object(loader.construct_pairs(node, deep=True))
+
+        ProfileLoader.add_constructor(
+            yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, unique_mapping
+        )
+        try:
+            decoded = yaml.load(config.read_text(encoding="utf-8"), Loader=ProfileLoader)
+            if decoded is not None and not isinstance(decoded, dict):
+                raise ValueError
+            cfg = decoded or {}
+        except (OSError, UnicodeError, yaml.YAMLError, ValueError, TypeError, RecursionError):
+            raise typer.BadParameter(
+                "Target profile must be readable YAML with a unique-key mapping; review its fields."
+            ) from None
 
     exploit = exploit or bool(cfg.get("exploit"))
     deep = deep or bool(cfg.get("deep"))
@@ -338,6 +357,22 @@ def scan(  # noqa: PLR0913
     explicit_analysis = analysis_mode is not None or "analysis_mode" in cfg
     analysis_mode = analysis_mode or cfg.get("analysis_mode") or "deterministic"
     mcp_baseline = cfg.get("mcp_inventory_baseline")
+    factuality_baseline = cfg.get("factuality_baseline")
+    if factuality_baseline is not None and (
+        analysis_mode != "deterministic"
+        or exploit
+        or deep
+        or mutate
+        or calibrate
+        or calibrate_required
+        or attacker_model
+        or judge_model
+        or escalation_model
+    ):
+        raise typer.BadParameter(
+            "factuality_baseline selects approved-answer SCAN: use deterministic analysis "
+            "without exploit/deep, mutations, calibration or role models."
+        )
     if mcp_baseline is not None and (
         analysis_mode != "deterministic"
         or exploit
@@ -413,10 +448,15 @@ def scan(  # noqa: PLR0913
             escalation_turns=escalation_turns,
             mutate=mutate,
             mcp_inventory_baseline=mcp_baseline,
+            factuality_baseline=factuality_baseline,
         )
     except ValidationError:
         raise typer.BadParameter(
-            "Invalid mcp_inventory_baseline: use the exact MCP target endpoint, supported "
+            "Invalid factuality_baseline: provide a matching HTTP(S) target_url and 1–16 "
+            "unique approved cases with question, expected_answer and a different false_answer; "
+            "use deterministic SCAN without connector overrides."
+            if factuality_baseline is not None
+            else "Invalid mcp_inventory_baseline: use the exact MCP target endpoint, supported "
             "algorithm and an independently approved map of tool names to SHA256 hashes; "
             "browser and captured-request overrides are unsupported."
             if mcp_baseline is not None
@@ -484,6 +524,7 @@ def scan(  # noqa: PLR0913
 
     # Keep catalog policy findings separate from agent execution findings.
     catalog_scope = report.assessment_scope == "mcp_catalog_policy"
+    factuality_scope = report.assessment_scope == "factuality_policy"
     owned_rag_scope = any(
         outcome.get("assessment_scope") == "owned_rag_lab" for outcome in report.module_outcomes
     )
@@ -494,9 +535,19 @@ def scan(  # noqa: PLR0913
             for outcome in report.module_outcomes
             for finding in outcome.get("catalog_findings", [])
         ]
+    elif factuality_scope:
+        visible_findings = [
+            Finding.model_validate(finding)
+            for outcome in report.module_outcomes
+            for finding in outcome.get("policy_findings", [])
+        ]
     if visible_findings:
         table = Table(
-            title="MCP Catalog Policy Deviations" if catalog_scope else "AgentScan Findings",
+            title="MCP Catalog Policy Deviations"
+            if catalog_scope
+            else "Approved-Answer Policy Deviations"
+            if factuality_scope
+            else "AgentScan Findings",
             show_lines=True,
         )
         table.add_column("Attack ID", style="cyan", no_wrap=True)
@@ -517,6 +568,8 @@ def scan(  # noqa: PLR0913
         console.print(
             "No catalog deviations recorded; review snapshot coverage and status."
             if catalog_scope
+            else "No approved-answer deviations recorded; review assessed coverage and errors."
+            if factuality_scope
             else "No customer-target findings were recorded; owned fixture effects appear below."
             if owned_rag_scope
             else "No findings were recorded in the evaluated tests."
@@ -527,6 +580,8 @@ def scan(  # noqa: PLR0913
     score_val = report.score if report.score is not None else "N/A"
     if catalog_scope:
         console.print("\nMCP catalog policy comparison; overall agent security is unassessed.")
+    elif factuality_scope:
+        console.print("\nApproved-answer policy comparison; overall agent security is unassessed.")
     else:
         console.print(f"\nAgentScan Score: {score_val}/100  [{band}]")
     console.print(
@@ -535,6 +590,8 @@ def scan(  # noqa: PLR0913
     console.print(
         "SSP class: Unassessed (catalog-only comparison)"
         if catalog_scope
+        else "SSP class: Unassessed (approved-answer policy comparison)"
+        if factuality_scope
         else f"SSP class: {_format_ssp_class(report.ssp_class)}"
     )
 
@@ -556,6 +613,13 @@ def scan(  # noqa: PLR0913
             "Authorization, approval and actual tool effects are unassessed; "
             "reported completion or pending approval is not independent evidence."
         )
+
+    for outcome in report.module_outcomes:
+        if outcome.get("assessment_scope") == "overreliance_response_inventory":
+            console.print(
+                f"ATK-009 response inventory: {outcome.get('observation_count', 0)} bounded "
+                "observations; factual truth, authorization and tool execution unassessed."
+            )
 
     rag_outcomes = [
         outcome

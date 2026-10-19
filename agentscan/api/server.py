@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import os
 import uuid
 from collections.abc import AsyncIterator
@@ -26,8 +27,9 @@ from datetime import UTC, datetime
 from typing import Annotated, Any
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Response, status
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import RedirectResponse, StreamingResponse
+from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
 from loguru import logger
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -54,6 +56,7 @@ from agentscan.api.limits import RequestBodyLimit
 from agentscan.api.policy import authorize_target, tenant_policies
 from agentscan.api.queue import check_redis, ensure_consumer_groups
 from agentscan.core.canary import canary_manager
+from agentscan.core.factuality import unique_json_object
 from agentscan.telemetry.otel import get_metrics_response
 
 # ── Pydantic request/response schemas ─────────────────────────────────────────
@@ -157,6 +160,22 @@ def create_api_app() -> FastAPI:
     )
     app.add_middleware(RequestBodyLimit)
 
+    @app.exception_handler(RequestValidationError)
+    async def safe_request_validation(
+        request: Request, error: RequestValidationError
+    ) -> JSONResponse:
+        # Pydantic's default HTTP error includes the rejected input, which may
+        # contain client-approved facts or credentials. Retain field identity only.
+        known = set(ScanRequest.model_fields) | set(TokenRequest.model_fields)
+        details = []
+        for item in error.errors()[:32]:
+            location = item.get("loc", ())
+            field = location[1] if len(location) > 1 and location[1] in known else "request"
+            details.append(
+                {"loc": ["body", field], "msg": "Invalid request field.", "type": "value_error"}
+            )
+        return JSONResponse({"detail": details}, status_code=422)
+
     @app.get("/", include_in_schema=False)
     async def root() -> RedirectResponse:
         """Redirect root path to interactive Swagger UI documentation."""
@@ -180,10 +199,17 @@ def create_api_app() -> FastAPI:
     )
     async def enqueue_scan_endpoint(
         req: ScanRequest,
+        request: Request,
         idempotency_key: Annotated[list[str] | None, Header()] = None,
         tenant_id: str = Depends(get_current_tenant),
     ) -> ScanEnqueuedResponse:
         """Submit a new scan job. Returns immediately with a scan_id."""
+        try:
+            json.loads(await request.body(), object_pairs_hook=unique_json_object)
+        except (ValueError, UnicodeDecodeError, RecursionError):
+            raise HTTPException(
+                status_code=422, detail="Scan request JSON requires unique object keys."
+            ) from None
         scan_id = str(uuid.uuid4())
         now = datetime.now(UTC)
         key = None
@@ -223,6 +249,8 @@ def create_api_app() -> FastAPI:
         if req.indirect_adapter is None:
             # Preserve prior admission fingerprints for clients without this capability.
             target_payload.pop("indirect_adapter")
+        if req.factuality_baseline is None:
+            target_payload.pop("factuality_baseline")
         job = {"scan_id": scan_id, "tenant_id": tenant_id, "target": target_payload}
         scan_status = "queued"
         replayed = False

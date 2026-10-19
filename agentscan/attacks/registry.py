@@ -122,6 +122,8 @@ class AttackRegistry:
             # the server's first tool via another attack module.
             if target.mcp_inventory_baseline is not None and module.attack_id != "ATK-006":
                 continue
+            if target.factuality_baseline is not None and module.attack_id != "ATK-009":
+                continue
             try:
                 if module.is_applicable(target):
                     modules.append(copy.deepcopy(module))

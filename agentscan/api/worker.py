@@ -137,6 +137,7 @@ async def _run_one_job(stream_name: str, entry_id: str, raw_job: dict[str, Any])
                 extra_headers=t.headers,
                 system_prompt=t.system_prompt,
                 indirect_adapter=t.indirect_adapter,
+                factuality_baseline=t.factuality_baseline,
                 allowed_hosts=sorted(allowed_target_hosts()),
                 allowed_origins=policy.origins,
                 allowed_networks=policy.networks,

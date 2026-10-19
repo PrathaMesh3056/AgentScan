@@ -86,6 +86,18 @@ receipts are inconclusive. This module uses deterministic evidence without a jud
 Omitting the adapter, or sending `null`, preserves the previous canonical admission
 request shape; opting in changes its identity for `Idempotency-Key` retries.
 
+Optional `factuality_baseline` selects only ATK-009's [approved-answer policy
+checks](modules/overreliance.md#approved-baseline). Use the same baseline JSON
+object shown in that guide, with `target_url` exactly matching the enrolled scan
+target, `scan_mode: "SCAN"`, deterministic analysis and no document adapter.
+Expected answers are processed by AgentScan and omitted from target probe prompts;
+questions and supplied wrong answers are sent to the target. The persisted job
+configuration is encrypted. Reported policy deviations remain separate from
+security findings and scores. An absent or null baseline preserves the previous
+admission shape; a changed baseline changes the idempotency request identity.
+Duplicate JSON keys and invalid fields are rejected without reflecting submitted
+facts in validation responses.
+
 ### Retrying a submission
 
 Clients that may retry `POST /scans` should generate a unique key for each intended scan and send it in the `Idempotency-Key` header. For example, `Idempotency-Key: scan-request-20261007-001`. Keep that key and the same request when retrying after a lost response or connection failure.

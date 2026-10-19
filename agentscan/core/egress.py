@@ -190,6 +190,9 @@ async def enrolled_request(
             consume_target_request()
         response = await client.send(request, follow_redirects=False, stream=True)
         next_request = response.next_request
+        if next_request is not None and target.factuality_baseline is not None:
+            await response.aclose()
+            raise ValueError("Approved-answer endpoint redirects are not permitted.")
         if next_request is None:
             try:
                 if (

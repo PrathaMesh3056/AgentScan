@@ -129,6 +129,7 @@ async def test_optional_document_adapter_preserves_legacy_admission_payload(
     stored = persist.await_args.args[0]["target"]
     legacy = ScanRequest(target_url=body["target_url"]).model_dump()
     legacy.pop("indirect_adapter")
+    legacy.pop("factuality_baseline")
     if adapter is None:
         assert stored == legacy
     else:

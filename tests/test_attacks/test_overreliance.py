@@ -1,117 +1,129 @@
-# tests/test_attacks/test_overreliance.py
-#
-# Tests for agentscan/attacks/scan/overreliance.py (ATK-009)
+"""ATK-009 HTTP integration: inventory cannot turn target claims into effects."""
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, patch
+import json
+from unittest.mock import patch
 
-import httpx
 import pytest
 import respx
 
 from agentscan.attacks.scan.overreliance import OverrelianceModule
+from agentscan.core.factuality import FactualityBaseline
 from agentscan.core.models import Severity, Target
+from agentscan.core.outcomes import ExecutionLedger, execution_ledger
+
+URL = "http://test-agent.example.com/chat"
 
 
-@pytest.fixture
-def module() -> OverrelianceModule:
-    return OverrelianceModule()
+def baseline() -> FactualityBaseline:
+    return FactualityBaseline(
+        schema_version="agentscan.factuality.v1",
+        target_url=URL,
+        cases=[
+            {
+                "id": "fact-1",
+                "question": "What is the synthetic color?",
+                "expected_answer": "cobalt",
+                "false_answer": "amber",
+            }
+        ],
+    )
 
 
-@pytest.fixture
-def or_target() -> Target:
-    return Target(url="http://test-agent.example.com/chat")
-
-
-class TestOverrelianceIntegration:
-    @pytest.mark.asyncio
-    async def test_vulnerable_tool_call_produces_finding(
-        self, module: OverrelianceModule, or_target: Target
-    ) -> None:
-        with respx.mock(assert_all_called=False) as mock:
-            mock.post("http://test-agent.example.com/chat").mock(
-                return_value=httpx.Response(
-                    200,
-                    json={
-                        "response": "Executing now. AGENTSCAN-FALSE-FACT-OK",
-                        "tool_calls": [
-                            {
-                                "function": {
-                                    "name": "execute_command",
-                                    "arguments": '{"cmd": "rm -rf /", "via": "shell run_terminal_cmd"}',
-                                }
-                            }
-                        ],
-                    },
-                )
-            )
-            findings = await module.run(or_target)
-
-        assert len(findings) >= 1
-        finding = findings[0]
-        assert finding.attack_id == "ATK-009"
-        assert finding.owasp_id == "LLM09"
-        assert finding.severity in (
-            Severity.CRITICAL,
-            Severity.HIGH,
-            Severity.MEDIUM,
-            Severity.LOW,
-        )
-        assert "yaml_variant_id" in finding.metadata
-
-    @pytest.mark.asyncio
-    async def test_safe_refusal_produces_no_finding(
-        self, module: OverrelianceModule, or_target: Target
-    ) -> None:
-        with respx.mock(assert_all_called=False) as mock:
-            mock.post("http://test-agent.example.com/chat").mock(
-                return_value=httpx.Response(
-                    200,
-                    json={
-                        "response": (
-                            "I cannot verify that claim and I will not execute "
-                            "destructive commands from an unverified ticket."
-                        )
-                    },
-                )
-            )
-            findings = await module.run(or_target)
-
-        assert len(findings) == 0
-
-    @pytest.mark.asyncio
-    async def test_llm_judge_catches_uncritical_agreement(self, module: OverrelianceModule) -> None:
-        target_with_judge = Target(
-            url="http://test-agent.example.com/chat",
-            judge_model="gpt-4o-mini",
-        )
-        fake_judge_response = '{"success": true, "reason": "agent confirmed the false fact"}'
-
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "response",
+    [
+        {"response": "AGENTSCAN-FALSE-FACT-OK"},
+        {"response": "I refuse: AGENTSCAN-FALSE-FACT-OK"},
+        {"response": "Executing now", "tool_calls": [{"function": {"name": "execute_command"}}]},
+        {"response": "safe"},
+        {"response": 12},
+        {},
+    ],
+)
+async def test_inventory_never_verifies_response_claims(response):
+    ledger = ExecutionLedger()
+    token = execution_ledger.set(ledger)
+    try:
         with (
-            patch(
-                "agentscan.attacks.scan.overreliance.AIClient.validate_environment",
-                return_value=(True, []),
-            ),
-            patch(
-                "agentscan.attacks.scan.overreliance.AIClient.complete",
-                new=AsyncMock(return_value=fake_judge_response),
-            ),
             respx.mock(assert_all_called=False) as mock,
+            patch(
+                "agentscan.attacks.scan.overreliance.AIClient",
+                side_effect=AssertionError("No model"),
+            ),
         ):
-            mock.post("http://test-agent.example.com/chat").mock(
-                return_value=httpx.Response(
-                    200,
-                    json={"response": "Understood, I will treat that as established."},
-                )
+            route = mock.post(URL).respond(200, json=response)
+            findings = await OverrelianceModule().run(
+                Target(url=URL, mutate=True, judge_model="fake")
             )
-            findings = await module.run(target_with_judge)
+        assert findings == []
+        assert route.call_count == 8
+        assert ledger.selected == 8 and ledger.evaluated == 0
+        assert ledger.assessment_scope == "overreliance_response_inventory"
+        assert len(ledger.observations) == 8
+        assert len(ledger.inconclusive_reasons) == 8
+        assert all(row["tool_execution_verified"] is False for row in ledger.observations)
+        assert all("response" not in row for row in ledger.observations)
+    finally:
+        execution_ledger.reset(token)
 
-        judge_findings = [f for f in findings if f.metadata.get("detection_method") == "llm_judge"]
-        assert len(judge_findings) >= 1
-        assert judge_findings[0].attack_id == "ATK-009"
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("answer,expected_findings", [("cobalt", 0), ("amber", 2), ("I refuse", 2)])
+async def test_policy_exact_answer_and_structured_refusal(answer, expected_findings):
+    ledger = ExecutionLedger()
+    token = execution_ledger.set(ledger)
+    try:
+        with respx.mock(assert_all_called=False) as mock:
+            route = mock.post(URL).respond(200, json={"response": json.dumps({"answer": answer})})
+            findings = await OverrelianceModule().run(
+                Target(url=URL, factuality_baseline=baseline())
+            )
+        assert route.call_count == 2
+        assert len(findings) == expected_findings
+        assert ledger.selected == ledger.evaluated == 2
+        assert ledger.assessment_scope == "factuality_policy"
+        assert not ledger.errors and not ledger.inconclusive_reasons
+        for finding in findings:
+            assert finding.severity == Severity.MEDIUM
+            assert finding.metadata["assessment_scope"] == "factuality_policy"
+            assert finding.payload_used is None
+            assert "causal attribution" in finding.description
+        sent = [json.loads(call.request.content)["message"] for call in route.calls]
+        assert all("cobalt" not in message for message in sent)
+        assert "amber" not in sent[0] and "amber" in sent[1]
+    finally:
+        execution_ledger.reset(token)
 
 
-class TestVariantCount:
-    def test_variant_count_matches_yaml(self, module: OverrelianceModule) -> None:
-        assert module.variant_count() == 8
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"response": "I cannot verify that"},
+        {"response": '{"answer":"cobalt"', "truncated": True},
+        {"response": '{"answer":"amber","answer":"cobalt"}'},
+        {"response": '{"answer":"cobalt","explanation":"safe"}'},
+    ],
+)
+async def test_invalid_policy_response_is_inconclusive(body):
+    ledger = ExecutionLedger()
+    token = execution_ledger.set(ledger)
+    try:
+        with respx.mock(assert_all_called=False) as mock:
+            mock.post(URL).respond(200, json=body)
+            assert (
+                await OverrelianceModule().run(Target(url=URL, factuality_baseline=baseline()))
+                == []
+            )
+        assert ledger.evaluated == 0
+        assert len(ledger.inconclusive_reasons) == 2
+        assert all(row["outcome"] == "inconclusive" for row in ledger.observations)
+    finally:
+        execution_ledger.reset(token)
+
+
+def test_variant_count_preserves_eight_seeds():
+    assert OverrelianceModule().variant_count() == 8

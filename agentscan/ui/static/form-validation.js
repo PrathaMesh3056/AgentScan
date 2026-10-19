@@ -12,7 +12,7 @@
     descriptor(`${prefix}-external-consent`, 'data_classification', 'consent', { when: 'external' })
   ];
   const definitions = {
-    scan: [descriptor('scan-target-url', 'target_url', 'url', { protocols: scanRemote }), descriptor('scan-mode', 'mode', 'choice', { choices: ['FAST', 'ACTIVE', 'DEEP'] }), descriptor('scan-concurrency', 'concurrency', 'integer', { min: 1, max: 10 }), descriptor('scan-canary-token', 'canary_token', 'canary', { optional: true }), descriptor('scan-indirect-adapter', 'indirect_adapter', 'choice', { choices: ['none', 'document_v1'] }), descriptor('scan-mcp-inventory-baseline', 'mcp_inventory_baseline', 'mcpBaseline', { optional: true }), ...analysis('scan')],
+    scan: [descriptor('scan-target-url', 'target_url', 'url', { protocols: scanRemote }), descriptor('scan-mode', 'mode', 'choice', { choices: ['FAST', 'ACTIVE', 'DEEP'] }), descriptor('scan-concurrency', 'concurrency', 'integer', { min: 1, max: 10 }), descriptor('scan-canary-token', 'canary_token', 'canary', { optional: true }), descriptor('scan-indirect-adapter', 'indirect_adapter', 'choice', { choices: ['none', 'document_v1'] }), descriptor('scan-mcp-inventory-baseline', 'mcp_inventory_baseline', 'mcpBaseline', { optional: true }), descriptor('scan-factuality-baseline', 'factuality_baseline', 'factualityBaseline', { optional: true }), ...analysis('scan')],
     discovery: [descriptor('discovery-target', 'url', 'url', { protocols: remote }), descriptor('discovery-mode', 'mode', 'choice', { choices: ['auto', 'http', 'browser'] }), descriptor('discovery-auto-probe', 'allow_probe', 'boolean')],
     audit: [descriptor('audit-codebase-path', 'path', 'path'), descriptor('audit-ruleset', 'ruleset', 'choice', { choices: ['default'] }),
       descriptor('audit-offline', 'offline', 'boolean'), descriptor('audit-show-transitive', 'show_transitive', 'boolean'),
@@ -30,6 +30,47 @@
   };
   const text = value => typeof value === 'string' ? value.trim() : '';
   const bytes = value => typeof TextEncoder !== 'undefined' ? new TextEncoder().encode(value).length : value.length;
+
+  function uniqueJSON(value) {
+    const parsed = JSON.parse(value);
+    let position = 0;
+    const space = () => { while (/\s/.test(value[position] || '') && position < value.length) position++; };
+    const string = () => {
+      const start = position++;
+      while (position < value.length) {
+        if (value[position] === '\\') { position += 2; continue; }
+        if (value[position++] === '"') return JSON.parse(value.slice(start, position));
+      }
+      throw new Error('Invalid JSON');
+    };
+    const visit = depth => {
+      if (depth > 32) throw new Error('JSON nesting limit');
+      space();
+      if (value[position] === '{') {
+        position++; space();
+        const keys = new Set();
+        if (value[position] === '}') { position++; return; }
+        do {
+          space(); const key = string();
+          if (keys.has(key)) throw new Error('Duplicate JSON key');
+          keys.add(key); space(); position++; visit(depth + 1); space();
+          if (value[position] === '}') { position++; return; }
+          position++;
+        } while (position < value.length);
+      } else if (value[position] === '[') {
+        position++; space();
+        if (value[position] === ']') { position++; return; }
+        do {
+          visit(depth + 1); space();
+          if (value[position] === ']') { position++; return; }
+          position++;
+        } while (position < value.length);
+      } else if (value[position] === '"') string();
+      else while (position < value.length && !/[\s,}\]]/.test(value[position])) position++;
+    };
+    visit(0);
+    return parsed;
+  }
 
   function endpoint(value, protocols) {
     const raw = text(value);
@@ -82,6 +123,30 @@
         return { value: parsed };
       } catch { return { error }; }
     }
+    if (spec.type === 'factualityBaseline') {
+      const error = 'Use approved answer-check JSON with schema_version agentscan.factuality.v1, an exact HTTP(S) target_url and 1–16 unique ASCII case IDs; each case needs a question (1–2048 characters), expected_answer and a different false_answer (1–512 characters each). Extra or duplicate keys are not accepted.';
+      if (bytes(raw) > 262144) return { error: 'Use approved answer-check JSON of at most 256 KB.' };
+      try {
+        const parsed = uniqueJSON(value);
+        const object = item => item !== null && typeof item === 'object' && !Array.isArray(item);
+        const exactKeys = (item, keys) => object(item) && Object.keys(item).length === keys.length && keys.every(key => Object.hasOwn(item, key));
+        const boundedText = (item, limit) => typeof item === 'string' && item.trim().length > 0 && [...item].length <= limit &&
+          ![...item].some(char => char.length === 1 && char.charCodeAt(0) >= 0xD800 && char.charCodeAt(0) <= 0xDFFF);
+        if (!exactKeys(parsed, ['schema_version', 'target_url', 'cases']) || parsed.schema_version !== 'agentscan.factuality.v1' ||
+            typeof parsed.target_url !== 'string' || !/^https?:\/\//.test(parsed.target_url) || parsed.target_url.length > 8192 ||
+            /[\s\x00-\x1f\x7f\\]/.test(parsed.target_url) || !Array.isArray(parsed.cases) || parsed.cases.length < 1 || parsed.cases.length > 16) return { error };
+        const parsedURL = new URL(parsed.target_url);
+        if (!parsedURL.hostname || parsedURL.username || parsedURL.password || parsedURL.hash || parsedURL.port === '0') return { error };
+        const ids = new Set();
+        for (const item of parsed.cases) {
+          if (!exactKeys(item, ['id', 'question', 'expected_answer', 'false_answer']) || typeof item.id !== 'string' ||
+              !/^[A-Za-z0-9_.-]{1,64}$/.test(item.id) || ids.has(item.id) || !boundedText(item.question, 2048) ||
+              !boundedText(item.expected_answer, 512) || !boundedText(item.false_answer, 512) || item.expected_answer === item.false_answer) return { error };
+          ids.add(item.id);
+        }
+        return { value: parsed };
+      } catch { return { error }; }
+    }
     if (value.length > (spec.max || 65536) || value.includes('\0')) return { error: 'Use text within the field size limit without null characters.' };
     return { value };
   }
@@ -91,6 +156,7 @@
     const aliases = { target: 'target_url', max_rounds: 'max_rounds', rounds: 'max_rounds', interval: 'interval_seconds', name: 'tool', model: workflow === 'swarm' ? 'local_model' : 'model', attacker_model: workflow === 'calibration' ? 'model' : 'local_model', strategy: 'team', vulnerability_type: 'vulnerability_type', data_classification: 'data_classification' };
     if (key.startsWith('arguments.')) key = 'arguments';
     if (key.startsWith('mcp_inventory_baseline.')) key = 'mcp_inventory_baseline';
+    if (key.startsWith('factuality_baseline.')) key = 'factuality_baseline';
     if (workflow === 'discovery' && ['target', 'target_url'].includes(key)) key = 'url';
     const normalized = aliases[key] || key;
     return specs(workflow).find(spec => spec.field === normalized) || (key === 'body' ? specs(workflow)[0] : null);
@@ -143,6 +209,12 @@
         errors.mcp_inventory_baseline = 'Catalog-only checks require the exact MCP SSE endpoint, standard mode, deterministic analysis and no document adapter.';
       }
     }
+    if (workflow === 'scan' && values.factuality_baseline) {
+      if (!/^https?:\/\//.test(values.target_url || '') || values.factuality_baseline.target_url !== values.target_url ||
+          values.mode !== 'FAST' || mode !== 'deterministic' || values.indirect_adapter !== 'none' || values.mcp_inventory_baseline) {
+        errors.factuality_baseline = 'Approved answer checks require the exact HTTP(S) endpoint, standard mode, deterministic analysis, no document adapter and no MCP catalog baseline.';
+      }
+    }
     if (workflow === 'discovery') { values.no_exploit = !values.allow_probe; delete values.allow_probe; }
     if (workflow === 'audit' && !specs('audit').filter(spec => spec.field.startsWith('scan_')).some(spec => values[spec.field] === true)) errors.ruleset = 'Select at least one audit check.';
     if (workflow === 'mcp' && values.arguments) {
@@ -178,6 +250,10 @@
       const update = () => {
         const result = validate(workflow, { render: false });
         renderField(spec, result.errors[spec.field]);
+        if (workflow === 'scan' && ['target_url', 'mode', 'analysis_mode', 'indirect_adapter', 'mcp_inventory_baseline', 'factuality_baseline'].includes(spec.field)) {
+          const baseline = specs(workflow).find(item => item.field === 'factuality_baseline');
+          if (baseline) renderField(baseline, result.errors.factuality_baseline);
+        }
         if (spec.field === 'analysis_mode') {
           specs(workflow).filter(item => item.when && item.when !== element.value).forEach(item => renderField(item, null));
         }

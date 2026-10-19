@@ -16,6 +16,7 @@ from agentscan.core.connectors.http import HttpJsonConnector, RequestTemplateCon
 from agentscan.core.connectors.mcp import McpSseConnector, McpStdioConnector
 from agentscan.core.connectors.websocket import WebSocketConnector
 from agentscan.core.models import Target
+from agentscan.core.outcomes import ModuleUnavailableError
 
 
 class CallableConnector(Connector):
@@ -57,6 +58,10 @@ def select_connector(target: Target) -> Connector:
     """
     forced = _forced_connector_var.get()
     if forced is not None:
+        if target.factuality_baseline is not None:
+            raise ModuleUnavailableError(
+                "Approved-answer profiles do not permit connector overrides."
+            )
         return forced
     if target.browser is not None:
         return BrowserConnector(target)

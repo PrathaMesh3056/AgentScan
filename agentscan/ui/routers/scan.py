@@ -18,6 +18,7 @@ from loguru import logger
 from pydantic import ValidationError
 
 from agentscan.core.ai_client import AIClientError
+from agentscan.core.factuality import FactualityBaseline, unique_json_object
 from agentscan.core.mcp_inventory import McpInventoryBaseline
 from agentscan.core.models import Framework, ScanMode, Target
 from agentscan.ui.state import event_bus, state
@@ -83,6 +84,19 @@ def _operation_failure(error: Exception, operation: str) -> dict[str, str]:
 
 
 @router.post("/api/scan")
+async def _api_start_scan_request(request: Request, payload: dict[str, Any]) -> Any:
+    """Reject ambiguous JSON before approved-answer checks can start."""
+
+    try:
+        json.loads(await request.body(), object_pairs_hook=unique_json_object)
+    except (ValueError, UnicodeDecodeError, RecursionError):
+        field = "factuality_baseline" if "factuality_baseline" in payload else "target_url"
+        return validation_error_response(
+            {field: "Use valid JSON with unique object keys; duplicate keys are not accepted."}
+        )
+    return await api_start_scan(payload)
+
+
 async def api_start_scan(payload: dict[str, Any]) -> Any:
     if state.active_scan is not None and not state.active_scan.done():
         return JSONResponse({"error": "A dashboard scan is already running"}, status_code=409)
@@ -119,6 +133,51 @@ async def api_start_scan(payload: dict[str, Any]) -> Any:
         )
     attacker_turns = fields.integer("attacker_turns", 1, 20)
     baseline = None
+    factuality = None
+    raw_factuality = fields.value("factuality_baseline")
+    if "factuality_baseline" in payload and raw_factuality is not None:
+        try:
+            if (
+                not isinstance(raw_factuality, dict)
+                or len(
+                    json.dumps(raw_factuality, ensure_ascii=False, allow_nan=False).encode("utf-8")
+                )
+                > 262144
+            ):
+                raise ValueError
+            factuality = FactualityBaseline.model_validate(raw_factuality)
+        except (ValidationError, ValueError, TypeError, RecursionError):
+            fields.errors["factuality_baseline"] = (
+                "Provide approved answer-check JSON of at most 256 KB with schema_version "
+                "agentscan.factuality.v1, the exact HTTP(S) target_url, and 1–16 unique ASCII "
+                "case IDs. Each case requires a question (1–2048 characters), expected_answer "
+                "and a different false_answer (1–512 characters each). Extra keys are not accepted."
+            )
+        if factuality is not None and (
+            target_url is None
+            or target_url != factuality.target_url
+            or not target_url.startswith(("http://", "https://"))
+            or mode != "FAST"
+            or exploit
+            or deep
+            or mutate
+            or indirect_adapter != "none"
+            or analysis["analysis_mode"] != "deterministic"
+            or fields.value("mcp_inventory_baseline") is not None
+            or any(optional_text[key] for key in ("attacker_model", "attacker_goal", "judge_model"))
+            or attacker_turns is not None
+            or any(payload.get(key) is not None for key in ("browser", "request_template"))
+            or (
+                payload.get("retry_state_changing_requests") is not None
+                and payload.get("retry_state_changing_requests") is not False
+            )
+        ):
+            fields.errors["factuality_baseline"] = (
+                "Approved answer checks require the exact HTTP(S) endpoint, standard mode and "
+                "deterministic analysis, without MCP catalog checks, active/deep probes, mutation, "
+                "document adapters, browser/captured-request overrides, state-changing retries "
+                "or attacker/judge settings."
+            )
     raw_baseline = fields.value("mcp_inventory_baseline")
     if raw_baseline is not None:
         try:
@@ -177,11 +236,19 @@ async def api_start_scan(payload: dict[str, Any]) -> Any:
                 "mutate": mutate,
                 "concurrency": concurrency,
                 "mcp_inventory_baseline": baseline,
+                "factuality_baseline": factuality,
                 **analysis,
             }
         )
     except ValidationError as error:
         errors = model_field_errors(error)
+        if factuality is not None:
+            errors = {
+                "factuality_baseline"
+                if key == "analysis_mode" or key.startswith("factuality_baseline.")
+                else key: message
+                for key, message in errors.items()
+            }
         if baseline is not None:
             errors = {
                 "mcp_inventory_baseline"

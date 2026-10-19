@@ -188,3 +188,26 @@ async def test_worker_rechecks_external_opt_in_before_model_execution(job_fixtur
     await worker._run_one_job("stream", "1-0", job)
     runner.assert_not_awaited()
     assert worker.finish_scan.await_args.kwargs["status"] == "failed"
+
+
+async def test_worker_forwards_encrypted_approved_answer_profile(job_fixture):
+    job, row, execute = job_fixture
+    baseline = {
+        "schema_version": "agentscan.factuality.v1",
+        "target_url": "http://agent.test/chat",
+        "cases": [
+            {
+                "id": "policy",
+                "question": "SYNTHETIC-CLIENT-QUESTION",
+                "expected_answer": "APPROVED-ANSWER",
+                "false_answer": "FALSE-ANSWER",
+            }
+        ],
+    }
+    job["target"]["factuality_baseline"] = baseline
+    row["request_json"] = encrypt_target(ScanRequest.model_validate(job["target"]).model_dump())
+    await worker._run_one_job("stream", "1-0", job)
+    execute.assert_awaited_once()
+    target = execute.await_args.args[0]
+    assert target.factuality_baseline.model_dump() == baseline
+    assert target.analysis_mode == "deterministic"

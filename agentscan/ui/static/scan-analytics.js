@@ -59,6 +59,38 @@
     };
   }
 
+  const sha256 = value => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
+  const factualityOutcomes = { expected_answer: 'Matches approved answer', answer_mismatch: 'Approved-answer mismatch', inconclusive: 'Inconclusive' };
+  const factualityArms = { neutral: 'Neutral question', false_answer_pressure: 'False-answer pressure' };
+  function factualityObservation(value) {
+    const row = object(value) ? value : {};
+    const recognized = row.assessment_scope === 'factuality_policy' && row.criterion_version === 'atk009-factuality-exact-v1' &&
+      row.evidence_source === 'operator_approved_exact_answer_comparison' && row.security_impact === 'unassessed' &&
+      row.causal_attribution_verified === false && typeof row.case_id === 'string' && /^[A-Za-z0-9_.-]{1,64}$/.test(row.case_id) &&
+      Object.hasOwn(factualityArms, row.arm) && Object.hasOwn(factualityOutcomes, row.outcome) &&
+      ['baseline_sha256', 'question_sha256', 'request_sha256'].every(key => sha256(row[key])) &&
+      (row.response_sha256 === null || sha256(row.response_sha256)) &&
+      (row.response_bytes === null || (count(row.response_bytes) && row.response_bytes <= 16777216)) &&
+      (row.outcome === 'inconclusive' || (sha256(row.response_sha256) && count(row.response_bytes)));
+    return {
+      caseId: recognized ? row.case_id : null,
+      arm: recognized ? factualityArms[row.arm] : null,
+      outcome: recognized ? factualityOutcomes[row.outcome] : null,
+      response: recognized && sha256(row.response_sha256) ? row.response_sha256.slice(0, 12) : null,
+    };
+  }
+  function overrelianceObservation(value) {
+    const row = object(value) ? value : {};
+    const recognized = row.criterion_version === 'atk009-response-inventory-v1' && row.evidence_source === 'target_reported_response' &&
+      row.tool_execution_verified === false && row.causal_attribution_verified === false && row.downstream_impact === 'unassessed';
+    const readable = recognized && typeof row.response_text_available === 'boolean' ? row.response_text_available : null;
+    return {
+      variant: label(row.variant_id, 'Probe unavailable').slice(0, 80),
+      readable, marker: readable === true && typeof row.seed_indicator_present === 'boolean' ? row.seed_indicator_present : null,
+      proposals: recognized && count(row.reported_tool_proposal_count) && row.reported_tool_proposal_count <= 100 ? row.reported_tool_proposal_count : null,
+    };
+  }
+
   function coverage(selected, evaluated) {
     const available = count(selected) && count(evaluated) && evaluated <= selected;
     return { available, selected: available ? selected : null, evaluated: available ? evaluated : null,
@@ -110,6 +142,13 @@
           ? row.observations.slice(0, 64).map(ownedRagObservation) : [],
         ownedRagRowsOmitted: row.assessment_scope === 'owned_rag_lab' && Array.isArray(row.observations) && row.observations.length > 64,
         ragFindingCount: row.assessment_scope === 'owned_rag_lab' && count(row.rag_finding_count) && row.rag_finding_count <= 64 ? row.rag_finding_count : null,
+        factualityObservations: row.module_id === 'ATK-009' && row.assessment_scope === 'factuality_policy' && Array.isArray(row.observations)
+          ? row.observations.slice(0, 32).map(factualityObservation) : [],
+        factualityRowsOmitted: Array.isArray(row.observations) && row.observations.length > 32,
+        policyFindingCount: row.module_id === 'ATK-009' && row.assessment_scope === 'factuality_policy' && count(row.policy_finding_count) && row.policy_finding_count <= 32 ? row.policy_finding_count : null,
+        overrelianceObservations: row.module_id === 'ATK-009' && row.assessment_scope === 'overreliance_response_inventory' && Array.isArray(row.observations)
+          ? row.observations.slice(0, 8).map(overrelianceObservation) : [],
+        overrelianceRowsOmitted: Array.isArray(row.observations) && row.observations.length > 8,
         catalogFindings: Array.isArray(row.catalog_findings) ? row.catalog_findings.filter(object).slice(0, 100).map(finding => ({
           description: safeReason(finding.description).slice(0, 2000),
           deviationCount: count(finding.metadata?.deviation_count) ? finding.metadata.deviation_count : null,
@@ -161,6 +200,8 @@
       agency_proposal_inventory: 'Agency proposals · authorization and effects unassessed',
       rag_document_observation: 'RAG document responses · poisoning and impact unassessed',
       owned_rag_lab: 'Owned RAG fixture validation · excluded from customer security score',
+      factuality_policy: 'Client-approved answer policy · factual truth and security impact unassessed',
+      overreliance_response_inventory: 'Overreliance response inventory · impact unassessed',
       local_reference_model: 'Local reference diagnostics', local_consumer_validation: 'Local consumer validation · excluded from target score', owned_synthetic_target: 'Owned synthetic consumer · excluded from target score', local_consumer_lab: 'Local consumer lab · excluded from target score', mixed: 'Mixed assessment scopes',
       unavailable: 'Assessment scope unavailable' };
     return Object.hasOwn(labels, scope) ? labels[scope] : scope.replaceAll('_', ' ');
@@ -411,6 +452,50 @@
       }
       ownedCard.append(node('p', 'Owned fixture witnesses are independent of target-reported receipt correlation. Missing remote receipts do not invalidate a valid local witness. Raw documents, responses and evidence journals are omitted.', 'analytics-caption'));
       content.append(ownedCard);
+    }
+    const factualityModules = summary.modules.filter(item => item.id === 'ATK-009' && item.scope === 'factuality_policy');
+    if (factualityModules.length) {
+      const card = panel('Client-approved answer policy results', 'These deterministic checks compare complete responses with client-approved exact answers. A mismatch is a policy result; factual truth, causal attribution and downstream security impact remain unassessed. Results are excluded from target vulnerability findings and security scores.');
+      card.setAttribute('data-factuality-policy-panel', '');
+      factualityModules.forEach(item => card.append(node('p', `${item.policyFindingCount === null ? 'Unavailable' : item.policyFindingCount} approved-answer policy mismatch(es).`, 'analytics-caption')));
+      const rows = factualityModules.flatMap(item => item.factualityObservations).slice(0, 32);
+      if (!rows.length) empty(card, 'No approved-answer observation records are available. Missing records do not establish that an answer policy was enforced.');
+      else {
+        const wrapper = node('div', undefined, 'analytics-table-scroll'); wrapper.tabIndex = 0;
+        wrapper.setAttribute('role', 'region'); wrapper.setAttribute('aria-label', 'Client-approved answer policy results, scroll horizontally when needed');
+        const table = node('table', undefined, 'analytics-module-table'); table.append(node('caption', 'ATK-009 exact-answer comparisons; factual truth unassessed'));
+        const head = node('thead'), headers = node('tr');
+        ['Case', 'Request arm', 'Policy result', 'Response SHA256 prefix'].forEach(text => { const th = node('th', text); th.setAttribute('scope', 'col'); headers.append(th); });
+        head.append(headers); table.append(head); const body = node('tbody');
+        rows.forEach(item => { const row = node('tr'); row.setAttribute('data-factuality-policy-row', '');
+          const th = node('th', item.caseId ?? 'Unavailable'); th.setAttribute('scope', 'row'); row.append(th);
+          [item.arm, item.outcome, item.response].forEach(value => row.append(node('td', value ?? 'Unavailable'))); body.append(row); });
+        table.append(body); wrapper.append(table); card.append(wrapper);
+      }
+      if (factualityModules.some(item => item.factualityRowsOmitted) || factualityModules.reduce((total, item) => total + item.factualityObservations.length, 0) > 32) card.append(node('p', 'Only the first 32 approved-answer records are shown. Review the JSON report for additional records.', 'analytics-caption'));
+      card.append(node('p', 'Questions, approved answers, false answers and raw responses are omitted.', 'analytics-caption')); content.append(card);
+    }
+    const overrelianceModules = summary.modules.filter(item => item.id === 'ATK-009' && item.scope === 'overreliance_response_inventory');
+    if (overrelianceModules.length) {
+      const card = panel('Overreliance response inventory', 'These legacy probes record readable text, seed indicators and target-reported tool proposals. Factual truth, tool execution, causal attribution and downstream impact remain unassessed. A text indicator does not prove hallucination or a security violation.');
+      card.setAttribute('data-overreliance-inventory-panel', '');
+      const rows = overrelianceModules.flatMap(item => item.overrelianceObservations).slice(0, 8);
+      if (!rows.length) empty(card, 'No response inventory records are available. Missing records do not establish that the target is safe.');
+      else {
+        const wrapper = node('div', undefined, 'analytics-table-scroll'); wrapper.tabIndex = 0;
+        wrapper.setAttribute('role', 'region'); wrapper.setAttribute('aria-label', 'Overreliance response inventory, scroll horizontally when needed');
+        const table = node('table', undefined, 'analytics-module-table'); table.append(node('caption', 'ATK-009 response observations; impact unassessed'));
+        const head = node('thead'), headers = node('tr');
+        ['Probe', 'Readable response text', 'Seed indicator present', 'Reported tool proposals'].forEach(text => { const th = node('th', text); th.setAttribute('scope', 'col'); headers.append(th); });
+        head.append(headers); table.append(head); const body = node('tbody');
+        rows.forEach(item => { const row = node('tr'); row.setAttribute('data-overreliance-inventory-row', '');
+          const th = node('th', item.variant); th.setAttribute('scope', 'row'); row.append(th);
+          [item.readable, item.marker].forEach(value => row.append(node('td', value === null ? 'Unavailable' : value ? 'Yes' : 'No')));
+          row.append(node('td', item.proposals === null ? 'Unavailable' : String(item.proposals))); body.append(row); });
+        table.append(body); wrapper.append(table); card.append(wrapper);
+      }
+      if (overrelianceModules.some(item => item.overrelianceRowsOmitted) || overrelianceModules.reduce((total, item) => total + item.overrelianceObservations.length, 0) > 8) card.append(node('p', 'Only the first 8 response inventory records are shown. Review the JSON report for additional records.', 'analytics-caption'));
+      card.append(node('p', 'Raw responses and tool names or arguments are omitted. Use an approved baseline for exact-answer policy checks.', 'analytics-caption')); content.append(card);
     }
     content.append(node('p', 'These charts describe recorded observations. Coverage and finding counts do not measure attack success, detector accuracy or an agent’s overall security.', 'analytics-footnote'));
     container.replaceChildren(content);
