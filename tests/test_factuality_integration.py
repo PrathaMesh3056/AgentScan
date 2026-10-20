@@ -276,9 +276,21 @@ def test_cli_rejects_incompatible_analysis_without_exposing_profile(tmp_path):
     assert "APPROVED-WINDOW-30" not in result.output
 
 
-def test_cli_duplicate_yaml_answer_rejected_before_scan(tmp_path, monkeypatch):
+@pytest.mark.parametrize("color", [False, True], ids=["plain", "ansi"])
+def test_cli_duplicate_yaml_answer_rejected_before_scan(tmp_path, monkeypatch, color):
+    from functools import partial
+
+    from click import unstyle
+    from typer import rich_utils
+
     from agentscan import cli
 
+    monkeypatch.setattr(rich_utils, "FORCE_TERMINAL", color)
+    monkeypatch.setattr(rich_utils, "COLOR_SYSTEM", "standard" if color else None)
+    monkeypatch.setattr(
+        rich_utils, "Console", partial(rich_utils.Console, legacy_windows=False, no_color=not color)
+    )
+    monkeypatch.setattr(rich_utils, "MAX_WIDTH", 80)
     profile = tmp_path / "duplicate.yaml"
     source = yaml.safe_dump({"url": URL, "factuality_baseline": approved_profile()})
     source = source.replace(
@@ -289,8 +301,10 @@ def test_cli_duplicate_yaml_answer_rejected_before_scan(tmp_path, monkeypatch):
     profile.write_text(source)
     execute = AsyncMock()
     monkeypatch.setattr(cli, "run_scan_multi", execute)
-    result = CliRunner().invoke(app, ["scan", "--config", str(profile)])
+    result = CliRunner().invoke(app, ["scan", "--config", str(profile)], color=color)
     assert result.exit_code == 2
     execute.assert_not_awaited()
-    assert "unique-key mapping" in " ".join(result.output.replace("│", " ").split())
-    assert "ANOTHER-PRIVATE-ANSWER" not in result.output
+    assert ("\x1b[" in result.output) is color
+    output = " ".join(unstyle(result.output).replace("│", " ").split())
+    assert "unique-key mapping" in output
+    assert "ANOTHER-PRIVATE-ANSWER" not in output
