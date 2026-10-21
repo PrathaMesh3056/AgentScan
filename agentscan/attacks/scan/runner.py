@@ -241,12 +241,23 @@ class YamlScanRunner(AttackModule, ABC):
                     record_execution_error(f"Variant {var.get('id', '?')}: {e}")
                     return idx, None
 
-        async with AgentScanClient(target) as client:
-            tasks = [_test_one(i, v) for i, v in enumerate(variant_list)]
-            results = await asyncio.gather(*tasks)
-            for _, finding in sorted(results, key=lambda x: x[0]):
-                if finding is not None:
-                    findings.append(finding)
+        collected = False
+        try:
+            async with AgentScanClient(target) as client:
+                tasks = [_test_one(i, v) for i, v in enumerate(variant_list)]
+                results = await asyncio.gather(*tasks)
+                for _, finding in sorted(results, key=lambda x: x[0]):
+                    if finding is not None:
+                        findings.append(finding)
+                collected = True
+        except Exception as error:
+            if not collected:
+                raise
+            # Cleanup must not erase completed observations. Exception messages
+            # may contain private target data; retain a static diagnostic only.
+            reason = f"Connector cleanup failed: {type(error).__name__}"
+            record_execution_error(reason)
+            logger.error(reason)
 
         logger.info(
             f"{self.attack_name} scan complete: "

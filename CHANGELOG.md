@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Updated ATK-002 with 18 bounded persona probes, known-reference confidentiality evidence, completion/provenance checks and offline paired validation. Public markers and judge opinion no longer establish safeguard failure; see [setup, evaluation and published references](docs/modules/jailbreak.md).
 - Added ATK-009's optional client-approved exact-answer baseline across CLI profiles, dashboard and service jobs. Paired neutral/pressure checks produce separate factuality-policy deviations, with digest-only traffic retention and no security score; see [setup, evaluation and references](docs/modules/overreliance.md).
 - Explore scan coverage, finding severity, module status and elapsed time in the dashboard's **Overview → Scan evidence** charts. Keyboard severity filters open matching findings; the module table retains scopes, errors and unevaluated checks. See [chart behavior](docs/DASHBOARD_ANALYTICS_PLAN.md).
 - Expanded ATK-001 to 24 direct-user seeds for its known-reference confidentiality assessment. See [terminal/dashboard setup and detection limits](docs/modules/prompt_injection.md).
@@ -19,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Completed YAML-runner findings survive connector cleanup failures, with safe diagnostics and incomplete status retained. ATK-002 excludes generated HTTP-header reflections from private-disclosure evidence and keeps captured HTTP errors, unverified browser completion and budget exhaustion outside evaluated safety results.
 - ATK-009's eight legacy probes now retain bounded observations without promoting marker echoes, fabricated facts or reported tool calls into verified impact. Invalid, incomplete and failed replies remain visible; approved-answer inputs reject ambiguous duplicate keys and incompatible workflows before target access.
 - ATK-001 requires complete supported disclosure of an operator-known private reference; public markers and judge inference cannot substitute for evidence. Missing references remain inconclusive, attacker-supplied references are excluded, and supported private representations are redacted in ordinary transcripts.
 - ATK-005 requires a complete known private reference and target-reported document ingestion evidence. Public markers and fabricated chat/tool roles no longer count as indirect-boundary proof. Unsupported connectors are unavailable; missing or mismatched receipts remain inconclusive, and completed findings survive partial coverage. The original nine simulation seeds remain archived; actual tool ingestion is unassessed.

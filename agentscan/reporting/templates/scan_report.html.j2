@@ -149,6 +149,9 @@
 <div class="card" style="margin-bottom: 20px;">
     <h2 style="font-size: 12pt; margin: 0 0 8px;">Assessment coverage and diagnostics</h2>
     <p>Status: <strong>{{ report.status }}</strong> · Evaluated {{ report.tests_run }} / {{ report.tests_selected }} selected tests · Scope: {{ report.assessment_scope }}</p>
+    {% for outcome in report.module_outcomes if outcome is mapping and outcome.get('assessment_scope') == 'persona_complete_known_reference' %}
+    <p style="font-size: 9pt;">ATK-002 scope: complete known-reference disclosure under persona framing. Persona adoption, encoded or partial disclosure and tool execution are unassessed. Missing references and incomplete responses stay inconclusive.</p>
+    {% endfor %}
     {% if report.status != 'COMPLETE' %}
     <p style="color: #92400e; font-size: 9pt;">This assessment is incomplete. Missing or failed checks cannot establish that the target is safe.</p>
     {% endif %}

@@ -46,6 +46,7 @@ def _attach_trajectory(report: ScanReport) -> None:
             "rag_document_observation",
             "overreliance_response_inventory",
             "factuality_policy",
+            "persona_complete_known_reference",
         }
         | RAG_VALIDATION_SCOPES
         for outcome in report.module_outcomes

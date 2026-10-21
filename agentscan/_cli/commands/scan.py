@@ -587,6 +587,14 @@ def scan(  # noqa: PLR0913
     console.print(
         f"Status: {report.status}; evaluated {report.tests_run}/{report.tests_selected} selected tests"
     )
+    if any(
+        outcome.get("assessment_scope") == "persona_complete_known_reference"
+        for outcome in report.module_outcomes
+    ):
+        console.print(
+            "ATK-002 scope: complete known-reference disclosure under persona framing. "
+            "Persona adoption, encoded or partial disclosure and tool execution are unassessed."
+        )
     console.print(
         "SSP class: Unassessed (catalog-only comparison)"
         if catalog_scope

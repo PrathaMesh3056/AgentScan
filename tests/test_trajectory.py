@@ -185,7 +185,9 @@ async def test_run_scan_classification_respects_agency_evidence_scope(
     registry.load_all()
     selected = AttackRegistry()
     for module in registry.get_all():
-        if module.attack_id not in {"ATK-008", "ATK-009"} and (
+        # Isolate agency scope from other modules that withhold SSP classification.
+        # ATK-002 standalone/mixed behavior is covered by test_jailbreak_integration.
+        if module.attack_id not in {"ATK-002", "ATK-008", "ATK-009"} and (
             include_agency or module.attack_id != "ATK-013"
         ):
             selected.register(module)
