@@ -85,8 +85,8 @@ api = [
     "sse-starlette>=2.1",
 ]
 telemetry = [
-    "opentelemetry-api>=1.25.0",
-    "opentelemetry-sdk>=1.25.0",
+    "opentelemetry-api>=1.45.1",
+    "opentelemetry-sdk>=1.45.1",
     "opentelemetry-instrumentation-fastapi>=0.46b0",
     "opentelemetry-instrumentation-httpx>=0.46b0",
     "prometheus-client>=0.20.0",
@@ -155,8 +155,8 @@ dev = [
     "passlib[bcrypt]>=1.7",
     "sse-starlette>=2.1",
     "fakeredis>=2.26",
-    "opentelemetry-api>=1.25.0",
-    "opentelemetry-sdk>=1.25.0",
+    "opentelemetry-api>=1.45.1",
+    "opentelemetry-sdk>=1.45.1",
     "prometheus-client>=0.20.0",
     "graphifyy>=0.9.69",
     "radon>=6.0.1",
@@ -193,12 +193,19 @@ ignore_missing_imports = true
 [tool.uv]
 constraint-dependencies = [
     "anyio>=4.14.2",
-    "certifi>=2024.7.4",
+    "certifi>=2026.10.19",
     "pygments>=2.20.0",
     "requests>=2.33.0",
     "urllib3>=2.8.0",
-    "virtualenv>=21.7.13",
+    "virtualenv>=21.14.9",
 ]
-# Semgrep pins vulnerable mcp==1.29.0; replace only that pin for CVE-2026-59951.
-# uv-only: remove when upstream Semgrep accepts the patched 1.x SDK.
-override-dependencies = ["mcp>=1.30.0,<2"]
+# Semgrep pins vulnerable mcp==1.29.0 and an OpenTelemetry 1.37 stack.
+# Keep the CLI's dependency set patched until Semgrep accepts these releases.
+override-dependencies = [
+    "mcp>=1.30.0,<2",
+    "opentelemetry-api>=1.45.1",
+    "opentelemetry-sdk>=1.45.1",
+    "opentelemetry-exporter-otlp-proto-http>=1.45.1",
+    "opentelemetry-instrumentation-requests>=0.66b1",
+    "opentelemetry-instrumentation-threading>=0.66b1",
+]
