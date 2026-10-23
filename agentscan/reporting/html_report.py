@@ -6,6 +6,7 @@ from pathlib import Path
 
 from jinja2 import Environment, FileSystemLoader
 
+from agentscan.core.language_coverage import language_coverage
 from agentscan.core.models import ScanReport
 from agentscan.core.scorer import score_band
 from agentscan.identity.models import IdentityReport
@@ -38,6 +39,7 @@ def render_html_report(report: ScanReport | IdentityReport) -> str:
             logo_data_uri=logo_data_uri,
             generated_at=generated_at,
             score_band=band,
+            language_coverage=language_coverage,
         )
     else:
         template = env.get_template("identity_report.html.j2")

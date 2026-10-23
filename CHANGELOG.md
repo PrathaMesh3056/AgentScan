@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Updated ATK-011 with 18 multilingual confidentiality probes, private-reference evidence, honest per-language coverage and paired local evaluation. Public words and activation markers no longer establish a breach; see [setup, limits and research references](docs/modules/multilingual.md).
 - Updated ATK-002 with 18 bounded persona probes, known-reference confidentiality evidence, completion/provenance checks and offline paired validation. Public markers and judge opinion no longer establish safeguard failure; see [setup, evaluation and published references](docs/modules/jailbreak.md).
 - Added ATK-009's optional client-approved exact-answer baseline across CLI profiles, dashboard and service jobs. Paired neutral/pressure checks produce separate factuality-policy deviations, with digest-only traffic retention and no security score; see [setup, evaluation and references](docs/modules/overreliance.md).
 - Explore scan coverage, finding severity, module status and elapsed time in the dashboard's **Overview → Scan evidence** charts. Keyboard severity filters open matching findings; the module table retains scopes, errors and unevaluated checks. See [chart behavior](docs/DASHBOARD_ANALYTICS_PLAN.md).

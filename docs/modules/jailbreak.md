@@ -70,7 +70,11 @@ configured mutation and shared request budgets. There is no separate
 
 HTTP JSON and captured HTTP profiles use their normal connector mapping.
 WebSocket and browser profiles require a readable assistant reply with supported
-completion evidence. Native MCP tool dispatch is unavailable for this module.
+completion evidence. WebSocket first frames without an explicit response-envelope
+completion marker remain inconclusive (`complete`, `done` or `completion_verified`
+must be true, or `finish_reason` must be `stop`). The connector does not assemble
+multiple frames; these markers are target-reported protocol evidence.
+Native MCP tool dispatch is unavailable for this module.
 Raw SSE text is inconclusive because the connector does not retain sufficient
 stream-completion provenance for this criterion. Browser quiet-period completion
 with `completion_verified: false` is also inconclusive.

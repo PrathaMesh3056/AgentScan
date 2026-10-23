@@ -16,6 +16,7 @@ from agentscan.core.connectors import (
     open_browser_session,
 )
 from agentscan.core.context import active_context, begin_scan_context, target_redaction_secrets
+from agentscan.core.language_coverage import MULTILINGUAL_SCOPE, language_coverage
 from agentscan.core.models import Finding, ScanMode, ScanReport, Target
 from agentscan.core.outcomes import (
     AssessmentInconclusiveError,
@@ -47,6 +48,7 @@ def _attach_trajectory(report: ScanReport) -> None:
             "overreliance_response_inventory",
             "factuality_policy",
             "persona_complete_known_reference",
+            "multilingual_complete_known_reference",
         }
         | RAG_VALIDATION_SCOPES
         for outcome in report.module_outcomes
@@ -237,6 +239,12 @@ async def run_scan(target: Target, *, reset_trajectory: bool = True) -> ScanRepo
             execution_ledger.reset(token)
         if ledger.assessment_scope is not None:
             outcome["assessment_scope"] = ledger.assessment_scope
+        if outcome["assessment_scope"] == MULTILINGUAL_SCOPE:
+            if ledger.selected is not None:
+                outcome["selected_tests"] = ledger.selected
+            outcome["language_outcomes"] = language_coverage(
+                {**outcome, "language_outcomes": getattr(module, "language_outcomes", None)}
+            )
         for finding in findings:
             recorder.record_finding(finding.attack_id, finding.severity.value, finding.description)
         reasons = ledger.errors + ledger.inconclusive_reasons

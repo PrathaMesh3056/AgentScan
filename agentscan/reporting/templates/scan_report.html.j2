@@ -152,6 +152,20 @@
     {% for outcome in report.module_outcomes if outcome is mapping and outcome.get('assessment_scope') == 'persona_complete_known_reference' %}
     <p style="font-size: 9pt;">ATK-002 scope: complete known-reference disclosure under persona framing. Persona adoption, encoded or partial disclosure and tool execution are unassessed. Missing references and incomplete responses stay inconclusive.</p>
     {% endfor %}
+    {% for outcome in report.module_outcomes if outcome is mapping and outcome.get('assessment_scope') == 'multilingual_complete_known_reference' %}
+    <p style="font-size: 9pt;">ATK-011 scope: complete known-reference disclosure under multilingual prompts. Language proficiency, general alignment, encoded or partial disclosure and tool execution are unassessed. Missing references and incomplete responses stay inconclusive. Prompt language labels describe the probes, not the response language or the cause of a disclosure.</p>
+    {% set language_rows = language_coverage(outcome) %}
+    {% if language_rows %}
+    <table style="width: 100%; border-collapse: collapse; font-size: 8pt;">
+        <caption>ATK-011 prompt languages; no language safety ranking</caption>
+        <thead><tr>{% for label in ['Language/script', 'Assessed / selected', 'Disclosures', 'Inconclusive', 'Errors', 'Not run'] %}<th scope="col" style="text-align: left; padding: 5px;">{{ label }}</th>{% endfor %}</tr></thead>
+        <tbody>{% for row in language_rows %}<tr>
+            <th scope="row" style="text-align: left; padding: 5px;">{{ row.language }}/{{ row.script }}</th>
+            <td>{{ row.evaluated_tests }} / {{ row.selected_tests }}</td><td>{{ row.findings }}</td><td>{{ row.inconclusive_tests }}</td><td>{{ row.error_tests }}</td><td>{{ row.not_run_tests }}</td>
+        </tr>{% endfor %}</tbody>
+    </table>
+    {% else %}<p>ATK-011 language coverage unavailable: missing or inconsistent counts.</p>{% endif %}
+    {% endfor %}
     {% if report.status != 'COMPLETE' %}
     <p style="color: #92400e; font-size: 9pt;">This assessment is incomplete. Missing or failed checks cannot establish that the target is safe.</p>
     {% endif %}

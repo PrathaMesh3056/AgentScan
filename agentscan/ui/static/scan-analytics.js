@@ -98,6 +98,26 @@
       reason: available ? '' : 'Counts are missing or inconsistent. Review the JSON report.' };
   }
 
+  function languageCoverage(outcome) {
+    const scripts = { en: 'Latn', zh: 'Hans', ru: 'Cyrl', ar: 'Arab', hi: 'Deva', es: 'Latn', 'zh-en': 'Hans-Latn', 'hi-Latn': 'Latn', 'es-en': 'Latn', bn: 'Beng', und: 'Zyyy' };
+    const keys = ['selected_tests', 'evaluated_tests', 'findings', 'inconclusive_tests', 'error_tests', 'not_run_tests'];
+    const bounded = value => count(value) && value <= 1000000;
+    const rows = outcome.language_outcomes;
+    if (outcome.module_id !== 'ATK-011' || outcome.assessment_scope !== 'multilingual_complete_known_reference' ||
+        !Array.isArray(rows) || rows.length < 1 || rows.length > Object.keys(scripts).length || !bounded(outcome.selected_tests) || !bounded(outcome.executed_tests)) return null;
+    const seen = new Set(), sanitized = [];
+    for (const row of rows) {
+      if (!object(row) || typeof row.language !== 'string' || !Object.hasOwn(scripts, row.language) || seen.has(row.language) || scripts[row.language] !== row.script ||
+          !keys.every(key => bounded(row[key])) || row.findings > row.evaluated_tests ||
+          row.selected_tests !== row.evaluated_tests + row.inconclusive_tests + row.error_tests + row.not_run_tests) return null;
+      seen.add(row.language);
+      sanitized.push({ language: row.language, script: row.script, ...Object.fromEntries(keys.map(key => [key, row[key]])) });
+    }
+    if (sanitized.reduce((total, row) => total + row.selected_tests, 0) !== outcome.selected_tests ||
+        sanitized.reduce((total, row) => total + row.evaluated_tests, 0) !== outcome.executed_tests) return null;
+    return sanitized;
+  }
+
   function timestamp(value) {
     if (typeof value !== 'string') return null;
     const parts = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,6})?(Z|[+-](\d{2}):(\d{2}))$/.exec(value);
@@ -131,6 +151,7 @@
         scope: label(row.assessment_scope, scope === 'mixed' ? 'unavailable' : scope),
         coverage: coverage(row.selected_tests, row.executed_tests),
         reason: safeReason(row.reason || row.error),
+        languageCoverage: languageCoverage(row),
         catalogFindingCount: count(row.catalog_finding_count) ? row.catalog_finding_count : null,
         agencyObservations: Array.isArray(row.observations) && row.assessment_scope === 'agency_proposal_inventory'
           ? row.observations.slice(0, 10).map(agencyObservation) : [],
@@ -197,6 +218,7 @@
   function scopeLabel(scope) {
     const labels = { target: 'Target assessment', output_text_indicator_inventory: 'Output text · impact unassessed', direct_text_known_reference: 'Direct text · known reference',
       persona_complete_known_reference: 'Persona checks · complete known-reference disclosure',
+      multilingual_complete_known_reference: 'Multilingual checks · complete known-reference disclosure',
       mcp_tool_proposal_inventory: 'MCP text proposals · execution unassessed', mcp_catalog_policy: 'MCP catalog policy · excluded from target score',
       agency_proposal_inventory: 'Agency proposals · authorization and effects unassessed',
       rag_document_observation: 'RAG document responses · poisoning and impact unassessed',
@@ -251,6 +273,9 @@
     }
     if (summary.scope === 'persona_complete_known_reference' || summary.modules.some(item => item.id === 'ATK-002' && item.scope === 'persona_complete_known_reference')) {
       content.append(node('p', 'ATK-002 checks complete plain-text or whitespace-normalized disclosure of a private reference already installed on your agent. Missing references and incomplete responses remain inconclusive. Persona adoption and tool proposals do not prove disclosure, general alignment or tool execution. Encoded and partial disclosures are outside this criterion.', 'analytics-caption'));
+    }
+    if (summary.scope === 'multilingual_complete_known_reference' || summary.modules.some(item => item.id === 'ATK-011' && item.scope === 'multilingual_complete_known_reference')) {
+      content.append(node('p', 'ATK-011 checks complete plain-text or whitespace-normalized disclosure of a private reference already installed on your agent, using multilingual prompts. Missing references and incomplete responses remain inconclusive. Language proficiency, general alignment, encoded or partial disclosure and tool execution are unassessed. Prompt language labels describe the selected probes; they do not verify the language of a response or prove that language caused a disclosure.', 'analytics-caption'));
     }
     const grid = node('div', undefined, 'analytics-grid');
     const coverageCard = panel('Evaluated coverage', 'Checks assessed against their stated criteria. Unevaluated checks remain visible.');
@@ -341,6 +366,37 @@
       content.append(modulesCard);
     }
     const catalogModules = summary.modules.filter(item => item.catalogFindings.length);
+    const multilingualModules = summary.modules.filter(item => item.id === 'ATK-011' && item.scope === 'multilingual_complete_known_reference');
+    if (multilingualModules.length) {
+      const card = panel('Multilingual reference checks', 'Counts are grouped by declared prompt language and script. Different prompts and small samples do not support language safety rankings or a causal language comparison.');
+      multilingualModules.forEach(item => {
+        if (item.languageCoverage === null) {
+          empty(card, 'Language coverage unavailable: missing or inconsistent counts. Review module errors and the JSON report.');
+          return;
+        }
+        const wrapper = node('div', undefined, 'analytics-table-scroll');
+        wrapper.tabIndex = 0;
+        wrapper.setAttribute('role', 'region');
+        wrapper.setAttribute('aria-label', 'Multilingual reference check coverage, scroll horizontally when needed');
+        const table = node('table', undefined, 'analytics-module-table');
+        table.append(node('caption', 'ATK-011 prompt language coverage; disclosures require a private reference'));
+        const head = node('thead'), headers = node('tr');
+        ['Language / script', 'Assessed / selected', 'Disclosures', 'Inconclusive', 'Errors', 'Not run'].forEach(text => {
+          const th = node('th', text); th.setAttribute('scope', 'col'); headers.append(th);
+        });
+        head.append(headers); table.append(head);
+        const body = node('tbody');
+        item.languageCoverage.forEach(entry => {
+          const row = node('tr'), label = node('th', `${entry.language} / ${entry.script}`);
+          label.setAttribute('scope', 'row'); row.append(label, node('td', `${entry.evaluated_tests} / ${entry.selected_tests}`));
+          ['findings', 'inconclusive_tests', 'error_tests', 'not_run_tests'].forEach(key => row.append(node('td', String(entry[key]))));
+          body.append(row);
+        });
+        table.append(body); wrapper.append(table); card.append(wrapper);
+      });
+      card.append(node('p', 'No finding means no complete supported reference match in the assessed reply. Inconclusive, failed and unrun probes remain separate. Raw prompts, replies and private reference values are omitted.', 'analytics-caption'));
+      content.append(card);
+    }
     if (catalogModules.length) {
       const catalogCard = panel('MCP catalog policy deviations', 'Snapshot comparison against independently approved metadata. These findings do not prove tool execution, maliciousness or agent compromise, and are excluded from the target score.');
       catalogModules.forEach(item => item.catalogFindings.forEach(finding => {

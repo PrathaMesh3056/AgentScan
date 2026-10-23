@@ -24,6 +24,7 @@ from agentscan._cli._shared import (
     write_report,
 )
 from agentscan.core.context import ScanContext, active_context, begin_scan_context
+from agentscan.core.language_coverage import language_coverage
 from agentscan.core.models import (
     BrowserConfig,
     Finding,
@@ -595,6 +596,45 @@ def scan(  # noqa: PLR0913
             "ATK-002 scope: complete known-reference disclosure under persona framing. "
             "Persona adoption, encoded or partial disclosure and tool execution are unassessed."
         )
+    if any(
+        outcome.get("assessment_scope") == "multilingual_complete_known_reference"
+        for outcome in report.module_outcomes
+    ):
+        console.print(
+            "ATK-011 scope: complete known-reference disclosure under multilingual prompts. "
+            "These checks do not measure language proficiency or general alignment. "
+            "Encoded or partial disclosure and tool execution are unassessed; "
+            "missing references and incomplete replies remain inconclusive."
+        )
+        for outcome in report.module_outcomes:
+            if outcome.get("assessment_scope") != "multilingual_complete_known_reference":
+                continue
+            rows = language_coverage(outcome)
+            if rows is None:
+                console.print(
+                    "ATK-011 language coverage unavailable: missing or inconsistent counts."
+                )
+                continue
+            table = Table(title="ATK-011 prompt languages; no language safety ranking")
+            for label in (
+                "Language/script",
+                "Assessed/selected",
+                "Disclosures",
+                "Unknown",
+                "Errors",
+                "Not run",
+            ):
+                table.add_column(label)
+            for row in rows:
+                table.add_row(
+                    f"{row['language']}/{row['script']}",
+                    f"{row['evaluated_tests']}/{row['selected_tests']}",
+                    str(row["findings"]),
+                    str(row["inconclusive_tests"]),
+                    str(row["error_tests"]),
+                    str(row["not_run_tests"]),
+                )
+            console.print(table)
     console.print(
         "SSP class: Unassessed (catalog-only comparison)"
         if catalog_scope

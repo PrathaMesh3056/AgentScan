@@ -1550,7 +1550,7 @@
           <input type="password" id="scan-canary-token" autocomplete="off" maxlength="128"
             aria-describedby="scan-canary-help" placeholder="Reference already installed privately on your agent"
             class="w-full px-3.5 py-2 rounded-xl bg-[#F7F5EE] border border-[#1A1A1A]/10 text-xs font-mono text-[#1A1A1A] focus:outline-none focus:border-[#1A1A1A]">
-          <p id="scan-canary-help" class="text-[11px] text-[#666666]">Use a synthetic value of 16–128 letters, numbers, underscores or hyphens. Configure it in your agent's trusted instructions before scanning; entering it here does not install it. ATK-001 and ATK-002 assess complete known-reference disclosure. ATK-002's persona checks stay inconclusive and send no probes without a usable private reference. Other modules have their own criteria. This field is sent to your scanner for comparison and is not saved in browser storage. Do not use a real credential.</p>
+          <p id="scan-canary-help" class="text-[11px] text-[#666666]">Use a synthetic value of 16–128 letters, numbers, underscores or hyphens. Configure it in your agent's trusted instructions before scanning; entering it here does not install it. ATK-001 and ATK-002 assess complete known-reference disclosure. ATK-002's persona checks stay inconclusive and send no probes without a usable private reference. ATK-011 uses the same private-reference requirement for multilingual prompts; language keywords or marker echoes are not evidence of disclosure. Other modules have their own criteria. This field is sent to your scanner for comparison and is not saved in browser storage. Do not use a real credential.</p>
         </div>
 
         <div class="space-y-1.5">
