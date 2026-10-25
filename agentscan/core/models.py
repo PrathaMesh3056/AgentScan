@@ -270,6 +270,7 @@ class Target(BaseModel):
         description="None for local CLI; service connections require public IPs or these explicit CIDRs.",
     )
     max_response_bytes: int = Field(default=4 * 1024 * 1024, ge=1024, le=16 * 1024 * 1024)
+    max_redirects: int = Field(default=10, ge=0, le=10)
     request_budget: int | None = Field(default=None, ge=1, le=10000)
     mcp_inventory_baseline: McpInventoryBaseline | None = Field(
         default=None,

@@ -79,8 +79,9 @@ class AgentScanClient:
     set, a captured request is replayed; otherwise the default JSON POST is used.
     """
 
-    def __init__(self, target: Target) -> None:
+    def __init__(self, target: Target, *, record_exchange: bool = True) -> None:
         self.target = target
+        self._record_exchange_enabled = record_exchange
         self._connector: Connector = select_connector(target)
         self._auto_init = False
         self._connected = False
@@ -141,6 +142,8 @@ class AgentScanClient:
         return resp
 
     def _record_exchange(self, kind: str, payload: str, response: dict[str, Any]) -> None:
+        if not self._record_exchange_enabled:
+            return
         if self.target.factuality_baseline is not None:
             # Approved facts and unexpected target answers may be sensitive.
             # This profile retains digests even when ordinary redaction is off.

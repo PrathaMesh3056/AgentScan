@@ -182,7 +182,7 @@ async def enrolled_request(
 ) -> httpx.Response:
     validate_target_url(url, target)
     request = client.build_request(method, url, json=body)
-    for _ in range(11):
+    for _ in range(target.max_redirects + 1):
         validate_target_url(str(request.url), target)
         from agentscan.core.client import consume_target_request
 

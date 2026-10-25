@@ -185,8 +185,8 @@ async def test_run_scan_classification_respects_agency_evidence_scope(
     registry.load_all()
     selected = AttackRegistry()
     for module in registry.get_all():
-        # Select a baseline with trajectory turns, then vary only agency scope.
-        # Other registered modules may independently withhold SSP classification.
+        # Resource observations never support SSP classification. Vary the
+        # agency module to confirm its scope is still surfaced separately.
         if module.attack_id == "ATK-004" or (include_agency and module.attack_id == "ATK-013"):
             selected.register(module)
     selected._loaded = True
@@ -202,7 +202,7 @@ async def test_run_scan_classification_respects_agency_evidence_scope(
         )
         report = await run_scan(target)
 
-    assert report.ssp_class == (None if include_agency else SspClass.SERVANT)
+    assert report.ssp_class is None
     assert (
         any(
             outcome.get("assessment_scope") == "agency_proposal_inventory"
@@ -210,4 +210,5 @@ async def test_run_scan_classification_respects_agency_evidence_scope(
         )
         is include_agency
     )
-    assert len(report.trajectory) >= 1
+    if not include_agency:
+        assert report.trajectory == []

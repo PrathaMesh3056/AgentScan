@@ -46,6 +46,8 @@ def _attach_trajectory(report: ScanReport) -> None:
             "agency_proposal_inventory",
             "rag_document_observation",
             "overreliance_response_inventory",
+            "resource_pressure_response_inventory",
+            "owned_resource_lab",
             "factuality_policy",
             "persona_complete_known_reference",
             "multilingual_complete_known_reference",
@@ -78,6 +80,8 @@ def _finish(report: ScanReport) -> ScanReport:
             "agency_proposal_inventory",
             "rag_document_observation",
             "overreliance_response_inventory",
+            "resource_pressure_response_inventory",
+            "owned_resource_lab",
             "factuality_policy",
         }
     )
@@ -96,6 +100,10 @@ def _finish(report: ScanReport) -> ScanReport:
         if outcome.get("assessment_scope") == "rag_document_observation"
         else "overreliance_response_inventory"
         if outcome.get("assessment_scope") == "overreliance_response_inventory"
+        else "resource_pressure_response_inventory"
+        if outcome.get("assessment_scope") == "resource_pressure_response_inventory"
+        else "owned_resource_lab"
+        if outcome.get("assessment_scope") == "owned_resource_lab"
         else "factuality_policy"
         if outcome.get("assessment_scope") == "factuality_policy"
         else "target"
@@ -277,7 +285,17 @@ async def run_scan(target: Target, *, reset_trajectory: bool = True) -> ScanRepo
                 await asyncio.gather(*tasks, return_exceptions=True)
                 raise
         for findings, outcome, errors in results:
-            if outcome.get("assessment_scope") == "mcp_catalog_policy":
+            if outcome.get("assessment_scope") == "owned_resource_lab":
+                outcome["resource_findings"] = [
+                    finding.model_dump(mode="json") for finding in findings
+                ]
+                outcome["resource_finding_count"] = len(findings)
+                outcome["reason"] = (
+                    f"{len(findings)} owned resource-lab effects observed; customer impact unassessed. "
+                    + str(outcome.get("reason", ""))
+                )
+                findings = []
+            elif outcome.get("assessment_scope") == "mcp_catalog_policy":
                 outcome["catalog_findings"] = [
                     finding.model_dump(mode="json") for finding in findings
                 ]

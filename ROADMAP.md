@@ -38,6 +38,16 @@ passed 2,279 tests on 18 October (32 skipped, eight slow exclusions).
 Independent policy/approval/effect witnesses and
 real-agent defense evaluation remain open.
 
+The [ATK-004](docs/modules/dos.md) update on 25 October keeps nine finite probes
+as a bounded response inventory. Its default scan makes no DoS impact or clean
+resilience claim from text, client timing or errors. An optional in-process
+owned witness binds work counters and neutral admission to each probe. The
+three-arm synthetic control produced one separately scoped local finding when
+the uncapped service denied neutral work on probe six; ATK-004 stopped before
+further probes. The capped and timeout-text arms had no local finding. Real
+serving-stack and concurrent-user evaluation remains open under separately
+approved load limits.
+
 ## Implemented capabilities
 
 | Capability | Implemented behavior | Verification boundary |

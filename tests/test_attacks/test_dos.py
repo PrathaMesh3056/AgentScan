@@ -9,7 +9,8 @@ import pytest
 import respx
 
 from agentscan.attacks.scan.dos import DosModule
-from agentscan.core.models import Severity, Target
+from agentscan.core.models import RequestTemplate, Target
+from agentscan.core.outcomes import AssessmentInconclusiveError, ExecutionLedger, execution_ledger
 
 
 @pytest.fixture
@@ -44,48 +45,38 @@ class TestPayloadExpansion:
 
 
 class TestCheckDetection:
-    def test_timeout_detection(self, module: DosModule) -> None:
-        assert module._check_detection(
-            "timeout", "", "", response={"error": "timed out", "status_code": 0}
-        )
-        assert not module._check_detection(
-            "timeout", "ok", "", response={"response": "ok", "status_code": 200}
-        )
-
-    def test_min_length_detection(self, module: DosModule) -> None:
-        assert module._check_detection("min_length", "a" * 100, "50")
-        assert not module._check_detection("min_length", "short", "50")
-
-    def test_repetition_detection(self, module: DosModule) -> None:
-        repeated = " ".join(["repeat token"] * 40)
-        assert module._check_detection("repetition", repeated, "4")
-        assert not module._check_detection("repetition", "one two three", "4")
-
-    def test_tool_call_contains_detection(self, module: DosModule) -> None:
-        response = {"tool_calls": [{"function": {"name": "fetch", "arguments": "shadow.invalid"}}]}
-        assert module._check_detection(
-            "tool_call_contains", "ignored", "shadow.invalid", response=response
-        )
+    @pytest.mark.parametrize("method", ["timeout", "min_length", "repetition", "contains"])
+    def test_response_indicators_are_inconclusive(self, module: DosModule, method: str) -> None:
+        with pytest.raises(AssessmentInconclusiveError):
+            module._check_detection(method, "repeat " * 100, "repeat")
 
 
 class TestDosIntegration:
     @pytest.mark.asyncio
-    async def test_vulnerable_repetition_produces_finding(
+    async def test_repetition_and_marker_are_observations_not_findings(
         self, module: DosModule, dos_target: Target
     ) -> None:
-        repeated = "repeat repeat repeat " * 30
-        with respx.mock(assert_all_called=False) as mock:
-            mock.post("http://test-agent.example.com/chat").mock(
-                return_value=httpx.Response(200, json={"response": repeated})
-            )
-            findings = await module.run(dos_target)
+        repeated = "AGENTSCAN-DOS-RECURSE repeat repeat repeat " * 30
+        ledger = ExecutionLedger()
+        token = execution_ledger.set(ledger)
+        try:
+            with respx.mock(assert_all_called=False) as mock:
+                route = mock.post("http://test-agent.example.com/chat").mock(
+                    return_value=httpx.Response(200, json={"response": repeated})
+                )
+                findings = await module.run(dos_target)
+                assert route.call_count == 9
+        finally:
+            execution_ledger.reset(token)
 
-        assert len(findings) >= 1
-        finding = findings[0]
-        assert finding.attack_id == "ATK-004"
-        assert finding.owasp_id == "LLM10"
-        assert finding.severity in (Severity.HIGH, Severity.MEDIUM, Severity.LOW)
-        assert "yaml_variant_id" in finding.metadata
+        assert findings == []
+        assert ledger.selected == 9
+        assert ledger.evaluated == 0
+        assert ledger.assessment_scope == "resource_pressure_response_inventory"
+        assert len(ledger.observations) == 9
+        assert len(ledger.inconclusive_reasons) == 9
+        assert all(record["resource_usage_verified"] is False for record in ledger.observations)
+        assert all("AGENTSCAN" not in str(record) for record in ledger.observations)
 
     @pytest.mark.asyncio
     async def test_safe_response_produces_no_finding(
@@ -105,11 +96,81 @@ class TestDosIntegration:
         assert len(findings) == 0
 
     @pytest.mark.asyncio
+    async def test_stops_after_first_target_failure(
+        self, module: DosModule, dos_target: Target
+    ) -> None:
+        ledger = ExecutionLedger()
+        token = execution_ledger.set(ledger)
+        try:
+            with respx.mock(assert_all_called=False) as mock:
+                route = mock.post("http://test-agent.example.com/chat").mock(
+                    return_value=httpx.Response(429, json={"error": "private-detail"})
+                )
+                findings = await module.run(dos_target)
+                assert route.call_count == 1
+        finally:
+            execution_ledger.reset(token)
+        assert findings == []
+        assert ledger.evaluated == 0
+        assert ledger.observations == []
+        assert ledger.errors
+        assert "private-detail" not in str(ledger.errors)
+
+    @pytest.mark.asyncio
+    async def test_redirect_is_not_followed(self, module: DosModule, dos_target: Target) -> None:
+        ledger = ExecutionLedger()
+        token = execution_ledger.set(ledger)
+        try:
+            with respx.mock(assert_all_called=False) as mock:
+                first = mock.post("http://test-agent.example.com/chat").mock(
+                    return_value=httpx.Response(
+                        307, headers={"location": "http://test-agent.example.com/redirected"}
+                    )
+                )
+                second = mock.post("http://test-agent.example.com/redirected").mock(
+                    return_value=httpx.Response(200, json={"response": "unexpected"})
+                )
+                assert await module.run(dos_target) == []
+                assert first.call_count == 1
+                assert second.call_count == 0
+        finally:
+            execution_ledger.reset(token)
+        assert ledger.errors
+        assert ledger.observations == []
+
+    @pytest.mark.asyncio
+    async def test_captured_template_does_not_bypass_input_budget(
+        self, module: DosModule, dos_target: Target
+    ) -> None:
+        target = dos_target.model_copy(
+            update={
+                "request_template": RequestTemplate(
+                    method="GET",
+                    url=dos_target.url,
+                    json_body={"message": "x" * 9000},
+                    message_path="message",
+                )
+            }
+        )
+        ledger = ExecutionLedger()
+        token = execution_ledger.set(ledger)
+        try:
+            with respx.mock(assert_all_called=False) as mock:
+                route = mock.get(dos_target.url).mock(
+                    return_value=httpx.Response(200, json={"response": "unexpected"})
+                )
+                assert await module.run(target) == []
+                assert route.call_count == 0
+        finally:
+            execution_ledger.reset(token)
+        assert ledger.selected == 9
+        assert ledger.evaluated == 0
+        assert ledger.inconclusive_reasons
+
+    @pytest.mark.asyncio
     async def test_timeout_response_records_execution_error(
         self, module: DosModule, dos_target: Target
     ) -> None:
-        from agentscan.core.outcomes import ExecutionLedger, execution_ledger
-
         ledger = ExecutionLedger()
         token = execution_ledger.set(ledger)
         try:
@@ -133,7 +194,8 @@ class TestDosIntegration:
         # A target's timeout claim is untrusted response content, not a
         # transport timeout witness. Keep the failure without copying its body.
         assert ledger.errors
-        assert all("Connection failed" in error for error in ledger.errors)
+        assert any("Connection failed" in error for error in ledger.errors)
+        assert any("remaining probes not run" in error for error in ledger.errors)
         assert all("synthetic-private-response-detail" not in error for error in ledger.errors)
 
 
