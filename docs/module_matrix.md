@@ -8,6 +8,7 @@ This document lists engineering features in **AgentScan**. Status indicates impl
 
 | Module | Scope | Status | Key Subsystems & Deliverables |
 | :--- | :--- | :---: | :--- |
+| **ATK-027 update** | Complete private synthetic-reference disclosure under model/IP requests | Bounded engineering and authored HTTP controls, 26 October 2026 | Ten single-turn requests, five original texts preserved; canary-only preflight, public-input provenance, completion/budget checks, no judge and digest evidence. Six authored arms passed with 32 fixture deliveries. Public architecture, paths and long replies cannot establish theft; parameter recovery, training origin and real-agent efficacy remain unverified ([setup, method and references](modules/model_theft.md)). |
 | **0** | Foundation | ✅ | Pydantic v2 core models, strict typing, base runner, registry auto-discovery, CI pipeline |
 | **1** | Core Attack Engine | ✅ | CLI commands (`scan`, `audit`, `fix`, `ui`), severity scorer, parallel async runner, 24 direct prompt-injection seeds assessed against known confidentiality criteria ([ATK-001 setup and limits](modules/prompt_injection.md)) |
 | **ATK-001 update** | Direct prompt injection against a known private reference | Complete for scope, 10 October 2026 | 24 seeds, deterministic complete-disclosure evidence, missing-reference inconclusive states, input provenance, redaction and CLI/UI setup; broader representations and independent real-agent efficacy remain follow-up work ([completion verification](modules/prompt_injection.md#completion-verification)) |

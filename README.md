@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="assets/logo.svg" alt="AgentScan Logo" width="100" height="100" />
+<img src="agentscan/ui/static/logo.svg" alt="AgentScan Logo" width="100" height="100" />
 
 # AgentScan
 

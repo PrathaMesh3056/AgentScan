@@ -51,6 +51,7 @@ def _attach_trajectory(report: ScanReport) -> None:
             "factuality_policy",
             "persona_complete_known_reference",
             "multilingual_complete_known_reference",
+            "model_ip_complete_known_reference",
         }
         | RAG_VALIDATION_SCOPES
         for outcome in report.module_outcomes

@@ -1,6 +1,6 @@
 # AgentScan Roadmap
 
-Updated 18 October 2026. Package metadata declares **v0.2.0** and a beta development status. This describes the implemented source and verification limits; it does not establish a production deployment or calibrated detection accuracy.
+Updated 26 October 2026. Package metadata declares **v0.2.0** and a beta development status. This describes the implemented source and verification limits; it does not establish a production deployment or calibrated detection accuracy.
 
 16 October sequencing update: at the owner's request, live-model and combined
 module evaluations are deferred while engineering improvements proceed one module
@@ -47,6 +47,18 @@ the uncapped service denied neutral work on probe six; ATK-004 stopped before
 further probes. The capped and timeout-text arms had no local finding. Real
 serving-stack and concurrent-user evaluation remains open under separately
 approved load limits.
+
+The [ATK-027](docs/modules/model_theft.md) engineering update on 26 October
+replaces architecture/path/length guesses with a complete privately provisioned
+synthetic-reference criterion. Ten bounded model/IP requests preserve the five
+original requests and add authored reasoning, diagnostic, manifest and packaging
+variations. Missing references prevent probes; public-input contamination and
+incomplete responses remain inconclusive. The six-arm authored HTTP evaluation
+passed its declared gate with 32 deliveries, including positive, public-information,
+incomplete, preflight and request-budget controls. These results do not establish
+model theft, weight recovery, training-data origin or real-agent defense efficacy.
+Current primary disclosures and published research are documented in the guide.
+The owner's presentation changes in `DESIGN-CHANGES.md` are preserved.
 
 ## Implemented capabilities
 

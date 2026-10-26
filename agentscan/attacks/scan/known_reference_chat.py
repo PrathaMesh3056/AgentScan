@@ -17,6 +17,8 @@ from agentscan.core.evaluator import LLMJudge
 from agentscan.core.models import Finding, Target
 from agentscan.core.outcomes import AssessmentInconclusiveError, ModuleUnavailableError
 from agentscan.core.provenance import user_message_input
+from agentscan.core.trace import recorder
+from agentscan.core.trajectory import trajectory_recorder
 
 _HTTP_HEADER_PROVENANCE = "_known_reference_actual_http_headers"
 
@@ -32,12 +34,21 @@ class KnownReferenceChatModule(PromptInjectionModule):
             raise ModuleUnavailableError(
                 f"{self.attack_id} requires a chat endpoint; native MCP tool dispatch is unassessed."
             )
-        if active_context.get() is not None or target.request_budget is None:
+        context = active_context.get()
+        secrets = target_redaction_secrets(target)
+        if context is not None:
+            # Direct SDK callers can retain a context from another target. Keep
+            # both sets so later transcript export also protects earlier turns.
+            context.redaction_secrets = tuple(dict.fromkeys((*context.redaction_secrets, *secrets)))
             return await super().run(target)
         token = active_context.set(
             ScanContext(
                 request_budget=target.request_budget,
-                redaction_secrets=target_redaction_secrets(target),
+                redaction_secrets=secrets,
+                # Preserve direct callers' recorder settings and access to the
+                # redacted exchanges after this temporary context is released.
+                recorder=recorder._get(),
+                trajectory=trajectory_recorder._get(),
             )
         )
         try:

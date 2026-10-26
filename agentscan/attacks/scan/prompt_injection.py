@@ -115,6 +115,10 @@ class PromptInjectionModule(YamlScanRunner):
             target.model_copy(update={"judge_model": None, "attacker_model": None})
         )
 
+    def _private_reference_values(self) -> tuple[str, ...]:
+        """Allow narrower profiles to select only their declared reference type."""
+        return known_private_values(self._current_target)
+
     def _reference_match(self, text: str, payload: str = "") -> str | None:
         """Return the evidenced criterion, excluding references supplied by the attacker."""
         configured = self._current_target
@@ -123,7 +127,7 @@ class PromptInjectionModule(YamlScanRunner):
         supplied = _supplied_forms(payload)
         private = tuple(
             value
-            for value in known_private_values(configured)
+            for value in self._private_reference_values()
             if not any(
                 form in text
                 for text in supplied
