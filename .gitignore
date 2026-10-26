@@ -54,6 +54,19 @@ captured*.txt
 !llms.txt
 !llms-full.txt
 Codex audit
+# --- Media & Heavy Binaries ---
+*.mp4
+*.mov
+*.avi
+*.mkv
+*.webm
+
+# --- Tooling & Permission-locked directories ---
+.gstack/
+
+# --- Temporary & Scratch files ---
+*.tmp
+*.bak
 
 
 
@@ -71,7 +84,10 @@ scratch/
 /deploy/k8s/secrets.yaml
 /deploy/k8s/secrets.*.yaml
 *.cdx.json
+DESIGN-CHANGES.md
+
 # Local encryption/signing keys and recoverable remediation preimages.
 agentscan-data.key
 agentscan-jwt.pem
 .agentscan-recovery/
+profile-readme/

@@ -555,6 +555,8 @@
     }
   </style>
   <link rel="stylesheet" href="/static/dashboard.css">
+  <link rel="stylesheet" href="/static/brand-ui.css">
+  <link rel="preload" href="/static/fonts/AgentScan/SpaceGrotesk.woff2" as="font" type="font/woff2" crossorigin>
   <script src="/static/scan-analytics.js"></script>
   <script src="/static/dashboard.js"></script>
   <script src="/static/form-validation.js"></script>
@@ -576,8 +578,9 @@
       <div class="brand-header flex items-center px-3.5 border-b h-16 transition-all"
         style="border-color: var(--border)">
         <a href="#overview" onclick="handleBrandClick()" class="brand-link select-none cursor-pointer flex items-center gap-2.5 pl-0.5 group" title="AgentScan — Click to open Overview">
-          <img src="/static/logo.svg" alt="AgentScan" class="brand-logo rounded-lg shrink-0 object-contain shadow-xs transition-transform duration-200 group-hover:scale-105 border border-[#1A1A1A]/10 dark:border-white/15" />
-          <h1 class="brand-expanded-text leading-none m-0 p-0 inline">AgentScan</h1>
+          <img src="/static/logo.svg" alt="" class="brand-logo brand-symbol brand-light" />
+          <img src="/static/logo-dark.svg" alt="" class="brand-logo brand-symbol brand-dark" />
+          <span class="brand-expanded-text"><img src="/static/logo-wordmark.svg" alt="AgentScan" class="brand-wordmark brand-light" /><img src="/static/logo-wordmark-dark.svg" alt="AgentScan" class="brand-wordmark brand-dark" /></span>
         </a>
       </div>
 
@@ -778,7 +781,7 @@
             aria-label="Global search files and tabs"
             autocomplete="off"
             class="w-full bg-white border rounded-full pl-7 sm:pl-9 pr-2.5 sm:pr-14 py-1 text-xs font-medium text-[#1A1A1A] placeholder-[#888888] focus:outline-none transition-all shadow-xs h-[30px] sm:h-[34px]"
-            style="border-color: var(--border); font-size: 11px !important; letter-spacing: normal !important;">
+            style="border-color: var(--border)">
           <kbd
             class="hidden sm:inline-block absolute right-2.5 top-1/2 -translate-y-1/2 text-[10px] font-mono font-bold text-[#666666] bg-[#F7F5EE] border border-[#1A1A1A]/10 px-1.5 py-0.5 rounded-md pointer-events-none">Ctrl+K</kbd>
         </div>
@@ -788,6 +791,8 @@
           style="border-color: var(--border-strong)">
         </div>
       </div>
+
+      <div class="mobile-brand" aria-label="AgentScan"><img src="/static/logo-wordmark.svg" alt="AgentScan" class="brand-light" /><img src="/static/logo-wordmark-dark.svg" alt="AgentScan" class="brand-dark" /></div>
 
       <!-- Action items & controls row -->
       <div class="flex items-center gap-1.5 sm:gap-2 shrink-0 py-1 ml-1.5 sm:ml-2">
@@ -818,7 +823,7 @@
           Static Audit
         </button>
 
-        <button id="btn-reload" onclick="handleReload()" class="w-7 h-7 sm:w-8 sm:h-8 rounded-full border bg-white hover:bg-[#EDE9DE] transition-all flex items-center justify-center shrink-0 cursor-pointer shadow-xs" style="border-color: var(--border)" title="Reload Dashboard & Telemetry">
+        <button id="btn-reload" aria-label="Refresh dashboard" onclick="handleReload()" class="w-7 h-7 sm:w-8 sm:h-8 rounded-full border bg-white hover:bg-[#EDE9DE] transition-all flex items-center justify-center shrink-0 cursor-pointer shadow-xs" style="border-color: var(--border)" title="Reload Dashboard & Telemetry">
           <svg class="w-3.5 h-3.5 text-[#1A1A1A]" viewBox="0 0 24 24" fill="none" stroke="currentColor"
             stroke-width="2.5">
             <path d="M23 4v6h-6M1 20v-6h6" />
@@ -832,7 +837,7 @@
 
         <!-- More Options Menu -->
         <div class="relative" id="navbar-more-container">
-          <button id="btn-navbar-more" onclick="toggleNavbarMoreMenu()" aria-label="More Options" title="More Tools & Links"
+          <button id="btn-navbar-more" onclick="toggleNavbarMoreMenu()" aria-label="Tools, actions and exports" title="Tools, actions and exports"
             class="w-7 h-7 sm:w-8 sm:h-8 rounded-full border bg-white hover:bg-[#EDE9DE] transition-all flex items-center justify-center shrink-0 cursor-pointer shadow-xs"
             style="border-color: var(--border)">
             <svg class="w-3.5 h-3.5 sm:w-4 sm:h-4 text-[#1A1A1A]" viewBox="0 0 24 24" fill="currentColor">
@@ -840,6 +845,7 @@
               <circle cx="19" cy="12" r="2"></circle>
               <circle cx="5" cy="12" r="2"></circle>
             </svg>
+            <span class="header-tools-label">Tools</span>
           </button>
 
           <div id="navbar-more-dropdown"
@@ -932,10 +938,6 @@
           <span id="assessment-status" class="assessment-badge status-neutral">NOT RUN</span>
         </div>
 
-        <details class="dl-card feature-guide" id="feature-guide">
-          <summary><span><strong>Workspace capabilities &amp; starting guide</strong><small>Available tools, setup requirements, report exports and terminal workflows</small></span><span aria-hidden="true">+</span></summary>
-          <div id="feature-guide-content"><p>Loading installed capabilities...</p></div>
-        </details>
 
         <div class="overview-metrics grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <div class="dl-card metric-card">
@@ -981,6 +983,11 @@
             <div id="assessment-coverage" aria-live="polite"></div>
           </div>
         </div>
+
+        <details class="dl-card feature-guide" id="feature-guide">
+          <summary><span><strong>Workspace capabilities &amp; starting guide</strong><small>Available tools, setup requirements, report exports and terminal workflows</small></span><span aria-hidden="true">+</span></summary>
+          <div id="feature-guide-content"><p>Loading installed capabilities...</p></div>
+        </details>
 
         <section id="scan-analytics" aria-label="Scan evidence charts">
           <p class="analytics-unavailable">Run a scan or load a saved report to view charts.</p>
@@ -1550,7 +1557,11 @@
           <input type="password" id="scan-canary-token" autocomplete="off" maxlength="128"
             aria-describedby="scan-canary-help" placeholder="Reference already installed privately on your agent"
             class="w-full px-3.5 py-2 rounded-xl bg-[#F7F5EE] border border-[#1A1A1A]/10 text-xs font-mono text-[#1A1A1A] focus:outline-none focus:border-[#1A1A1A]">
-          <p id="scan-canary-help" class="text-[11px] text-[#666666]">Use a synthetic value of 16–128 letters, numbers, underscores or hyphens. Configure it in your agent's trusted instructions before scanning; entering it here does not install it. ATK-001 and ATK-002 assess complete known-reference disclosure. ATK-002's persona checks stay inconclusive and send no probes without a usable private reference. ATK-011 uses the same private-reference requirement for multilingual prompts; language keywords or marker echoes are not evidence of disclosure. Other modules have their own criteria. This field is sent to your scanner for comparison and is not saved in browser storage. Do not use a real credential.</p>
+          <p class="scan-field-summary">Use a synthetic value of 16–128 letters, numbers, underscores or hyphens. Configure it on your agent first; entering it here does not install it. Do not use a real credential.</p>
+          <details class="scan-field-help">
+            <summary tabindex="0">Private reference setup and assessment details</summary>
+            <p id="scan-canary-help" class="text-[11px] text-[#666666]">Use a synthetic value of 16–128 letters, numbers, underscores or hyphens. Configure it in your agent's trusted instructions before scanning; entering it here does not install it. ATK-001 and ATK-002 assess complete known-reference disclosure. ATK-002's persona checks stay inconclusive and send no probes without a usable private reference. ATK-011 uses the same private-reference requirement for multilingual prompts; language keywords or marker echoes are not evidence of disclosure. Other modules have their own criteria. This field is sent to your scanner for comparison and is not saved in browser storage. Do not use a real credential.</p>
+          </details>
         </div>
 
         <div class="space-y-1.5">
@@ -1560,7 +1571,11 @@
             <option value="none">Document adapter not configured</option>
             <option value="document_v1">Target implements document adapter v1</option>
           </select>
-          <p id="scan-indirect-help" class="text-[11px] text-[#666666]">ATK-005 requires an HTTP target with a document ingestion adapter and a private synthetic reference. Select v1 only after implementing its receipt contract on your agent. Ordinary chat and tool-result ingestion remain unassessed; missing evidence stays visible in the report.</p>
+          <p class="scan-field-summary">ATK-005 needs an HTTP target with a document ingestion adapter and a private synthetic reference. Select v1 only after implementing the receipt contract.</p>
+          <details class="scan-field-help">
+            <summary tabindex="0">Document adapter requirements</summary>
+            <p id="scan-indirect-help" class="text-[11px] text-[#666666]">ATK-005 requires an HTTP target with a document ingestion adapter and a private synthetic reference. Select v1 only after implementing its receipt contract on your agent. Ordinary chat and tool-result ingestion remain unassessed; missing evidence stays visible in the report.</p>
+          </details>
         </div>
 
         <div class="space-y-1.5">
@@ -1569,7 +1584,11 @@
             aria-describedby="scan-mcp-inventory-help"
             placeholder='{"endpoint":"mcp+sses://your-agent.example/mcp","tools":{},"algorithm":"mcp-tool-json-sha256-v1"}'
             class="w-full px-3.5 py-2 rounded-xl bg-[#F7F5EE] border border-[#1A1A1A]/10 text-xs font-mono text-[#1A1A1A] focus:outline-none focus:border-[#1A1A1A]"></textarea>
-          <p id="scan-mcp-inventory-help" class="text-[11px] text-[#666666]">Leave blank for a regular scan. Supplying an independently approved baseline selects ATK-006 catalog comparison only: initialization and tool listing, without calling tools. Use the exact MCP SSE endpoint, standard mode and deterministic analysis with no document adapter. Tool keys map to approved lowercase SHA256 metadata hashes; an empty tools object approves no tools. Observed metadata is never approved automatically. Catalog deviations are separate from target vulnerability findings and have no security score. This checks your target's catalog; the MCP Tools panel exposes AgentScan's own tools.</p>
+          <p class="scan-field-summary">Leave blank for a regular scan. A baseline selects ATK-006 catalog comparison only, without calling tools. Use the exact MCP SSE endpoint, standard mode, deterministic analysis and no document adapter.</p>
+          <details class="scan-field-help">
+            <summary tabindex="0">Catalog comparison requirements</summary>
+            <p id="scan-mcp-inventory-help" class="text-[11px] text-[#666666]">Leave blank for a regular scan. Supplying an independently approved baseline selects ATK-006 catalog comparison only: initialization and tool listing, without calling tools. Use the exact MCP SSE endpoint, standard mode and deterministic analysis with no document adapter. Tool keys map to approved lowercase SHA256 metadata hashes; an empty tools object approves no tools. Observed metadata is never approved automatically. Catalog deviations are separate from target vulnerability findings and have no security score. This checks your target's catalog; the MCP Tools panel exposes AgentScan's own tools.</p>
+          </details>
         </div>
 
         <div class="space-y-1.5">
@@ -1578,7 +1597,11 @@
             aria-describedby="scan-factuality-help"
             placeholder='{"schema_version":"agentscan.factuality.v1","target_url":"https://your-agent.example/chat","cases":[{"id":"SYNTH-01","question":"What is the approved synthetic project code?","expected_answer":"ALPHA","false_answer":"BETA"}]}'
             class="w-full px-3.5 py-2 rounded-xl bg-[#F7F5EE] border border-[#1A1A1A]/10 text-xs font-mono text-[#1A1A1A] focus:outline-none focus:border-[#1A1A1A]"></textarea>
-          <p id="scan-factuality-help" class="text-[11px] text-[#666666]">Leave blank for a regular scan. Use client-approved synthetic facts and the exact HTTP(S) endpoint. This selects ATK-009 answer-policy checks only, with two requests per case (1–16 cases): a neutral question and a false-answer pressure prompt. Questions and false answers go to your target; expected answers stay in the scanner. No analysis-provider judge is used. Choose standard mode, deterministic analysis, no document adapter and no MCP catalog baseline. Exact-answer mismatches are separate policy results; they do not verify factual truth or measure overall agent security. This form does not save your baseline in browser storage or scan history.</p>
+          <p class="scan-field-summary">Leave blank for a regular scan. A baseline selects ATK-009 answer-policy checks only. Use approved synthetic facts, the exact HTTP(S) endpoint, standard mode, deterministic analysis, no document adapter and no MCP catalog baseline.</p>
+          <details class="scan-field-help">
+            <summary tabindex="0">Answer-policy requirements and data handling</summary>
+            <p id="scan-factuality-help" class="text-[11px] text-[#666666]">Leave blank for a regular scan. Use client-approved synthetic facts and the exact HTTP(S) endpoint. This selects ATK-009 answer-policy checks only, with two requests per case (1–16 cases): a neutral question and a false-answer pressure prompt. Questions and false answers go to your target; expected answers stay in the scanner. No analysis-provider judge is used. Choose standard mode, deterministic analysis, no document adapter and no MCP catalog baseline. Exact-answer mismatches are separate policy results; they do not verify factual truth or measure overall agent security. This form does not save your baseline in browser storage or scan history.</p>
+          </details>
         </div>
 
         <!-- Scan Progress Box -->
