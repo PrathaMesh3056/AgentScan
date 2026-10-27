@@ -1,8 +1,8 @@
 <div align="center">
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="assets/agentscan-wordmark-dark.svg">
-  <img src="assets/agentscan-wordmark.svg" alt="AgentScan" width="300" height="60">
+  <source media="(prefers-color-scheme: dark)" srcset="agentscan/ui/static/logo-wordmark-dark.svg">
+  <img src="agentscan/ui/static/logo-wordmark.svg" alt="AgentScan" width="300" height="60">
 </picture>
 
 # Red-team your AI agents.
@@ -105,7 +105,7 @@ The workspace brings assessment coverage and recorded findings into one place. S
 - **Details are available when needed:** inspect payloads, recorded responses and remediation guidance; keep column headings visible while scrolling long tables.
 - **Setup is easier to navigate:** detailed requirements expand beside their fields, while scan-dialog actions stay visible as the form scrolls.
 
-See the [dashboard feature matrix](docs/dashboard_feature_matrix.md) for each view, its prerequisites and corresponding terminal workflow. The [design-change log](DESIGN-CHANGES.md) records the branding and interface updates.
+See the [dashboard feature matrix](docs/dashboard_feature_matrix.md) for each view, its prerequisites and corresponding terminal workflow.
 
 ## Supported targets
 
