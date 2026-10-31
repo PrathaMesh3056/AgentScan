@@ -73,6 +73,17 @@ preserved.
 
 ## Implemented capabilities
 
+The 31 October [T3MP3ST source comparison](docs/research/t3mp3st_comparison.md)
+maps AI trust boundaries to AgentScan's measured evidence and open gaps. Its
+execution-boundary testing approach informed an independent HTTP hardening fix:
+captured-request custom headers are now removed across origins, consistently
+with explicitly supplied target headers. Once a chain crosses origins, cookies
+cannot be restored from HTTPX's jar on later hops. Destination protocol headers
+are regenerated without restoring credential defaults. Source code was not imported. This
+scanner credential boundary does not add model-effectiveness or tool-execution
+claims; [redirect body and enrollment limits](docs/DATA_POLICY.md#http-redirect-credentials-and-assessment-scope)
+remain explicit.
+
 | Capability | Implemented behavior | Verification boundary |
 |---|---|---|
 | Agent assessments | SCAN, EXPLOIT and DEEP orchestration; 27 attack modules mapped to OWASP LLM 2025 scenarios | Module availability depends on the selected profile. Mapping scenarios does not establish complete category coverage or detector accuracy. |

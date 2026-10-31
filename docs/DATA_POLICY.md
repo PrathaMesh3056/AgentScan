@@ -47,6 +47,29 @@ The analysis client accepts a literal loopback HTTP address only: `AGENTSCAN_LOC
 
 AgentScan's analysis policy applies to attacker/judge processing of findings and responses. A target scan communicates with the explicitly selected target endpoint. Choose a target and its data policy accordingly. Live OSV dependency lookups send package names and versions; use `audit --offline` to avoid those lookups. Browser/HTTP/MCP target traffic and separate downloads remain explicit capabilities rather than analysis-provider calls.
 
+### HTTP redirect credentials and assessment scope
+
+HTTP target requests check the configured host/origin enrollment before every
+delivery, including redirects. Across different origins (scheme, host or port),
+the shared HTTP path removes operator-supplied header names from both
+`Target.extra_headers` and captured `RequestTemplate.headers`, alongside common
+authentication headers. Same-origin requests retain their configured headers.
+Destination Host and body-framing headers are regenerated after removal rather
+than restored from the captured profile. Redirects consume the shared request budget.
+Once a redirect chain crosses origins, subsequent hops also suppress cookies
+that HTTPX might reattach from its jar. This conservative rule also suppresses
+new destination cookies within that chain. Fresh requests and chains that stay
+on the original origin keep their configured cookie behavior.
+
+This protects headers; it does not sanitize request bodies or query parameters.
+A 307/308 redirect can preserve a captured JSON body. For sensitive captured
+context, restrict `Target.allowed_origins` to the exact authorized origin or set
+`max_redirects=0` through the SDK. Local CLI defaults are trusted operator use;
+they do not automatically enable the service's host enrollment or DNS/IP pinning.
+Browser and native MCP transports have their own contracts. The
+[T3MP3ST comparison and AI-boundary map](research/t3mp3st_comparison.md) explains
+which boundaries AgentScan measures and which need independent effect evidence.
+
 ## API service
 
 Every tenant needs an administrator-defined target policy. Local and external analysis are separately disabled unless `allow_local_model_analysis` or `allow_external_model_analysis` is set to `true`. API clients select `analysis_mode: "deterministic"`, `"local"` or `"external"` and `data_classification: "sensitive"` or `"non_sensitive"`. Submission and worker execution both enforce the permissions and sensitive-data restriction.

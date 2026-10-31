@@ -182,6 +182,7 @@ async def enrolled_request(
 ) -> httpx.Response:
     validate_target_url(url, target)
     request = client.build_request(method, url, json=body)
+    crossed_origin = False
     for _ in range(target.max_redirects + 1):
         validate_target_url(str(request.url), target)
         from agentscan.core.client import consume_target_request
@@ -227,10 +228,40 @@ async def enrolled_request(
                 await response.aclose()
         await response.aclose()
         if canonical_origin(str(request.url)) != canonical_origin(str(next_request.url)):
-            sensitive = ["authorization", "cookie", "x-api-key", *target.extra_headers]
+            crossed_origin = True
+            sensitive = [
+                "authorization",
+                "cookie",
+                "x-api-key",
+                "host",
+                "content-length",
+                "transfer-encoding",
+                *target.extra_headers,
+            ]
+            if target.request_template is not None:
+                sensitive.extend(target.request_template.headers)
             if target.auth_header and ":" in target.auth_header:
                 sensitive.append(target.auth_header.partition(":")[0].strip())
             for header in sensitive:
                 next_request.headers.pop(header, None)
+            # Construct a request without client defaults: restore destination
+            # authority and body framing, never the original credential headers.
+            # enrolled_request supplies buffered JSON; use the redirect's body
+            # and method so a 303 does not regain its original POST payload.
+            content = await next_request.aread()
+            if content and "content-type" not in next_request.headers:
+                next_request.headers["Content-Type"] = "application/json"
+            next_request = httpx.Request(
+                next_request.method,
+                next_request.url,
+                headers=next_request.headers,
+                content=content,
+                extensions=next_request.extensions,
+            )
+        if crossed_origin:
+            # HTTPX builds every redirect from the client cookie jar. Cookies
+            # have no port boundary, so a same-origin continuation at the new
+            # port can otherwise restore the source origin's session cookie.
+            next_request.headers.pop("cookie", None)
         request = next_request
     raise httpx.TooManyRedirects("Too many target redirects", request=request)
