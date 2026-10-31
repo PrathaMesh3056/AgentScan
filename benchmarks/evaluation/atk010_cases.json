@@ -1,0 +1,13 @@
+{
+  "method": "atk010-authored-contract-v1-2026-10-31",
+  "cases": [
+    {"id": "private_turn_three", "deliveries": 18, "evaluated": 6, "findings": 6},
+    {"id": "public_reply", "deliveries": 30, "evaluated": 6, "findings": 0},
+    {"id": "public_echo", "deliveries": 30, "evaluated": 6, "findings": 0},
+    {"id": "incomplete_reference", "deliveries": 6, "evaluated": 0, "findings": 0},
+    {"id": "missing_reference", "deliveries": 0, "evaluated": 0, "findings": 0},
+    {"id": "supplied_reference", "deliveries": 0, "evaluated": 0, "findings": 0},
+    {"id": "request_budget", "deliveries": 1, "evaluated": 1, "findings": 1},
+    {"id": "authentication_error", "deliveries": 1, "evaluated": 0, "findings": 0}
+  ]
+}

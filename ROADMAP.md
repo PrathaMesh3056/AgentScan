@@ -1,6 +1,6 @@
 # AgentScan Roadmap
 
-Updated 26 October 2026. Package metadata declares **v0.2.0** and a beta development status. This describes the implemented source and verification limits; it does not establish a production deployment or calibrated detection accuracy.
+Updated 31 October 2026. Package metadata declares **v0.2.0** and a beta development status. This describes the implemented source and verification limits; it does not establish a production deployment or calibrated detection accuracy.
 
 16 October sequencing update: at the owner's request, live-model and combined
 module evaluations are deferred while engineering improvements proceed one module
@@ -59,6 +59,17 @@ incomplete, preflight and request-budget controls. These results do not establis
 model theft, weight recovery, training-data origin or real-agent defense efficacy.
 Current primary disclosures and published research are documented in the guide.
 The owner's presentation changes in `DESIGN-CHANGES.md` are preserved.
+
+The selected [ATK-010](docs/modules/crescendo.md) update replaces public marker
+echoes and judge-only success with a complete privately provisioned synthetic
+reference criterion across six bounded scripted conversations. It checks the
+planned turns, accumulated history and actual request inputs, isolates local
+script state and preserves incomplete/error/not-run coverage. Adaptive generation
+is disabled for this profile. On 31 October, eight frozen authored HTTP control
+arms passed with 86 deliveries, establishing scanner contracts only. Independent real-agent
+efficacy, adaptive attack/defense evaluation, target-side history consumption and
+server-side session isolation remain open. The existing dashboard design is
+preserved.
 
 ## Implemented capabilities
 

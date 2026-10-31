@@ -58,7 +58,11 @@ async def api_trajectory() -> Any:
     report = state.report
     turns = [t.model_dump(mode="json") for t in (report.trajectory if report else [])]
     ssp = report.ssp_class if report else None
-    if ssp is None and turns:
+    reference_conversation = report is not None and any(
+        item.get("assessment_scope") == "crescendo_complete_known_reference"
+        for item in report.module_outcomes
+    )
+    if ssp is None and turns and not reference_conversation:
         from agentscan.core.models import TurnRecord
 
         ssp = classify_ssp([TurnRecord.model_validate(t) for t in turns])

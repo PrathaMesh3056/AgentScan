@@ -28,7 +28,7 @@ from agentscan.core.output_witness import CONSUMER_VALIDATION_SCOPES
 from agentscan.core.rag_witness import RAG_VALIDATION_SCOPES
 from agentscan.core.scorer import calculate_score
 from agentscan.core.ssp_mapper import classify_ssp
-from agentscan.core.trace import recorder
+from agentscan.core.trace import recorder, redact_sensitive_data
 from agentscan.core.trajectory import trajectory_recorder
 from agentscan.telemetry.otel import observe_scan
 
@@ -52,6 +52,7 @@ def _attach_trajectory(report: ScanReport) -> None:
             "persona_complete_known_reference",
             "multilingual_complete_known_reference",
             "model_ip_complete_known_reference",
+            "crescendo_complete_known_reference",
         }
         | RAG_VALIDATION_SCOPES
         for outcome in report.module_outcomes
@@ -143,7 +144,11 @@ async def run_scan(target: Target, *, reset_trajectory: bool = True) -> ScanRepo
                 "judge_model": target.judge_model or model,
             }
         )
-    report = ScanReport(target_url=target.url, scan_mode=target.mode, framework=target.framework)
+    report = ScanReport(
+        target_url=redact_sensitive_data(target.url),
+        scan_mode=target.mode,
+        framework=target.framework,
+    )
     if target.factuality_baseline is not None:
         try:
             target = Target.model_validate(target.model_dump(warnings=False))
@@ -387,9 +392,10 @@ async def run_scan(target: Target, *, reset_trajectory: bool = True) -> ScanRepo
 
 async def run_scan_multi(target: Target, modes: list[ScanMode]) -> ScanReport:
     """Run several modes in one isolated context and retain all coverage records."""
-    begin_scan_context()
+    context = begin_scan_context()
+    context.redaction_secrets = target_redaction_secrets(target)
     merged = ScanReport(
-        target_url=target.url,
+        target_url=redact_sensitive_data(target.url),
         scan_mode=modes[0] if modes else target.mode,
         framework=target.framework,
     )

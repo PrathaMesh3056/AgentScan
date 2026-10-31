@@ -214,6 +214,12 @@ class AgentScanClient:
         else:
             resp = await self._connector.send_conversation(messages)
 
+        if not self._record_exchange_enabled:
+            # Evidence profiles may retain only digests. Match send_message's
+            # opt-out before either recorder can retain confidential replies.
+            _validate_response(resp)
+            return resp
+
         payload = next(
             (m.get("content", "") for m in reversed(messages) if m.get("role") == "user"),
             " || ".join(f"{m.get('role')}: {m.get('content', '')}" for m in messages),

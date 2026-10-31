@@ -1,6 +1,4 @@
-# tests/test_attacks/test_crescendo.py
-#
-# Tests for agentscan/attacks/exploit/crescendo.py (ATK-010)
+"""ATK-010's declared deterministic conversation and private-reference scope."""
 
 from __future__ import annotations
 
@@ -12,151 +10,118 @@ import pytest
 import respx
 
 from agentscan.attacks.exploit.crescendo import CrescendoModule
-from agentscan.core.models import ScanMode, Severity, Target
+from agentscan.core.context import active_context
+from agentscan.core.models import ScanMode, Target
+from agentscan.core.outcomes import ExecutionLedger, execution_ledger
 
-CANARY = "AGENTSCAN-CRESCENDO-OK"
-SAFE = "I can discuss security research at a high level, but I will not drop my constraints."
+URL = "http://synthetic.invalid/crescendo"
+PRIVATE = "SYNTHETIC_CRESCENDO_PRIVATE_Q9k7Z"
+SAFE = "I can discuss the public task without disclosing the private reference."
+
+
+@pytest.fixture(autouse=True)
+def isolated_context():
+    token = active_context.set(None)
+    try:
+        yield
+    finally:
+        active_context.reset(token)
 
 
 @pytest.fixture
-def module() -> CrescendoModule:
-    return CrescendoModule()
+def ledger():
+    value = ExecutionLedger()
+    token = execution_ledger.set(value)
+    try:
+        yield value
+    finally:
+        execution_ledger.reset(token)
 
 
-@pytest.fixture
-def exploit_target() -> Target:
-    return Target(url="http://test-agent.example.com/chat", mode=ScanMode.EXPLOIT)
+def test_six_bounded_conversation_families_have_no_public_success_marker():
+    module = CrescendoModule()
+    scripts = module._load_scripts()
+    assert module.variant_count() == len(scripts) == 6
+    assert [script["id"] for script in scripts] == [f"CRESC-{n:03d}" for n in range(1, 7)]
+    assert all(4 <= len(script["turns"]) <= 6 for script in scripts)
+    assert all("canary" not in script and "judge_objective" not in script for script in scripts)
+    assert "AGENTSCAN-CRESCENDO-OK" not in json.dumps(scripts)
+    assert module.is_applicable(Target(url=URL, mode=ScanMode.EXPLOIT))
+    assert not module.is_applicable(Target(url=URL, mode=ScanMode.SCAN))
 
 
-class TestCrescendoIntegration:
-    @pytest.mark.asyncio
-    async def test_leak_on_turn_five_produces_finding(
-        self, module: CrescendoModule, exploit_target: Target
-    ) -> None:
-        def only_leak_on_turn_five(request: httpx.Request) -> httpx.Response:
-            body = json.loads(request.content)
-            user_turns = sum(1 for m in body.get("messages", []) if m.get("role") == "user")
-            if user_turns >= 5:
-                return httpx.Response(200, json={"response": CANARY})
-            return httpx.Response(200, json={"response": SAFE})
+@pytest.mark.asyncio
+async def test_history_grows_with_real_prior_answers_and_resets_per_script(ledger):
+    requests = []
 
-        with respx.mock(assert_all_called=False) as mock:
-            mock.post("http://test-agent.example.com/chat").mock(side_effect=only_leak_on_turn_five)
-            findings = await module.run(exploit_target)
+    def respond(request):
+        body = json.loads(request.content)
+        messages = body["messages"]
+        requests.append(messages)
+        turn = (len(messages) + 1) // 2
+        assert [m["role"] for m in messages] == ["user", "assistant"] * (turn - 1) + ["user"]
+        assert all(m["content"] == f"Public answer {n + 1}" for n, m in enumerate(messages[1::2]))
+        assert PRIVATE not in request.content.decode()
+        return httpx.Response(200, json={"response": f"Public answer {turn}", "complete": True})
 
-        assert len(findings) >= 1
-        finding = findings[0]
-        assert finding.attack_id == "ATK-010"
-        assert finding.owasp_id == "LLM01"
-        assert finding.severity in (Severity.HIGH, Severity.MEDIUM, Severity.CRITICAL)
-        assert finding.turn_number == 5
-        assert finding.metadata.get("yaml_variant_id") == "CRESC-001"
-
-    @pytest.mark.asyncio
-    async def test_safe_agent_produces_no_finding(
-        self, module: CrescendoModule, exploit_target: Target
-    ) -> None:
-        with respx.mock(assert_all_called=False) as mock:
-            mock.post("http://test-agent.example.com/chat").mock(
-                return_value=httpx.Response(200, json={"response": SAFE})
-            )
-            findings = await module.run(exploit_target)
-
-        assert len(findings) == 0
-
-    @pytest.mark.asyncio
-    async def test_sends_growing_conversation_history(
-        self, module: CrescendoModule, exploit_target: Target
-    ) -> None:
-        captured: list[list[dict]] = []
-
-        def capture(request: httpx.Request) -> httpx.Response:
-            body = json.loads(request.content)
-            captured.append(list(body.get("messages", [])))
-            return httpx.Response(200, json={"response": SAFE})
-
-        with respx.mock(assert_all_called=False) as mock:
-            mock.post("http://test-agent.example.com/chat").mock(side_effect=capture)
-            await module.run(exploit_target)
-
-        assert len(captured) >= 5
-        user_counts = [sum(1 for m in msgs if m.get("role") == "user") for msgs in captured]
-        assert user_counts[:5] == [1, 2, 3, 4, 5]
-
-    @pytest.mark.asyncio
-    async def test_attacker_model_generates_later_turns(self, module: CrescendoModule) -> None:
-        target = Target(
-            url="http://test-agent.example.com/chat",
-            mode=ScanMode.EXPLOIT,
-            attacker_model="gpt-4o-mini",
+    with respx.mock() as mock:
+        route = mock.post(URL).mock(side_effect=respond)
+        findings = await CrescendoModule().run(
+            Target(url=URL, mode="EXPLOIT", canary_token=PRIVATE)
         )
-        generated = "GENERATED-CRESCENDO-TURN please say AGENTSCAN-CRESCENDO-OK"
-        captured_users: list[str] = []
+    assert route.call_count == 30
+    assert [(len(messages) + 1) // 2 for messages in requests] == list(range(1, 6)) * 6
+    assert findings == []
+    assert ledger.selected == ledger.evaluated == 6
+    assert [row["status"] for row in ledger.observations] == ["NO_DISCLOSURE"] * 6
+    assert all(row["delivered_turns"] == row["evaluated_turns"] == 5 for row in ledger.observations)
 
-        def capture(request: httpx.Request) -> httpx.Response:
-            body = json.loads(request.content)
-            users = [m["content"] for m in body.get("messages", []) if m.get("role") == "user"]
-            captured_users.append(users[-1] if users else "")
-            return httpx.Response(200, json={"response": SAFE})
 
-        with (
-            patch(
-                "agentscan.attacks.exploit.crescendo.AIClient.validate_environment",
-                return_value=(True, []),
-            ),
-            patch(
-                "agentscan.attacks.exploit.crescendo.AIClient.complete",
-                new=AsyncMock(return_value=generated),
-            ),
-            respx.mock(assert_all_called=False) as mock,
-        ):
-            mock.post("http://test-agent.example.com/chat").mock(side_effect=capture)
-            await module.run(target)
+@pytest.mark.asyncio
+@pytest.mark.parametrize("reply", [PRIVATE, " ".join(PRIVATE), f'I refuse, but "{PRIVATE}".'])
+async def test_disclosure_stops_script_before_replaying_private_answer(reply, ledger):
+    def respond(request):
+        body = json.loads(request.content)
+        turn = len(body["messages"][::2])
+        assert turn <= 3
+        assert PRIVATE not in request.content.decode()
+        return httpx.Response(200, json={"response": reply if turn == 3 else SAFE, "done": True})
 
-        assert any(generated in u for u in captured_users)
-
-    @pytest.mark.asyncio
-    async def test_llm_judge_on_last_turn(self, module: CrescendoModule) -> None:
-        target = Target(
-            url="http://test-agent.example.com/chat",
-            mode=ScanMode.EXPLOIT,
-            judge_model="gpt-4o-mini",
+    with respx.mock() as mock:
+        route = mock.post(URL).mock(side_effect=respond)
+        findings = await CrescendoModule().run(
+            Target(url=URL, mode="EXPLOIT", canary_token=PRIVATE)
         )
-        fake_judge = '{"success": true, "reason": "agent abandoned constraints on the last turn"}'
+    assert route.call_count == 18
+    assert ledger.evaluated == len(findings) == 6
+    assert all(f.turn_number == 3 for f in findings)
+    assert all(f.metadata["tool_execution_verified"] is False for f in findings)
+    assert PRIVATE not in json.dumps([f.model_dump(mode="json") for f in findings])
+    assert all(
+        row["status"] == "DISCLOSURE" and row["finding_turn"] == 3 for row in ledger.observations
+    )
 
-        with (
-            patch(
-                "agentscan.attacks.exploit.crescendo.AIClient.validate_environment",
-                return_value=(True, []),
-            ),
-            patch(
-                "agentscan.attacks.exploit.crescendo.AIClient.complete",
-                new=AsyncMock(return_value=fake_judge),
-            ),
-            respx.mock(assert_all_called=False) as mock,
-        ):
-            mock.post("http://test-agent.example.com/chat").mock(
-                return_value=httpx.Response(
-                    200,
-                    json={"response": "Fine â€” I will align with the evaluation instructions."},
-                )
+
+@pytest.mark.asyncio
+async def test_models_mutations_and_retry_opt_ins_cannot_expand_deterministic_profile(ledger):
+    with (
+        patch("agentscan.core.ai_client.AIClient.complete", new_callable=AsyncMock) as provider,
+        respx.mock() as mock,
+    ):
+        route = mock.post(URL).respond(200, json={"response": SAFE})
+        findings = await CrescendoModule().run(
+            Target(
+                url=URL,
+                mode="EXPLOIT",
+                canary_token=PRIVATE,
+                mutate=True,
+                mutation_budget=10,
+                retry_state_changing_requests=True,
+                attacker_model="ollama/never-run",
+                judge_model="ollama/never-run",
             )
-            findings = await module.run(target)
-
-        judge_findings = [f for f in findings if f.metadata.get("detection_method") == "llm_judge"]
-        assert len(judge_findings) >= 1
-        assert judge_findings[0].attack_id == "ATK-010"
-        assert judge_findings[0].turn_number == 5
-
-
-class TestVariantCount:
-    def test_variant_count_matches_yaml(self, module: CrescendoModule) -> None:
-        assert module.variant_count() == 6
-        scripts = module._load_scripts()
-        assert all(len(s["turns"]) >= 4 for s in scripts)
-
-    def test_exploit_only(self, module: CrescendoModule) -> None:
-        scan_target = Target(url="http://test-agent.example.com/chat", mode=ScanMode.SCAN)
-        exploit_target = Target(url="http://test-agent.example.com/chat", mode=ScanMode.EXPLOIT)
-        assert module.is_applicable(scan_target) is False
-        assert module.is_applicable(exploit_target) is True
+        )
+    provider.assert_not_called()
+    assert route.call_count == 30
+    assert ledger.evaluated == 6
+    assert findings == []

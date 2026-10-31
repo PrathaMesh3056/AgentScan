@@ -516,7 +516,7 @@ class TestListAttacks:
         assert "Insecure Output Handling" in result.output
         assert "RAG / Knowledge-Base Poisoning" in result.output
         assert "Overreliance / Hallucination" in result.output
-        assert "Crescendo Multi-Turn Escalation" in result.output
+        assert "Crescendo Multi-Turn Reference Disclosure" in result.output
 
     def test_list_attacks_shows_deep_trojan_scanner(self) -> None:
         pytest.importorskip("torch")
