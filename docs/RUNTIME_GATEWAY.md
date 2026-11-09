@@ -19,13 +19,21 @@ tool executes, emits a hash-chained `ActionReceipt` for every decision, and
 forwards allowed calls to the real tool. A separate asynchronous verifier
 consumes receipts for audit and alerting; it cannot undo an effect.
 
-The spike (PR #12) proved the reference behavior with a fake CRM tool:
+The spike (PR #12) demonstrated the reference behavior with a fake CRM tool:
 
-- an authorized delete was allowed and changed fake state;
-- an unauthorized delete was denied before mutation;
-- ACT-001 produced a finding carrying the denial receipt hash;
-- a direct call outside the gateway failed;
-- the receipt chain verified independently.
+- an authorized fake delete was allowed and changed fake customer state;
+- an unauthorized delete was denied; fake customer-record state was unchanged,
+  and the denial appended an audit event;
+- ACT-001 produced a finding carrying that run's denial receipt hash;
+- a direct call to the mock tool without the gateway's in-process capability
+  raised `PermissionError`; this is not a network or credential-isolation test;
+- the in-memory receipt chain verified per run. Receipt hashes include
+  `trace_id` and `timestamp`, so they differ between runs; state hashes are
+  reproducible.
+
+These are spike results for a scripted, single-process fake tool. They are not
+evidence of production MCP enforcement, durable audit, network bypass
+prevention, or multi-tenant isolation.
 
 This document turns that reference behavior into a production design for MCP
 tools. It is deliberately narrow: one high-risk tool, one MCP server, one
@@ -49,12 +57,19 @@ tenant, then expand.
 ## 3. Non-goals for v1
 
 - No LLM, judge, or scanner in the request path.
-- No full policy language, policy UI, or approval UI.
+- No full policy language, policy UI, or approval UI. The approval workflow is
+  deferred to v1.1; v1 fails closed with `APPROVAL_REQUIRED`.
 - No multi-region, Kubernetes, SSO, billing, or custom auth.
+- No MCP stdio transport in v1. v1 supports streamable HTTP/SSE only.
+- No active-active multi-writer receipt chain. One writer per chain; redundant
+  gateways are standby.
+- No gateway-side resource-to-tenant lookup in v1. The upstream tool must
+  enforce resource-tenant binding; otherwise high-risk calls are denied.
 - No enforcement for tools that cannot be routed through the gateway; those are
   receipt-only/observe, and the honest claim is detection, not prevention.
 - No MCP protocol extensions beyond what is needed to identify the caller and
   tool.
+- No claim of tamper-proof audit without an external anchor. See section 10.
 - No replacement for the CI scanner.
 
 ---
@@ -82,7 +97,7 @@ User / Agent
     ▼
 MCP client ──► AgentScan Gateway (PEP) ──► MCP server ──► Tool
                     │
-                    ├── allow / deny / require_approval
+                    ├── allow / deny (require_approval: v1.1)
                     │   deterministic policy, no LLM, no network
                     │
                     └── ActionReceipt ──► append-only log
@@ -127,9 +142,12 @@ denied.
 | TOCTOU | Decision and execution in the same process; no re-resolution of the tool after the decision. |
 | Tool or schema drift | Hash the MCP `inputSchema` at discovery; deny on drift until approved. |
 | Tool poisoning / shadow server | Server allowlist; signed catalog; no dynamic tool registration without approval. |
-| Log tampering | Hash chain, append-only storage, separate writer credentials, periodic anchor. |
+| Log tampering | Hash chain, single-writer ownership, append-only storage, separate writer credentials, and a signed external anchor when configured. Without an anchor, a compromised host can rewrite and rehash the local chain; the claim is limited accordingly. |
+| Crash after effect, before outcome receipt | Persisted idempotency key, pending-decision reconciliation, no automatic retry of destructive calls. |
+| Session identity change or reconnect | Session is bound at `initialize` to principal, agent, tenant, and delegation; every call is revalidated; mismatch denies and requires a new session. |
+| Cross-tenant resource ID | Tool catalog must declare upstream resource-tenant enforcement; high-risk calls without that declaration are denied. |
 | Gateway compromise | Least privilege per tool credential, rotation, process isolation, no shell. |
-| Identity spoofing | Signed tokens, mTLS, audience and expiry checks. |
+| Identity spoofing | Signed tokens, mTLS, audience and expiry checks, per-call session revalidation. |
 
 The gateway must never trust the agent's self-report, its text response, or a
 tool description supplied at call time.
@@ -156,13 +174,30 @@ tool description supplied at call time.
 
 ### MCP HTTP / streamable HTTP
 
-- One signed bearer token per request or session.
-- Claims include principal, agent, tenant, scopes, and delegation chain.
+- Every request carries a signed bearer token. Claims include principal, agent,
+  tenant, scopes, and delegation chain.
 - The gateway validates signature, audience, expiry, and tenant binding before
   policy evaluation.
 - Missing or invalid identity: deny high-risk; `UNVERIFIED` in observe mode.
 
+### Session binding and reconnect
+
+- `initialize` requires a valid signed token. The gateway binds the session to
+  the tuple `(principal, agent, tenant, delegation_chain)` and records the
+  token expiry.
+- Every later `tools/call` revalidates the presented token against the bound
+  tuple. The token must be unexpired and addressed to the gateway audience.
+- If the token changes principal, agent, tenant, or delegation, the gateway
+  denies `IDENTITY_MISMATCH` and requires a new session. It must not silently
+  rebind an existing session.
+- Reconnect or SSE resumption creates a new session and re-authenticates.
+  Session IDs are routing state, not bearer credentials.
+- A session expires at the earliest of token expiry, idle timeout, or the
+  configured maximum lifetime.
+
 ### MCP stdio
+
+v1 does not support stdio. The following is deferred to v1.1:
 
 - The gateway launches the upstream server and holds its environment secrets.
 - The agent never receives the upstream environment.
@@ -175,15 +210,15 @@ tool description supplied at call time.
 ## 8. MCP integration
 
 The gateway is an MCP proxy: it speaks MCP to the agent and to the upstream
-server. The first transport is streamable HTTP/SSE; stdio follows.
+server. v1 supports streamable HTTP/SSE only. stdio is deferred to v1.1.
 
 ### Intercepted methods
 
 | MCP method | Gateway behavior |
 |---|---|
-| `initialize` | Negotiate protocol; bind session to agent identity; record client info. |
+| `initialize` | Require a signed token; negotiate protocol; bind the session to `(principal, agent, tenant, delegation)`; record client info and token expiry; reject missing or invalid identity. |
 | `tools/list` | Fetch upstream list; canonicalize; hash each `inputSchema`; apply visibility policy; return filtered list. |
-| `tools/call` | Resolve tool identity, validate arguments, evaluate policy, allow or deny, forward if allowed, emit receipt. |
+| `tools/call` | Revalidate session identity, resolve tool identity, validate arguments, evaluate policy, allow or deny, forward if allowed, emit decision and outcome receipts. |
 | `notifications/*` | Pass through; no policy decision. |
 | `resources/*`, `prompts/*` | v1: pass through with audit; policy enforcement is tool-focused. |
 
@@ -202,22 +237,31 @@ new identity and triggers drift handling.
 
 ### `tools/call` flow
 
-1. Parse JSON-RPC request; reject malformed or oversized payloads.
-2. Resolve session → agent → principal; reject missing/invalid identity for
-   high-risk tools.
+1. Parse the JSON-RPC request; reject malformed or oversized payloads.
+2. Resolve the session and revalidate the presented token against the bound
+   `(principal, agent, tenant, delegation)` tuple. Deny `IDENTITY_MISMATCH` if
+   it changed; reject missing or invalid identity for high-risk tools.
 3. Look up the tool by name; verify the schema hash against the approved
    snapshot.
 4. Canonicalize arguments: reject duplicate keys, NaN/Infinity, non-string keys,
    and oversize values; validate required fields and types.
-5. Evaluate policy. Record `policy_id`, `rule_id`, and reason.
-6. On deny: append receipt, return a stable MCP error, do not call upstream.
-7. On allow: append and fsync a `decision` receipt, then call upstream with the
-   gateway-held credential. Never forward the agent's token upstream.
-8. Append an `outcome` receipt for success, error, or timeout; return the
-   upstream result. Decision and outcome receipts share `trace_id` and
-   `request_hash`.
-9. On approval-required: pause, create an approval record, return a stable
-   pending response; timeout denies.
+5. Evaluate policy. Record `policy_id`, `rule_id`, `resource_tenant_enforced`,
+   and the reason.
+6. On deny: append a `decision` receipt with status `denied`, return a stable
+   MCP error, and do not call upstream.
+7. On allow: derive an idempotency key from `trace_id` plus the canonical
+   request hash. Append and fsync a `decision` receipt with status `pending`
+   and the idempotency key. If the durable append fails, deny.
+8. Call upstream with the gateway-held credential. Never forward the agent's
+   token upstream.
+9. Append an `outcome` receipt for success, error, or timeout; return the
+   upstream result. Decision and outcome receipts share `trace_id`,
+   `request_hash`, and `idempotency_key`.
+10. On crash or restart with a `pending` decision and no outcome, follow the
+    recovery rules in section 10. Do not auto-retry a destructive call.
+11. On approval-required: v1 denies with `APPROVAL_REQUIRED`. The v1.1
+    approval workflow pauses, creates an approval record, and times out to
+    deny.
 
 ### Argument canonicalization
 
@@ -233,8 +277,12 @@ new identity and triggers drift handling.
 |---|---|
 | `POLICY_DENIED` | Policy returned deny. |
 | `IDENTITY_MISSING` | No valid principal or agent identity. |
+| `IDENTITY_MISMATCH` | The session's principal, agent, tenant, or delegation changed. |
 | `SCHEMA_DRIFT` | Tool schema does not match the approved snapshot. |
-| `APPROVAL_REQUIRED` | Human approval required; call not executed. |
+| `RESOURCE_TENANT_UNVERIFIED` | The upstream did not declare resource-tenant enforcement. |
+| `APPROVAL_REQUIRED` | Approval is required; v1 does not execute the call. |
+| `IDEMPOTENCY_CONFLICT` | The idempotency key was reused with a different request. |
+| `OUTCOME_UNKNOWN` | A prior effect could not be confirmed after a crash. |
 | `UPSTREAM_ERROR` | Upstream MCP server returned an error. |
 | `TIMEOUT` | Upstream call exceeded the deadline. |
 | `GATEWAY_UNAVAILABLE` | Fail-closed path; no decision possible. |
@@ -261,6 +309,7 @@ tools:
     server: crm-mcp
     risk: high
     enforcement: inline
+    resource_tenant_enforced: upstream
     rules:
       - id: allow-support-delete-own-tenant
         principal_role: support_operator
@@ -281,17 +330,55 @@ tools:
         decision: require_approval
 ```
 
+`resource_tenant_enforced: upstream` is mandatory for every high-risk tool.
+`require_approval` is parsed in v1 but fails closed with `APPROVAL_REQUIRED`;
+the approval workflow is v1.1.
+
 ### Evaluation
 
-- Deny overrides allow; default is deny.
-- Explicit deny rules are evaluated before allow rules.
-- First matching allow wins; no implicit allow.
-- Every decision includes `policy_id`, `rule_id`, and a machine-readable reason.
+Evaluation is ordered and fail-closed:
+
+1. Explicit deny rules.
+2. `require_approval` rules. v1 denies with `APPROVAL_REQUIRED`; v1.1 pauses
+   for approval.
+3. Allow rules.
+4. Default deny.
+
+Deny always overrides allow. If an allow rule and an approval rule both match,
+approval wins. If a deny rule and an approval rule both match, deny wins. Within
+one class, the first matching rule wins. A rule with an unknown field, an
+invalid pattern, or an unparseable value is a configuration error and causes the
+bundle to be rejected.
+
+Every decision includes `policy_id`, `rule_id`, `resource_tenant_enforced`, and
+a machine-readable reason.
+
+### Resource-tenant authorization
+
+`tenant_match: true` proves only that the principal belongs to the policy's
+tenant. It does not prove that `customer_id` belongs to that tenant.
+
+Every high-risk tool must declare exactly one of:
+
+| Declaration | Meaning | v1 behavior |
+|---|---|---|
+| `resource_tenant_enforced: upstream` | The upstream MCP server verifies that the target resource belongs to the authenticated tenant. | Allowed only with a cross-tenant test. |
+| `resource_tenant_enforced: gateway` | The gateway performs a declared resource lookup before allow. | Deferred to v1.1. |
+| `resource_tenant_enforced: none` | No resource-tenant check exists. | High-risk calls are denied. |
+
+A missing or `none` declaration for a high-risk tool is a deny. The gateway
+records the declaration in the receipt. The upstream declaration is a trust
+assumption: it must be covered by the server allowlist and a cross-tenant test.
 
 ### Policy lifecycle
 
 - Bundles are signed (Ed25519) and hash-pinned.
-- The gateway refuses unsigned, expired, or tenant-mismatched bundles.
+- v1 verifies the signature against a configured public key. Key rotation and
+  multi-key trust sets are v1.1.
+- The gateway refuses unsigned, invalidly signed, expired, or tenant-mismatched
+  bundles.
+- Unknown fields, invalid patterns, and rule-precedence errors reject the
+  bundle.
 - Hot reload is atomic. If a reload fails, keep the last known good bundle. If
   none is valid, deny high-risk tools.
 - Policy changes are tested with table-driven unit tests and, later, the scanner.
@@ -316,6 +403,9 @@ Reuse the spike's `ActionReceipt` and extend it for production:
   "phase": "outcome",
   "tenant_id": "tenant-demo",
   "gateway_id": "gw-1",
+  "chain_id": "tenant-demo/gw-1",
+  "writer_epoch": 7,
+  "idempotency_key": "sha256:…",
   "principal": "user:123",
   "agent": "agent:support",
   "tool": {
@@ -341,25 +431,68 @@ Reuse the spike's `ActionReceipt` and extend it for production:
 }
 ```
 
-A `decision` receipt uses `"phase": "decision"`, `"result": {"status":
-"pending"}`, and no `response_hash`. Production extends the spike's
-`ActionResult.status` literal with `"pending"`; the spike's literal remains
-unchanged.
+### Receipt states
+
+- A `decision` receipt records `pending` for an allowed call or `denied` for a
+  deny. A deny is terminal and has no outcome receipt.
+- An `outcome` receipt records `success`, `error`, `timeout`, or `unknown`.
+- `unknown` means the effect could not be confirmed after a crash. It is not
+  success, and it is not safe to retry automatically.
+- Production extends the spike's `ActionResult.status` literal with `pending`
+  and `unknown`; the spike's literal remains unchanged.
 
 ### Chain and storage
 
-- One chain per tenant and gateway stream; fixed genesis.
+- One chain per `(tenant, chain_id)`; fixed genesis.
 - Canonical JSON + SHA-256; each receipt binds the previous hash.
 - Append-only JSONL for v1; object storage for cold retention.
 - Two-phase audit for high-risk tools: append and fsync a `decision` receipt
   before the tool effect, then append an `outcome` receipt after. A single
   receipt cannot both precede the effect and contain its result.
 - If the decision receipt cannot be made durable, deny. If the outcome receipt
-  cannot be written after an allowed call, alert and fail closed for that tool
-  until the sink recovers.
+  cannot be written after an allowed call, append `unknown` if possible, alert,
+  and fail closed for that tool until the sink recovers.
 - Use a local write-ahead log with group commit to amortize fsync; the durable
   append budget is separate from policy-decision latency.
-- Daily Merkle root / anchor is optional v1.1.
+
+### Crash recovery and pending decisions
+
+- Every high-risk call persists an idempotency key derived from `trace_id` plus
+  the canonical request hash in the `decision` receipt before dispatch.
+- On restart, a `decision` receipt with no matching `outcome` is `PENDING`.
+- The gateway must not auto-retry a destructive call. It may query the upstream
+  only if the tool declares an idempotent status operation; otherwise it appends
+  an `outcome` receipt with status `unknown` and alerts for manual
+  reconciliation.
+- A retry is allowed only when the upstream confirms no effect, or when the
+  tool is explicitly idempotent and the same idempotency key is reused.
+- Crash-injection test points: before dispatch, during the call, after the
+  effect but before the outcome append, and during the outcome append.
+
+### Chain ownership and concurrency
+
+- One writer per `(tenant, chain_id)`. The writer holds a lease with a monotonic
+  `writer_epoch`; a new writer may append only after the lease expires and it
+  has fenced the old writer.
+- Active-active writers for one chain are not supported in v1. Redundant
+  gateways operate as standby for a chain.
+- A failover continues the same chain only with a signed handoff receipt.
+  Otherwise it starts a new chain segment with an explicit handoff record.
+- If two writers attempt to extend the same chain, one wins and the other fails
+  closed.
+
+### Tamper evidence and anchor
+
+- A hash chain detects accidental modification and local reordering, but a
+  compromised host can rewrite and rehash the entire local chain.
+- If an external anchor is configured, the gateway publishes a signed chain
+  head (daily or every N receipts) to an append-only store outside the gateway
+  host. The claim is then tamper-evident against local rewrite.
+- If no anchor is configured, the claim is limited to integrity evidence
+  against accidental corruption and partial tampering. It is not proof against
+  a compromised gateway host.
+- v1.1 adds a Merkle root and automated anchor verification. Do not claim
+  "tamper-proof."
 
 ### Redaction
 
@@ -383,10 +516,11 @@ unchanged.
 |---|---|---|
 | Read-only, low impact | Observe + alert | Fail open, alert |
 | Write / delete / send / money | Inline enforce | Fail closed |
-| Highest impact | Inline enforce + human approval | Fail closed, pause, timeout denies |
+| Highest impact | Inline enforce; human approval is v1.1 | v1 denies with `APPROVAL_REQUIRED`; v1.1 pauses and times out to deny |
 
 The tool's risk classification lives in the policy bundle. Do not apply one mode
-to every tool.
+to every tool. v1 implements observe and enforce; the approval workflow is
+v1.1.
 
 ---
 
@@ -398,8 +532,19 @@ to every tool.
   signed bundle only if it is unexpired.
 - **Upstream timeout:** receipt `error`; return `TIMEOUT`; do not retry
   non-idempotent calls automatically.
+- **Crash after effect, before outcome:** pending decision; do not auto-retry a
+  destructive call; reconcile if the upstream supports it, otherwise mark
+  `unknown` and alert.
+- **Identity change mid-session:** deny `IDENTITY_MISMATCH`; require a new
+  session.
+- **Resource tenant unverified:** deny high-risk with
+  `RESOURCE_TENANT_UNVERIFIED`.
+- **Concurrent chain writer:** one writer wins; the other fails closed.
+- **Outcome append failure:** mark `unknown` if possible; alert; fail closed for
+  the tool until the sink recovers.
 - **Idempotency:** accept an idempotency key; dedupe within a window; include it
-  in the receipt.
+  in the receipt. Reuse with a different request hash returns
+  `IDEMPOTENCY_CONFLICT`.
 - **Circuit breaker:** per upstream; open circuit denies high-risk.
 - **Clock skew:** reject tokens outside a small window; use monotonic time for
   latency.
@@ -439,8 +584,9 @@ to every tool.
 
 ### Availability
 
-- Redundant gateway instances behind a local load balancer or service VIP.
-- Health checks and graceful drain.
+- Redundant gateways are standby per `(tenant, chain_id)`; active-active
+  multi-writer is not supported in v1.
+- Health checks, lease-based failover, and graceful drain.
 - The gateway is on the critical path for inline tools; capacity planning is
   part of the rollout.
 
@@ -450,11 +596,15 @@ to every tool.
 
 - Receipts are the source of truth.
 - Metrics: decisions by tool/decision/reason, p50/p99 latency, policy age,
-  chain verification failures, upstream errors, bypass attempts, approval waits.
+  chain verification failures, pending decisions, unknown outcomes, identity
+  mismatches, chain writer conflicts, anchor age, upstream errors, bypass
+  attempts, approval waits.
 - Logs: structured, request IDs, no secrets.
 - Traces: OpenTelemetry optional; export must not block the hot path.
-- Alerts: deny spike, missing receipts, chain break, schema drift, expired
-  policy, gateway unhealthy, direct upstream connection attempt.
+- Alerts: deny spike, missing receipts, chain break, pending decision older
+  than the reconciliation threshold, unknown outcome, schema drift, expired
+  policy, stale or missing anchor, chain writer conflict, gateway unhealthy,
+  direct upstream connection attempt.
 
 ---
 
@@ -462,9 +612,15 @@ to every tool.
 
 - TLS everywhere; mTLS for service-to-service.
 - Tokens: signature, audience, expiry, tenant binding, least-privilege scopes.
+- Session binding: revalidate token subject, tenant, agent, and delegation on
+  every call; no silent rebinding.
+- Resource-tenant binding: require an explicit tool-catalog declaration; deny
+  high-risk when absent.
 - Secrets in a secret manager or environment; never in logs or receipts.
 - Per-tool credentials; rotation; no shared super-key.
 - Signed policy bundles; immutable images; SBOM; dependency audit.
+- Audit anchor: publish a signed chain head to an external store when
+  configured; otherwise state the limited claim from section 10.
 - Gateway process: separate user, no shell, read-only filesystem except the
   receipt spool.
 - Default-deny upstream server allowlist; egress control.
@@ -478,40 +634,80 @@ to every tool.
 
 ### Unit
 
-- Canonical JSON and hash chain.
-- Policy evaluation: allow, deny, deny-overrides, default-deny, missing identity,
-  tenant mismatch, argument mismatch, approval path.
+- Canonical JSON, receipt hash, idempotency-key derivation.
+- Policy precedence: deny > approval > allow > default deny; overlapping rules;
+  unknown fields; invalid patterns.
+- Tenant mismatch, missing identity, and resource-tenant declaration.
 - Schema hash and drift detection.
 - Redaction.
+- Session binding: same principal/tenant succeeds; changed principal, agent,
+  tenant, or delegation denies.
+- Receipt state machine: `pending` -> `success` / `error` / `timeout` /
+  `unknown`; `denied` is terminal.
+- Chain ownership and `writer_epoch` fencing.
 
-### Integration
+### Integration (v1)
 
-- MCP HTTP/SSE: allowed call, denied call, missing identity, schema drift,
-  upstream error, timeout, downstream disconnect.
-- MCP stdio: allowed call, denied call, secret isolation.
-- Receipt sink failure: high-risk deny; observe alert.
-- Replay and idempotency.
-- Bypass: direct upstream call fails without the gateway credential; agent token
-  cannot be used upstream.
+- MCP HTTP/SSE: allowed call, denied call, missing identity, identity mismatch,
+  schema drift, upstream error, timeout, downstream disconnect.
+- Receipts: reload JSONL from disk, verify from genesis, tamper with a record and
+  assert verification fails.
+- Decision durability: decision receipt is fsynced before the upstream effect;
+  sink failure denies.
+- Bypass: direct upstream call without the gateway credential fails; the agent
+  token cannot be used upstream.
+- Replay and idempotency: a duplicate request does not repeat the effect;
+  conflicting reuse returns `IDEMPOTENCY_CONFLICT`.
+- Shadow vs enforce: shadow forwards and records the would-deny result; enforce
+  records denial and does not forward.
+- Crash injection: before dispatch, during the call, after the effect but before
+  the outcome append, and during the outcome append. No automatic retry of a
+  destructive call.
+- Session reconnect: a new session re-authenticates; an existing session cannot
+  be resumed with a different principal or tenant.
+- Resource tenant: cross-tenant ID is denied; a missing upstream declaration
+  denies high-risk.
+- Chain: restart verifies; two concurrent writers cannot both extend the chain;
+  a full local-chain rewrite is detected when an anchor is configured.
+- No secrets: seed canaries in credentials and arguments; inspect receipts and
+  logs for leaks.
 
 ### Performance
 
 - p99 policy latency < 10 ms at the target request rate.
-- Soak test for 24 hours with stable memory and receipt chain.
+- Durable decision-receipt append p99 < 20 ms.
+- One-hour soak in v1 with stable memory and chain verification. The 24-hour
+  soak is v1.1.
 
 ### Acceptance criteria for v1
 
-1. One MCP server and one high-risk tool are proxied.
-2. Authorized calls succeed; unauthorized calls are denied before the upstream
-   effect.
-3. Every decision emits a receipt; the chain verifies independently.
-4. Direct upstream access without the gateway credential fails.
-5. Missing identity, invalid policy, or audit sink failure denies the high-risk
-   tool.
+1. One MCP server and one high-risk tool are proxied over streamable HTTP/SSE.
+2. Authorized calls succeed; unauthorized calls do not reach the mutation
+   handler. Customer-record state is unchanged for denials and a denial audit
+   event is recorded.
+3. Every decision emits a receipt; JSONL reloads and verifies from genesis;
+   tampering fails verification.
+4. Direct upstream access without the gateway credential fails; the agent token
+   cannot be used upstream.
+5. Missing identity, identity mismatch, invalid policy or signature, schema
+   drift, or receipt-write failure denies the high-risk tool.
 6. Policy decision p99 < 10 ms and durable decision-receipt append p99 < 20 ms
    in the benchmark.
-7. Shadow mode works without blocking; enforce mode works for the selected tool.
+7. Shadow mode forwards and records the would-deny result; enforce mode denies
+   and does not forward.
 8. No secrets in receipts or logs.
+9. Session binding and reconnect tests pass.
+10. Resource-tenant test passes with an upstream declaration; otherwise
+    high-risk is denied.
+11. Crash recovery leaves pending decisions reconcilable and never auto-retries
+    a destructive call.
+12. Chain restart verifies under one writer; an anchor is configured or the
+    limited tamper-evidence claim is documented.
+
+Deferred to v1.1 and not part of v1 acceptance: stdio, human approval workflow,
+gateway-side resource lookup, active-active multi-writer chains, automated
+Merkle anchoring, 24-hour soak, key rotation, OpenTelemetry export, dashboard,
+multi-region.
 
 ---
 
@@ -556,30 +752,55 @@ To avoid overbuilding, v1 is deliberately small:
 
 - One MCP server over streamable HTTP/SSE.
 - One high-risk tool: `delete_customer_record` with fake data.
-- One tenant.
-- YAML policy bundle, signed, loaded locally.
-- JSONL receipts with hash chain.
+- One tenant, one `chain_id`, one active writer.
+- YAML policy bundle, signed with Ed25519, verified against one configured
+  public key, loaded locally.
+- Policy actions allow/deny. `require_approval` fails closed as
+  `APPROVAL_REQUIRED`.
+- JSONL receipts with hash chain, two-phase decision/outcome, local WAL.
+- Session identity fixed at `initialize` and revalidated per call.
+- Resource-tenant enforcement declared by the upstream; a missing declaration
+  denies high-risk.
+- Crash recovery for pending decisions; no automatic retry of destructive
+  calls.
+- Optional external anchor for the chain head; if absent, the limited claim is
+  documented.
 - CLI process `agentscan-gateway` (or `agentscan gateway`), no UI.
 - Shadow mode and enforce mode.
-- No stdio, no approval UI, no multi-region, no policy editor.
 
-Stdio, HTTP proxy, SDK wrapper, human approval, and the async verifier follow
-only after v1's acceptance criteria are met.
+Deferred to v1.1: stdio, HTTP proxy, SDK wrapper, human approval workflow/UI,
+gateway-side resource lookup, active-active multi-writer chains, automated
+Merkle anchor verification, 24-hour soak, key rotation, async verifier beyond
+receipt-chain checks.
 
 ---
 
-## 19. Open questions
+## 19. Decisions and open questions
 
-1. Principal token: OIDC/JWT directly, or OAuth token exchange?
-2. Policy language: YAML v1, or CEL/Rego from the start?
-3. Receipt storage: local JSONL + object storage, or Postgres?
-4. MCP stdio identity: one session per principal, or deny shared sessions?
-5. Approval transport: CLI, webhook, or chat?
-6. Multi-tenant key management and per-tenant chains.
-7. Which MCP protocol versions must be supported at launch?
-8. Separate service, or `agentscan gateway` subcommand in the existing package?
-9. How long to retain raw arguments versus hashes only?
-10. Who owns the policy bundle and the approval workflow?
+### Resolved for v1
+
+| Question | v1 decision |
+|---|---|
+| Principal token | Signed JWT bearer with `sub`, `aud`, `tenant`, `exp`, and delegation. OIDC discovery and token exchange are deferred. |
+| Policy language | YAML only. CEL/Rego is deferred. |
+| Receipt storage | JSONL plus an optional external anchor. Postgres is deferred. |
+| MCP stdio | Not in v1. Deferred to v1.1. |
+| Approval | Not in v1. `require_approval` fails closed. |
+| Multi-tenant keys | One signing key per deployment. Per-tenant keys are v1.1. |
+| Raw arguments | Store canonical hashes and redacted values. No raw secrets or full PII. |
+| Chain concurrency | One writer per `(tenant, chain_id)`; standby failover only. |
+
+### Still open
+
+1. Which MCP protocol version and streamable HTTP behavior must v1 pin?
+2. Is v1 an `agentscan gateway` subcommand or a separate service?
+3. Which external anchor store is acceptable: object storage with immutability,
+   a transparency log, or an off-host append-only file?
+4. What retention period applies to redacted arguments and receipts?
+5. Who owns the policy signing key and the anchor, and what is the rotation
+   plan?
+6. Which upstream tools can honestly declare
+   `resource_tenant_enforced: upstream`, and who tests that declaration?
 
 ---
 
@@ -589,6 +810,9 @@ only after v1's acceptance criteria are met.
 - Policy authoring UI.
 - LLM judge or scanner in the request path.
 - Automatic remediation.
+- MCP stdio, human approval workflow, active-active multi-writer chains,
+  gateway-side resource lookup, Merkle proofs, and the 24-hour soak.
+- Claims of tamper-proof audit without an external anchor.
 - Enforcing tools that cannot be routed through the gateway; those are
   receipt-only with an explicit detection-only claim.
 
@@ -601,3 +825,23 @@ only after v1's acceptance criteria are met.
 - `internal_docs/spike-action-verification/SPIKE_RESULT.md`
 - MCP specification: tools, transports, and JSON-RPC lifecycle
 - OWASP LLM Top 10 and Agentic Security Initiative guidance
+
+---
+
+## 22. Review disposition (2026-11-09)
+
+Codex review verdict: **REJECT for v1 implementation as written.** This
+revision addresses the findings:
+
+| Finding | Change |
+|---|---|
+| F1 — session identity ambiguous | §7 adds fixed session binding and reconnect rules; §8 revalidates identity per call; §16 adds reconnect and identity-change tests. |
+| F2 — crash after effect | §10 adds `pending`/`unknown` states, idempotency-key persistence, and no-auto-retry recovery; §16 adds crash-injection tests. |
+| F3 — resource tenant | §9 adds mandatory `resource_tenant_enforced` declarations and explicit rule precedence; §16 adds cross-tenant tests. |
+| F4 — chain anchor and multi-writer | §10 adds single-writer leases, `writer_epoch`, and an explicit anchor-or-narrowed-claim rule; §16 adds restart, concurrent-writer, and rewrite tests. |
+| F5 — scope mismatch | §16 aligns acceptance with v1; §18 states the v1/v1.1 boundary; stdio, approval, 24-hour soak, and multi-writer are deferred. |
+| F6 — evidence wording | §1 narrows the spike claims to customer-record state, the in-process capability guard, and per-run chain verification. |
+
+Phase 2 remains **NO-GO** until this revision is re-reviewed and the open
+questions in §19 are decided. No gateway implementation should start before
+that.
