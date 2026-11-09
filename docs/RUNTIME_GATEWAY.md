@@ -1,6 +1,6 @@
 # Runtime Gateway and MCP Integration
 
-**Status:** Draft for review — not implemented  
+**Status:** Draft for re-review — revised after Codex and free-model review, not implemented  
 **Date:** 2026-11-09  
 **Related:** spike PR #12, `internal_docs/spike-action-verification/SPIKE_RESULT.md`, methodology §14  
 **Scope:** production runtime enforcement, not the CI scanner
@@ -163,12 +163,24 @@ tool description supplied at call time.
 - **Agent:** workload identity via mTLS certificate or signed workload JWT.
 - **Gateway:** its own identity to the upstream MCP server.
 
+### Delegation validation
+
+- A delegated token must carry a signed chain from the principal to the acting
+  agent. Each hop must be signed, audience-bound, and unexpired.
+- The final subject must match the session principal; the delegation chain must
+  match the tuple bound at `initialize`.
+- Maximum chain depth is 3 in v1. A missing, broken, expired, or over-depth
+  chain denies high-risk.
+- The gateway never derives a role from an unsigned claim. `principal_role`
+  must come from the signed token or the policy's principal mapping.
+
 ### Credential custody
 
 - The gateway holds the real upstream credential (API key, OAuth token, mTLS
   cert, database credential).
 - The agent holds a short-lived gateway token scoped to the gateway audience and
-  the tools it may request.
+  the tools it may request. The gateway checks the tool scope on every
+  `tools/call`; a token that does not name the requested tool is denied.
 - The agent must not possess the upstream credential. If it does, the gateway is
   advisory, not enforcing.
 
@@ -379,6 +391,10 @@ assumption: it must be covered by the server allowlist and a cross-tenant test.
   bundles.
 - Unknown fields, invalid patterns, and rule-precedence errors reject the
   bundle.
+- Tool schema snapshots are part of the signed catalog or policy bundle. A
+  schema change requires a new signed bundle; v1 has no dynamic approval UI.
+  Until the new bundle is loaded, calls to the changed tool return
+  `SCHEMA_DRIFT`.
 - Hot reload is atomic. If a reload fails, keep the last known good bundle. If
   none is valid, deny high-risk tools.
 - Policy changes are tested with table-driven unit tests and, later, the scanner.
@@ -466,6 +482,9 @@ Reuse the spike's `ActionReceipt` and extend it for production:
   reconciliation.
 - A retry is allowed only when the upstream confirms no effect, or when the
   tool is explicitly idempotent and the same idempotency key is reused.
+- The idempotency window is configurable with a default of 24 hours and must be
+  at least the receipt retention window. Dedupe state is durable across
+  restarts; an expired key is treated as a new request.
 - Crash-injection test points: before dispatch, during the call, after the
   effect but before the outcome append, and during the outcome append.
 
@@ -623,8 +642,10 @@ v1.1.
   configured; otherwise state the limited claim from section 10.
 - Gateway process: separate user, no shell, read-only filesystem except the
   receipt spool.
-- Default-deny upstream server allowlist; egress control.
-- Bypass detection: alert if the agent connects directly to an upstream tool.
+- Default-deny upstream server allowlist; egress control blocks direct
+  agent-to-upstream connections.
+- Bypass detection: log and alert if the agent attempts a direct connection to
+  an upstream tool.
 - Red-team tests: prompt injection, confused deputy, token theft, replay, schema
   poisoning, log tampering.
 
@@ -642,6 +663,8 @@ v1.1.
 - Redaction.
 - Session binding: same principal/tenant succeeds; changed principal, agent,
   tenant, or delegation denies.
+- Delegation validation: broken, expired, over-depth, or unsigned hops deny.
+- Gateway-token scope: a token without the requested tool scope denies.
 - Receipt state machine: `pending` -> `success` / `error` / `timeout` /
   `unknown`; `denied` is terminal.
 - Chain ownership and `writer_epoch` fencing.
@@ -650,12 +673,15 @@ v1.1.
 
 - MCP HTTP/SSE: allowed call, denied call, missing identity, identity mismatch,
   schema drift, upstream error, timeout, downstream disconnect.
+- Schema drift: a changed schema returns `SCHEMA_DRIFT` until a new signed
+  bundle is loaded; v1 has no dynamic approval path.
 - Receipts: reload JSONL from disk, verify from genesis, tamper with a record and
   assert verification fails.
 - Decision durability: decision receipt is fsynced before the upstream effect;
   sink failure denies.
 - Bypass: direct upstream call without the gateway credential fails; the agent
-  token cannot be used upstream.
+  token cannot be used upstream; a direct agent-to-upstream connection attempt
+  is blocked by egress policy and alerted.
 - Replay and idempotency: a duplicate request does not repeat the effect;
   conflicting reuse returns `IDEMPOTENCY_CONFLICT`.
 - Shadow vs enforce: shadow forwards and records the would-deny result; enforce
@@ -674,8 +700,8 @@ v1.1.
 
 ### Performance
 
-- p99 policy latency < 10 ms at the target request rate.
-- Durable decision-receipt append p99 < 20 ms.
+- p99 policy latency < 10 ms at a declared target request rate and host profile.
+- Durable decision-receipt append p99 < 20 ms under the same conditions.
 - One-hour soak in v1 with stable memory and chain verification. The 24-hour
   soak is v1.1.
 
@@ -841,6 +867,11 @@ revision addresses the findings:
 | F4 — chain anchor and multi-writer | §10 adds single-writer leases, `writer_epoch`, and an explicit anchor-or-narrowed-claim rule; §16 adds restart, concurrent-writer, and rewrite tests. |
 | F5 — scope mismatch | §16 aligns acceptance with v1; §18 states the v1/v1.1 boundary; stdio, approval, 24-hour soak, and multi-writer are deferred. |
 | F6 — evidence wording | §1 narrows the spike claims to customer-record state, the in-process capability guard, and per-run chain verification. |
+
+A separate free-model review of the earlier spec (`42f2067`) also flagged
+delegation validation, gateway-token scope, schema-drift approval, idempotency
+window, and egress tests. This revision adds those contracts in §7, §9, §10,
+§15, and §16.
 
 Phase 2 remains **NO-GO** until this revision is re-reviewed and the open
 questions in §19 are decided. No gateway implementation should start before
