@@ -261,19 +261,36 @@ new identity and triggers drift handling.
    and the reason.
 6. On deny: append a `decision` receipt with status `denied`, return a stable
    MCP error, and do not call upstream.
-7. On allow: derive an idempotency key from `trace_id` plus the canonical
-   request hash. Append and fsync a `decision` receipt with status `pending`
-   and the idempotency key. If the durable append fails, deny.
+7. On allow: require a caller-supplied `idempotency_key` for high-risk calls.
+   Do not derive it from `trace_id` or the JSON-RPC ID. Scope it to
+   `(tenant, principal, tool_identity, idempotency_key)` and store the canonical
+   `request_hash` with it to detect key reuse with different arguments. Append
+   and fsync a `decision` receipt with status `pending` and the idempotency key.
+   If the key is missing or the durable append fails, deny.
 8. Call upstream with the gateway-held credential. Never forward the agent's
    token upstream.
-9. Append an `outcome` receipt for success, error, or timeout; return the
-   upstream result. Decision and outcome receipts share `trace_id`,
-   `request_hash`, and `idempotency_key`.
+9. Append an `outcome` receipt for success, error, timeout, or unknown; return
+   the upstream result or `OUTCOME_UNKNOWN`. Decision and outcome receipts share
+   `trace_id`, `request_hash`, and `idempotency_key`.
 10. On crash or restart with a `pending` decision and no outcome, follow the
     recovery rules in section 10. Do not auto-retry a destructive call.
 11. On approval-required: v1 denies with `APPROVAL_REQUIRED`. The v1.1
     approval workflow pauses, creates an approval record, and times out to
     deny.
+
+### Idempotency key
+
+- For MCP, the key is `params._meta["agentscan.idempotency_key"]`. For the HTTP
+  proxy, it is the `Idempotency-Key` header.
+- The caller must reuse the key across retries, reconnects, JSON-RPC ID changes,
+  and trace-ID changes.
+- The gateway must not generate a fresh key from `trace_id`, the JSON-RPC ID, or
+  wall-clock time.
+- A missing key on a high-risk call returns `IDEMPOTENCY_REQUIRED` and the call
+  does not execute.
+- The key is scoped to `(tenant, principal, tool_identity, idempotency_key)`.
+  The canonical `request_hash` is stored with it; reuse with a different hash
+  returns `IDEMPOTENCY_CONFLICT`.
 
 ### Argument canonicalization
 
@@ -293,6 +310,7 @@ new identity and triggers drift handling.
 | `SCHEMA_DRIFT` | Tool schema does not match the approved snapshot. |
 | `RESOURCE_TENANT_UNVERIFIED` | The upstream did not declare resource-tenant enforcement. |
 | `APPROVAL_REQUIRED` | Approval is required; v1 does not execute the call. |
+| `IDEMPOTENCY_REQUIRED` | A high-risk call omitted the required idempotency key. |
 | `IDEMPOTENCY_CONFLICT` | The idempotency key was reused with a different request. |
 | `OUTCOME_UNKNOWN` | A prior effect could not be confirmed after a crash. |
 | `UPSTREAM_ERROR` | Upstream MCP server returned an error. |
@@ -473,13 +491,20 @@ Reuse the spike's `ActionReceipt` and extend it for production:
 
 ### Crash recovery and pending decisions
 
-- Every high-risk call persists an idempotency key derived from `trace_id` plus
-  the canonical request hash in the `decision` receipt before dispatch.
+- Every high-risk call persists the caller-supplied idempotency key and the
+  canonical `request_hash` in the `decision` receipt before dispatch. The key is
+  never derived from `trace_id`, the JSON-RPC ID, or wall-clock time.
 - On restart, a `decision` receipt with no matching `outcome` is `PENDING`.
 - The gateway must not auto-retry a destructive call. It may query the upstream
   only if the tool declares an idempotent status operation; otherwise it appends
   an `outcome` receipt with status `unknown` and alerts for manual
   reconciliation.
+- A retry with the same key and the same `request_hash` returns the recorded
+  outcome, or the pending status, and does not dispatch again. A retry with the
+  same key but a different `request_hash` returns `IDEMPOTENCY_CONFLICT`.
+- If a different key arrives with the same `request_hash` while a prior decision
+  for that `(tenant, principal, tool_identity)` is `pending` or `unknown`, deny
+  `OUTCOME_UNKNOWN` and do not dispatch. A new key is not proof of a new intent.
 - A retry is allowed only when the upstream confirms no effect, or when the
   tool is explicitly idempotent and the same idempotency key is reused.
 - The idempotency window is configurable with a default of 24 hours and must be
@@ -655,7 +680,7 @@ v1.1.
 
 ### Unit
 
-- Canonical JSON, receipt hash, idempotency-key derivation.
+- Canonical JSON, receipt hash, idempotency-key validation and scoping.
 - Policy precedence: deny > approval > allow > default deny; overlapping rules;
   unknown fields; invalid patterns.
 - Tenant mismatch, missing identity, and resource-tenant declaration.
@@ -683,7 +708,13 @@ v1.1.
   token cannot be used upstream; a direct agent-to-upstream connection attempt
   is blocked by egress policy and alerted.
 - Replay and idempotency: a duplicate request does not repeat the effect;
-  conflicting reuse returns `IDEMPOTENCY_CONFLICT`.
+  conflicting reuse returns `IDEMPOTENCY_CONFLICT`; a missing key on a high-risk
+  call returns `IDEMPOTENCY_REQUIRED` and does not execute.
+- Retry after unknown outcome: retry the same destructive call with a new
+  JSON-RPC ID and a new `trace_id` but the same idempotency key; assert the
+  effect is not repeated and the recorded outcome or `OUTCOME_UNKNOWN` is
+  returned. A different key with the same content while the prior decision is
+  pending or unknown must deny `OUTCOME_UNKNOWN` and must not dispatch.
 - Shadow vs enforce: shadow forwards and records the would-deny result; enforce
   records denial and does not forward.
 - Crash injection: before dispatch, during the call, after the effect but before
@@ -868,11 +899,14 @@ revision addresses the findings:
 | F5 — scope mismatch | §16 aligns acceptance with v1; §18 states the v1/v1.1 boundary; stdio, approval, 24-hour soak, and multi-writer are deferred. |
 | F6 — evidence wording | §1 narrows the spike claims to customer-record state, the in-process capability guard, and per-run chain verification. |
 
-A separate free-model review of the earlier spec (`42f2067`) also flagged
-delegation validation, gateway-token scope, schema-drift approval, idempotency
-window, and egress tests. This revision adds those contracts in §7, §9, §10,
-§15, and §16.
+Codex re-review of `a3f9446` returned **APPROVE WITH CHANGES**: F1 and F3–F6
+`CLOSED`, F7 `PARTIAL`, and a new **F8 (P1)** open. This revision addresses the
+remainder:
 
-Phase 2 remains **NO-GO** until this revision is re-reviewed and the open
-questions in §19 are decided. No gateway implementation should start before
-that.
+| Finding | Change |
+|---|---|
+| F7 — delegation, scope, drift, idempotency, egress | §7 adds delegation-chain validation and per-call gateway-token scope; §9 requires a new signed bundle for schema drift; §10 defines the dedupe window; §15 and §16 add egress and bypass tests. |
+| F8 — retry-stable idempotency | §8 and §9 require a caller-supplied key that cannot be derived from `trace_id` or the JSON-RPC ID, scoped to `(tenant, principal, tool_identity, idempotency_key)`; §10 adds the content-hash guard for pending/unknown decisions; §16 adds a retry with a new JSON-RPC ID and trace ID. |
+
+Phase 2 remains **NO-GO** until F8 is re-reviewed and the open questions in §19
+are decided. No gateway implementation should start before that.
