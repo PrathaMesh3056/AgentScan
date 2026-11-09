@@ -186,6 +186,15 @@ tool description supplied at call time.
 
 ### MCP HTTP / streamable HTTP
 
+- v1 pins MCP `2025-11-25` in handshake mode. `initialize` may propose another
+  version, but the gateway counter-offers `2025-11-25` and never negotiates a
+  different version.
+- Every request after `initialize` must carry the matching
+  `MCP-Protocol-Version` header. A missing or different header denies
+  `UNSUPPORTED_PROTOCOL_VERSION`.
+- The 2026-07-28 stateless mode (`server/discover`, per-request `_meta`) is
+  deferred to v1.1. v1 rejects a `server/discover` request with
+  `UNSUPPORTED_PROTOCOL_VERSION`; it does not silently accept it.
 - Every request carries a signed bearer token. Claims include principal, agent,
   tenant, scopes, and delegation chain.
 - The gateway validates signature, audience, expiry, and tenant binding before
@@ -308,6 +317,7 @@ new identity and triggers drift handling.
 | `POLICY_DENIED` | Policy returned deny. |
 | `IDENTITY_MISSING` | No valid principal or agent identity. |
 | `IDENTITY_MISMATCH` | The session's principal, agent, tenant, or delegation changed. |
+| `UNSUPPORTED_PROTOCOL_VERSION` | The client requested or sent a protocol version other than the pinned v1 revision. |
 | `SCHEMA_DRIFT` | Tool schema does not match the approved snapshot. |
 | `RESOURCE_TENANT_UNVERIFIED` | The upstream did not declare resource-tenant enforcement. |
 | `APPROVAL_REQUIRED` | Approval is required; v1 does not execute the call. |
@@ -404,8 +414,10 @@ assumption: it must be covered by the server allowlist and a cross-tenant test.
 ### Policy lifecycle
 
 - Bundles are signed (Ed25519) and hash-pinned.
-- v1 verifies the signature against a configured public key. Key rotation and
-  multi-key trust sets are v1.1.
+- v1 verifies the signature against one active public key. A manual rotation
+  runbook publishes the new key, switches signing, and retains historical public
+  keys for audit verification. Automated rotation and live multi-key trust sets
+  are v1.1.
 - The gateway refuses unsigned, invalidly signed, expired, or tenant-mismatched
   bundles.
 - Unknown fields, invalid patterns, and rule-precedence errors reject the
@@ -544,14 +556,14 @@ Reuse the spike's `ActionReceipt` and extend it for production:
 
 - A hash chain detects accidental modification and local reordering, but a
   compromised host can rewrite and rehash the entire local chain.
-- If an external anchor is configured, the gateway publishes a signed chain
-  head (daily or every N receipts) to an append-only store outside the gateway
-  host. The claim is then tamper-evident against local rewrite.
-- If no anchor is configured, the claim is limited to integrity evidence
-  against accidental corruption and partial tampering. It is not proof against
-  a compromised gateway host.
-- v1.1 adds a Merkle root and automated anchor verification. Do not claim
-  "tamper-proof."
+- v1 does not configure an external anchor. The claim is limited to integrity
+  evidence against accidental corruption and partial tampering. It is not proof
+  against a compromised gateway host.
+- v1.1 adds an off-host anchor, a Merkle root, and automated anchor
+  verification. When configured, the gateway publishes a signed chain head
+  (daily or every N receipts) to an append-only store outside the gateway host;
+  the claim is then tamper-evident against local rewrite.
+- Do not claim "tamper-proof."
 
 ### Redaction
 
@@ -675,11 +687,15 @@ v1.1.
   every call; no silent rebinding.
 - Resource-tenant binding: require an explicit tool-catalog declaration; deny
   high-risk when absent.
-- Secrets in a secret manager or environment; never in logs or receipts.
+- Secrets in a secret manager or OS-protected store; never in the repo, a
+  plaintext environment variable, logs, or receipts.
+- Policy signing key: owned by the security owner; one active key; historical
+  public keys retained for audit verification; manual rotation runbook.
 - Per-tool credentials; rotation; no shared super-key.
 - Signed policy bundles; immutable images; SBOM; dependency audit.
-- Audit anchor: publish a signed chain head to an external store when
-  configured; otherwise state the limited claim from section 10.
+- Audit anchor: v1 does not configure an external anchor; the limited claim
+  from section 10 applies. When an anchor is added, publish a signed chain head
+  to an off-host store.
 - Gateway process: separate user, no shell, read-only filesystem except the
   receipt spool.
 - Default-deny upstream server allowlist; egress control blocks direct
@@ -700,6 +716,11 @@ v1.1.
   unknown fields; invalid patterns.
 - Tenant mismatch, missing identity, and resource-tenant declaration.
 - Schema hash and drift detection.
+- Protocol version: `initialize` with `2025-11-25` succeeds; a different proposed
+  version is countered with `2025-11-25`; a later request with a mismatched
+  `MCP-Protocol-Version` header denies `UNSUPPORTED_PROTOCOL_VERSION`.
+- Policy key rotation: the active key verifies new bundles; a retired key cannot
+  sign new bundles; historical receipts verify with the retained public key.
 - Redaction.
 - Session binding: same principal/tenant succeeds; changed principal, agent,
   tenant, or delegation denies.
@@ -713,7 +734,8 @@ v1.1.
 ### Integration (v1)
 
 - MCP HTTP/SSE: allowed call, denied call, missing identity, identity mismatch,
-  schema drift, upstream error, timeout, downstream disconnect.
+  protocol version mismatch, `server/discover` rejection, schema drift,
+  upstream error, timeout, downstream disconnect.
 - Schema drift: a changed schema returns `SCHEMA_DRIFT` until a new signed
   bundle is loaded; v1 has no dynamic approval path.
 - Receipts: reload JSONL from disk, verify from genesis, tamper with a record and
@@ -758,7 +780,8 @@ v1.1.
 
 ### Acceptance criteria for v1
 
-1. One MCP server and one high-risk tool are proxied over streamable HTTP/SSE.
+1. One MCP server and one high-risk tool are proxied over streamable HTTP/SSE,
+   pinned to MCP `2025-11-25` handshake mode.
 2. Authorized calls succeed; unauthorized calls do not reach the mutation
    handler. Customer-record state is unchanged for denials and a denial audit
    event is recorded.
@@ -766,8 +789,9 @@ v1.1.
    tampering fails verification.
 4. Direct upstream access without the gateway credential fails; the agent token
    cannot be used upstream.
-5. Missing identity, identity mismatch, invalid policy or signature, schema
-   drift, or receipt-write failure denies the high-risk tool.
+5. Missing identity, identity mismatch, protocol version mismatch, invalid
+   policy or signature, schema drift, or receipt-write failure denies the
+   high-risk tool.
 6. Policy decision p99 < 10 ms and durable decision-receipt append p99 < 20 ms
    in the benchmark.
 7. Shadow mode forwards and records the would-deny result; enforce mode denies
@@ -827,32 +851,36 @@ quarterly bypass tests.
 
 To avoid overbuilding, v1 is deliberately small:
 
-- One MCP server over streamable HTTP/SSE.
+- One MCP server over streamable HTTP/SSE, pinned to MCP `2025-11-25` handshake
+  mode.
 - One high-risk tool: `delete_customer_record` with fake data.
 - One tenant, one `chain_id`, one active writer.
-- YAML policy bundle, signed with Ed25519, verified against one configured
-  public key, loaded locally.
+- YAML policy bundle, signed with Ed25519, verified against one active public
+  key, loaded locally. A manual rotation runbook retains historical public keys
+  for audit verification.
 - Policy actions allow/deny. `require_approval` fails closed as
   `APPROVAL_REQUIRED`.
-- JSONL receipts with hash chain, two-phase decision/outcome, local WAL.
+- JSONL receipts with hash chain, two-phase decision/outcome, local WAL, and a
+  30-day retention default.
 - Session identity fixed at `initialize` and revalidated per call.
 - Resource-tenant enforcement declared by the upstream; a missing declaration
   denies high-risk.
 - Crash recovery for pending decisions; no automatic retry of destructive
   calls.
-- Optional external anchor for the chain head; if absent, the limited claim is
-  documented.
-- CLI process `agentscan-gateway` (or `agentscan gateway`), no UI.
+- No external anchor in v1; the limited claim is documented and the anchor
+  interface is defined for v1.1.
+- Separate `agentscan-gateway` console script/process with a minimal dependency
+  set; no scanner or LLM imports in the request path; no UI.
 - Shadow mode and enforce mode.
 
-Deferred to v1.1: stdio, HTTP proxy, SDK wrapper, human approval workflow/UI,
-gateway-side resource lookup, active-active multi-writer chains, automated
-Merkle anchor verification, 24-hour soak, key rotation, async verifier beyond
-receipt-chain checks.
+Deferred to v1.1: stdio, MCP `2026-07-28` stateless mode, HTTP proxy, SDK
+wrapper, human approval workflow/UI, gateway-side resource lookup, active-active
+multi-writer chains, automated Merkle anchor verification, 24-hour soak,
+automated key rotation, async verifier beyond receipt-chain checks.
 
 ---
 
-## 19. Decisions and open questions
+## 19. Decisions
 
 ### Resolved for v1
 
@@ -860,24 +888,24 @@ receipt-chain checks.
 |---|---|
 | Principal token | Signed JWT bearer with `sub`, `aud`, `tenant`, `exp`, and delegation. OIDC discovery and token exchange are deferred. |
 | Policy language | YAML only. CEL/Rego is deferred. |
-| Receipt storage | JSONL plus an optional external anchor. Postgres is deferred. |
+| MCP protocol version | `2025-11-25` handshake mode; streamable HTTP/SSE only; no stdio. `2026-07-28` stateless mode is v1.1. |
+| Packaging | Separate `agentscan-gateway` console script/process in the same repo; minimal dependency set; no scanner or LLM imports in the request path. |
+| Receipt storage | JSONL with a 30-day retention default. No external anchor in v1; the limited claim is documented and the anchor interface is defined for v1.1. Postgres is deferred. |
+| Retention | 30 days for redacted receipts and dedupe state in the fake-data v1; configurable; production retention is set by data classification and policy; the dedupe window equals retention. |
 | MCP stdio | Not in v1. Deferred to v1.1. |
 | Approval | Not in v1. `require_approval` fails closed. |
-| Multi-tenant keys | One signing key per deployment. Per-tenant keys are v1.1. |
+| Multi-tenant keys | One active signing key per deployment. Per-tenant keys are v1.1. |
+| Key and anchor ownership | Security owner; signing key in a secret manager or OS-protected store; manual rotation runbook retains historical public keys for audit verification; automated rotation is v1.1. |
 | Raw arguments | Store canonical hashes and redacted values. No raw secrets or full PII. |
 | Chain concurrency | One writer per `(tenant, chain_id)`; standby failover only. |
+| Upstream tenant enforcement | Only the mock `delete_customer_record` in v1, backed by an automated cross-tenant negative test, a named upstream owner, and a recorded declaration version/hash. Real tools require owner sign-off and test evidence. |
 
-### Still open
+### Still open (non-blocking)
 
-1. Which MCP protocol version and streamable HTTP behavior must v1 pin?
-2. Is v1 an `agentscan gateway` subcommand or a separate service?
-3. Which external anchor store is acceptable: object storage with immutability,
-   a transparency log, or an off-host append-only file?
-4. What retention period applies to redacted arguments and receipts?
-5. Who owns the policy signing key and the anchor, and what is the rotation
-   plan?
-6. Which upstream tools can honestly declare
-   `resource_tenant_enforced: upstream`, and who tests that declaration?
+No decision above blocks v1 implementation. Deferred details: the specific KMS
+or secret-manager product, the specific off-host anchor product, the production
+retention value, the per-tenant key model (v1.1), and the MCP `2026-07-28`
+migration plan (v1.1).
 
 ---
 
@@ -928,6 +956,8 @@ resolves it:
 | F7 — delegation, scope, drift, idempotency, egress | §7 adds delegation-chain validation and per-call gateway-token scope; §9 requires a new signed bundle for schema drift; §10 defines the dedupe window; §15 and §16 add egress and bypass tests. |
 | F8 — retry-stable idempotency | §8 and §9 require a caller-supplied key that cannot be derived from `trace_id` or the JSON-RPC ID, scoped to `(tenant, principal, tool_identity, idempotency_key)`; §10 adds the content-hash guard for pending/unknown decisions; §16 adds a retry with a new JSON-RPC ID and trace ID. |
 | P2 — retry-state contradiction | §10 adds the terminal `no_effect` reconciliation state: it is recorded only when the upstream confirms no effect, a same-key retry returns `no_effect` without dispatch, and a new key is allowed only after it. §16 adds reconciliation tests. |
+| §19 — implementation decisions | §19 records MCP `2025-11-25` handshake mode, a separate `agentscan-gateway` process, no anchor in v1, 30-day retention, key ownership and rotation runbook, and mock-only upstream tenant enforcement. |
 
-Phase 2 remains **NO-GO** until P2 is re-checked and the open questions in §19
-are decided. No gateway implementation should start before that.
+Phase 2 remains **NO-GO** until P2 is re-checked. The §19 decisions are recorded
+and no longer block implementation. No gateway implementation should start
+before the P2 re-check.
