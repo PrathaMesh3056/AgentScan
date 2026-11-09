@@ -270,8 +270,9 @@ new identity and triggers drift handling.
 8. Call upstream with the gateway-held credential. Never forward the agent's
    token upstream.
 9. Append an `outcome` receipt for success, error, timeout, or unknown; return
-   the upstream result or `OUTCOME_UNKNOWN`. Decision and outcome receipts share
-   `trace_id`, `request_hash`, and `idempotency_key`.
+   the upstream result or `OUTCOME_UNKNOWN`. Reconciliation may append
+   `no_effect` per section 10. Decision and outcome receipts share `trace_id`,
+   `request_hash`, and `idempotency_key`.
 10. On crash or restart with a `pending` decision and no outcome, follow the
     recovery rules in section 10. Do not auto-retry a destructive call.
 11. On approval-required: v1 denies with `APPROVAL_REQUIRED`. The v1.1
@@ -469,11 +470,15 @@ Reuse the spike's `ActionReceipt` and extend it for production:
 
 - A `decision` receipt records `pending` for an allowed call or `denied` for a
   deny. A deny is terminal and has no outcome receipt.
-- An `outcome` receipt records `success`, `error`, `timeout`, or `unknown`.
+- An `outcome` receipt records `success`, `error`, `timeout`, `unknown`, or
+  `no_effect`.
 - `unknown` means the effect could not be confirmed after a crash. It is not
   success, and it is not safe to retry automatically.
-- Production extends the spike's `ActionResult.status` literal with `pending`
-  and `unknown`; the spike's literal remains unchanged.
+- `no_effect` means the upstream definitively confirmed that the original call
+  did not take effect. It is terminal for that idempotency key and clears the
+  pending/unknown guard for a new key.
+- Production extends the spike's `ActionResult.status` literal with `pending`,
+  `unknown`, and `no_effect`; the spike's literal remains unchanged.
 
 ### Chain and storage
 
@@ -505,11 +510,21 @@ Reuse the spike's `ActionReceipt` and extend it for production:
 - If a different key arrives with the same `request_hash` while a prior decision
   for that `(tenant, principal, tool_identity)` is `pending` or `unknown`, deny
   `OUTCOME_UNKNOWN` and do not dispatch. A new key is not proof of a new intent.
-- A retry is allowed only when the upstream confirms no effect, or when the
-  tool is explicitly idempotent and the same idempotency key is reused.
-- The idempotency window is configurable with a default of 24 hours and must be
-  at least the receipt retention window. Dedupe state is durable across
-  restarts; an expired key is treated as a new request.
+- Reconciliation may append an `outcome` receipt with status `no_effect` only
+  when the upstream definitively confirms that the original call had no effect.
+  This is the only transition that clears the pending/unknown guard:
+  - `no_effect` is terminal for that key. A retry with the same key returns
+    `no_effect` and does not dispatch.
+  - A new request with a new idempotency key is allowed only after `no_effect`
+    is recorded.
+  - If the upstream cannot confirm no effect, the state remains `unknown`.
+- The gateway never auto-retries a destructive call. Retrying is a new client
+  decision, and the client must use a new idempotency key after `no_effect`.
+  For an explicitly idempotent tool, the upstream may dedupe retries, but the
+  gateway still does not redispatch a recorded decision.
+- The idempotency window defaults to the configured receipt retention period
+  and must never be shorter than it. Dedupe state is durable across restarts; an
+  expired key is treated as a new request.
 - Crash-injection test points: before dispatch, during the call, after the
   effect but before the outcome append, and during the outcome append.
 
@@ -691,7 +706,8 @@ v1.1.
 - Delegation validation: broken, expired, over-depth, or unsigned hops deny.
 - Gateway-token scope: a token without the requested tool scope denies.
 - Receipt state machine: `pending` -> `success` / `error` / `timeout` /
-  `unknown`; `denied` is terminal.
+  `unknown` / `no_effect`; `denied` is terminal; `no_effect` is terminal for
+  the key.
 - Chain ownership and `writer_epoch` fencing.
 
 ### Integration (v1)
@@ -720,6 +736,10 @@ v1.1.
 - Crash injection: before dispatch, during the call, after the effect but before
   the outcome append, and during the outcome append. No automatic retry of a
   destructive call.
+- Reconciliation: when the upstream confirms no effect, append `no_effect`; a
+  new request with a new key is then allowed. A retry with the old key returns
+  `no_effect` without dispatch. When the upstream cannot confirm, the state
+  remains `unknown` and the same-content/new-key guard still denies.
 - Session reconnect: a new session re-authenticates; an existing session cannot
   be resumed with a different principal or tenant.
 - Resource tenant: cross-tenant ID is denied; a missing upstream declaration
@@ -756,8 +776,8 @@ v1.1.
 9. Session binding and reconnect tests pass.
 10. Resource-tenant test passes with an upstream declaration; otherwise
     high-risk is denied.
-11. Crash recovery leaves pending decisions reconcilable and never auto-retries
-    a destructive call.
+11. Crash recovery leaves pending decisions reconcilable to `no_effect` or
+    `unknown` and never auto-retries a destructive call.
 12. Chain restart verifies under one writer; an anchor is configured or the
     limited tamper-evidence claim is documented.
 
@@ -899,14 +919,15 @@ revision addresses the findings:
 | F5 — scope mismatch | §16 aligns acceptance with v1; §18 states the v1/v1.1 boundary; stdio, approval, 24-hour soak, and multi-writer are deferred. |
 | F6 — evidence wording | §1 narrows the spike claims to customer-record state, the in-process capability guard, and per-run chain verification. |
 
-Codex re-review of `a3f9446` returned **APPROVE WITH CHANGES**: F1 and F3–F6
-`CLOSED`, F7 `PARTIAL`, and a new **F8 (P1)** open. This revision addresses the
-remainder:
+Codex F8 verification of `357e0b5` returned F8 `CLOSED`, F7 `CLOSED`, and
+overall **APPROVE WITH CHANGES** for one new **P2** contradiction. This revision
+resolves it:
 
 | Finding | Change |
 |---|---|
 | F7 — delegation, scope, drift, idempotency, egress | §7 adds delegation-chain validation and per-call gateway-token scope; §9 requires a new signed bundle for schema drift; §10 defines the dedupe window; §15 and §16 add egress and bypass tests. |
 | F8 — retry-stable idempotency | §8 and §9 require a caller-supplied key that cannot be derived from `trace_id` or the JSON-RPC ID, scoped to `(tenant, principal, tool_identity, idempotency_key)`; §10 adds the content-hash guard for pending/unknown decisions; §16 adds a retry with a new JSON-RPC ID and trace ID. |
+| P2 — retry-state contradiction | §10 adds the terminal `no_effect` reconciliation state: it is recorded only when the upstream confirms no effect, a same-key retry returns `no_effect` without dispatch, and a new key is allowed only after it. §16 adds reconciliation tests. |
 
-Phase 2 remains **NO-GO** until F8 is re-reviewed and the open questions in §19
+Phase 2 remains **NO-GO** until P2 is re-checked and the open questions in §19
 are decided. No gateway implementation should start before that.
