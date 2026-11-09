@@ -1,6 +1,6 @@
 # Runtime Gateway and MCP Integration
 
-**Status:** Draft for re-review — revised after Codex and free-model review, not implemented  
+**Status:** Approved for v1 implementation — not implemented
 **Date:** 2026-11-09  
 **Related:** spike PR #12, `internal_docs/spike-action-verification/SPIKE_RESULT.md`, methodology §14  
 **Scope:** production runtime enforcement, not the CI scanner
@@ -938,8 +938,15 @@ migration plan (v1.1).
 
 ## 22. Review disposition (2026-11-09)
 
-Codex review verdict: **REJECT for v1 implementation as written.** This
-revision addresses the findings:
+**Final status: APPROVE for v1 implementation.** This is a design approval, not
+evidence that the gateway is implemented or that the acceptance tests pass. The
+review verified that the requirements are specified and testable; it did not
+execute them.
+
+### Initial review
+
+Codex initial review: **REJECT for v1 implementation as written.** Revisions
+addressed F1–F6:
 
 | Finding | Change |
 |---|---|
@@ -950,9 +957,10 @@ revision addresses the findings:
 | F5 — scope mismatch | §16 aligns acceptance with v1; §18 states the v1/v1.1 boundary; stdio, approval, 24-hour soak, and multi-writer are deferred. |
 | F6 — evidence wording | §1 narrows the spike claims to customer-record state, the in-process capability guard, and per-run chain verification. |
 
-Codex F8 verification of `357e0b5` returned F8 `CLOSED`, F7 `CLOSED`, and
-overall **APPROVE WITH CHANGES** for one new **P2** contradiction. This revision
-resolves it:
+### Re-review and remaining fixes
+
+Codex re-review of `a3f9446` returned **APPROVE WITH CHANGES**: F1 and F3–F6
+`CLOSED`, F7 `PARTIAL`, F8 `OPEN`. Later revisions closed the remainder:
 
 | Finding | Change |
 |---|---|
@@ -962,6 +970,16 @@ resolves it:
 | P2 — anchor scope contradiction | §14 makes anchor metrics and alerts v1.1; §16 defers full-chain rewrite detection; acceptance criterion 12 requires the documented limited claim because v1 has no external anchor. |
 | §19 — implementation decisions | §19 records MCP `2025-11-25` handshake mode, a separate `agentscan-gateway` process, no anchor in v1, 30-day retention, key ownership and rotation runbook, and mock-only upstream tenant enforcement. |
 
-Phase 2 remains **NO-GO** until P2 is re-checked. The §19 decisions are recorded
-and no longer block implementation. No gateway implementation should start
-before the P2 re-check.
+### Final verification
+
+| Check | Result |
+|---|---|
+| P2 retry-state | `CLOSED` — `no_effect` is terminal and recorded only after upstream confirmation; same-key retries return it without dispatch; a new key is allowed only after it. |
+| Anchor scope | `CLOSED` — v1 has no external anchor; anchor metrics, alerts, and full-chain rewrite detection are v1.1; criterion 12 requires the documented limited claim. |
+| §19 decisions | Recorded; no open decision blocks v1 implementation. |
+| Overall | **APPROVE for v1 implementation.** |
+
+The §16 requirements remain acceptance criteria to execute during
+implementation. Phase 2 rollout expansion remains **NO-GO** until v1 is
+implemented and passes the §17 rollout gates. Implementation is a separate step
+and remains gated on the spike PR and explicit authorization.
