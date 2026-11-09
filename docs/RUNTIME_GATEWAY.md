@@ -142,7 +142,7 @@ denied.
 | TOCTOU | Decision and execution in the same process; no re-resolution of the tool after the decision. |
 | Tool or schema drift | Hash the MCP `inputSchema` at discovery; deny on drift until approved. |
 | Tool poisoning / shadow server | Server allowlist; signed catalog; no dynamic tool registration without approval. |
-| Log tampering | Hash chain, single-writer ownership, append-only storage, separate writer credentials, and a signed external anchor when configured. Without an anchor, a compromised host can rewrite and rehash the local chain; the claim is limited accordingly. |
+| Log tampering | Hash chain, single-writer ownership, append-only storage, and separate writer credentials. v1 does not claim detection of a full local rewrite; v1.1 adds an off-host signed anchor. |
 | Crash after effect, before outcome receipt | Persisted idempotency key, pending-decision reconciliation, no automatic retry of destructive calls. |
 | Session identity change or reconnect | Session is bound at `initialize` to principal, agent, tenant, and delegation; every call is revalidated; mismatch denies and requires a new session. |
 | Cross-tenant resource ID | Tool catalog must declare upstream resource-tenant enforcement; high-risk calls without that declaration are denied. |
@@ -668,14 +668,15 @@ v1.1.
 - Receipts are the source of truth.
 - Metrics: decisions by tool/decision/reason, p50/p99 latency, policy age,
   chain verification failures, pending decisions, unknown outcomes, identity
-  mismatches, chain writer conflicts, anchor age, upstream errors, bypass
-  attempts, approval waits.
+  mismatches, chain writer conflicts, upstream errors, bypass attempts,
+  approval waits. v1.1 adds anchor age and anchor verification metrics.
 - Logs: structured, request IDs, no secrets.
 - Traces: OpenTelemetry optional; export must not block the hot path.
 - Alerts: deny spike, missing receipts, chain break, pending decision older
   than the reconciliation threshold, unknown outcome, schema drift, expired
-  policy, stale or missing anchor, chain writer conflict, gateway unhealthy,
-  direct upstream connection attempt.
+  policy, chain writer conflict, gateway unhealthy, direct upstream connection
+  attempt. v1.1 adds stale or missing anchor alerts when an anchor is
+  configured.
 
 ---
 
@@ -766,8 +767,9 @@ v1.1.
   be resumed with a different principal or tenant.
 - Resource tenant: cross-tenant ID is denied; a missing upstream declaration
   denies high-risk.
-- Chain: restart verifies; two concurrent writers cannot both extend the chain;
-  a full local-chain rewrite is detected when an anchor is configured.
+- Chain: restart verifies; two concurrent writers cannot both extend the chain.
+  v1 does not test full local-chain rewrite detection because no anchor is
+  configured; v1.1 adds that test with an off-host anchor.
 - No secrets: seed canaries in credentials and arguments; inspect receipts and
   logs for leaks.
 
@@ -802,13 +804,13 @@ v1.1.
     high-risk is denied.
 11. Crash recovery leaves pending decisions reconcilable to `no_effect` or
     `unknown` and never auto-retries a destructive call.
-12. Chain restart verifies under one writer; an anchor is configured or the
-    limited tamper-evidence claim is documented.
+12. Chain restart verifies under one writer; the limited tamper-evidence claim
+    is documented because v1 has no external anchor.
 
 Deferred to v1.1 and not part of v1 acceptance: stdio, human approval workflow,
-gateway-side resource lookup, active-active multi-writer chains, automated
-Merkle anchoring, 24-hour soak, key rotation, OpenTelemetry export, dashboard,
-multi-region.
+gateway-side resource lookup, active-active multi-writer chains, external
+anchor, automated Merkle anchoring, full-chain rewrite detection, 24-hour soak,
+key rotation, OpenTelemetry export, dashboard, multi-region.
 
 ---
 
@@ -875,8 +877,9 @@ To avoid overbuilding, v1 is deliberately small:
 
 Deferred to v1.1: stdio, MCP `2026-07-28` stateless mode, HTTP proxy, SDK
 wrapper, human approval workflow/UI, gateway-side resource lookup, active-active
-multi-writer chains, automated Merkle anchor verification, 24-hour soak,
-automated key rotation, async verifier beyond receipt-chain checks.
+multi-writer chains, external anchor, automated Merkle anchor verification,
+full-chain rewrite detection, 24-hour soak, automated key rotation, async
+verifier beyond receipt-chain checks.
 
 ---
 
@@ -943,7 +946,7 @@ revision addresses the findings:
 | F1 — session identity ambiguous | §7 adds fixed session binding and reconnect rules; §8 revalidates identity per call; §16 adds reconnect and identity-change tests. |
 | F2 — crash after effect | §10 adds `pending`/`unknown` states, idempotency-key persistence, and no-auto-retry recovery; §16 adds crash-injection tests. |
 | F3 — resource tenant | §9 adds mandatory `resource_tenant_enforced` declarations and explicit rule precedence; §16 adds cross-tenant tests. |
-| F4 — chain anchor and multi-writer | §10 adds single-writer leases, `writer_epoch`, and an explicit anchor-or-narrowed-claim rule; §16 adds restart, concurrent-writer, and rewrite tests. |
+| F4 — chain anchor and multi-writer | §10 adds single-writer leases, `writer_epoch`, and an explicit anchor-or-narrowed-claim rule; §16 adds restart and concurrent-writer tests; full-chain rewrite detection is v1.1. |
 | F5 — scope mismatch | §16 aligns acceptance with v1; §18 states the v1/v1.1 boundary; stdio, approval, 24-hour soak, and multi-writer are deferred. |
 | F6 — evidence wording | §1 narrows the spike claims to customer-record state, the in-process capability guard, and per-run chain verification. |
 
@@ -956,6 +959,7 @@ resolves it:
 | F7 — delegation, scope, drift, idempotency, egress | §7 adds delegation-chain validation and per-call gateway-token scope; §9 requires a new signed bundle for schema drift; §10 defines the dedupe window; §15 and §16 add egress and bypass tests. |
 | F8 — retry-stable idempotency | §8 and §9 require a caller-supplied key that cannot be derived from `trace_id` or the JSON-RPC ID, scoped to `(tenant, principal, tool_identity, idempotency_key)`; §10 adds the content-hash guard for pending/unknown decisions; §16 adds a retry with a new JSON-RPC ID and trace ID. |
 | P2 — retry-state contradiction | §10 adds the terminal `no_effect` reconciliation state: it is recorded only when the upstream confirms no effect, a same-key retry returns `no_effect` without dispatch, and a new key is allowed only after it. §16 adds reconciliation tests. |
+| P2 — anchor scope contradiction | §14 makes anchor metrics and alerts v1.1; §16 defers full-chain rewrite detection; acceptance criterion 12 requires the documented limited claim because v1 has no external anchor. |
 | §19 — implementation decisions | §19 records MCP `2025-11-25` handshake mode, a separate `agentscan-gateway` process, no anchor in v1, 30-day retention, key ownership and rotation runbook, and mock-only upstream tenant enforcement. |
 
 Phase 2 remains **NO-GO** until P2 is re-checked. The §19 decisions are recorded
