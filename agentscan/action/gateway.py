@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 from uuid import uuid4
 
 from agentscan.action.mock_tool import MockCustomerTool
@@ -65,7 +65,7 @@ class MockGateway:
         )
         # DENY: every request that misses the exact allow rule is denied. This
         # includes principal:untrusted-agent and all mismatched arguments.
-        decision = "allow" if allowed else "deny"
+        decision: Literal["allow", "deny"] = "allow" if allowed else "deny"
         policy_id = ALLOW_POLICY_ID if allowed else DENY_POLICY_ID
 
         if tool_name != MockCustomerTool.name:
@@ -73,6 +73,7 @@ class MockGateway:
         if not isinstance(customer_id, str):
             raise ValueError("customer_id must be a string")
 
+        result_status: Literal["success", "denied", "error"]
         if allowed:
             summary = self.tool.delete_customer_record(customer_id, self.__capability)
             result_status = "success"
