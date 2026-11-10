@@ -19,6 +19,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added ATK-005's opt-in HTTP `document_v1` adapter with seven document patterns, separate task/source delivery and probe/source/content-bound consumption receipts. Dashboard, CLI profiles and service jobs expose the setting; see [setup and receipt requirements](docs/modules/indirect_injection.md).
 - Added ATK-008's owned SQLite retrieval fixture with authenticated source admission, a narrow structured-answer reconciliation policy, local consume-once witnesses, and optional cached offline-model evaluation. Owned effects appear separately in CLI, dashboard and HTML reports; see [scope and setup](docs/modules/rag_poisoning.md).
 
+### Changed
+
+- Hardened repository validation: frozen evaluation inputs are checked out byte-for-byte, superseded CI runs are cancelled, pre-commit and a Windows frozen-input job run in CI, committed secrets are scanned with gitleaks, and total coverage is enforced at 82% (measured baseline 83.46%).
+
 ### Fixed
 
 - Completed YAML-runner findings survive connector cleanup failures, with safe diagnostics and incomplete status retained. ATK-002 excludes generated HTTP-header reflections from private-disclosure evidence and keeps captured HTTP errors, unverified browser completion and budget exhaustion outside evaluated safety results.

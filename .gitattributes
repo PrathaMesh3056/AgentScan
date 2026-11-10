@@ -1,2 +1,3 @@
-# Preserve the frozen evaluation's exact-byte SHA-256 across Git checkouts.
-benchmarks/evaluation/atk007_cases.json -text
+# Frozen evaluation inputs are hashed byte-for-byte. Never normalize their line
+# endings on checkout, or the declared SHA-256 digests fail on Windows.
+benchmarks/evaluation/**/*.json -text
