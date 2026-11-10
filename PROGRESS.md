@@ -19,14 +19,14 @@ approval, and it does not replace `docs/RUNTIME_GATEWAY.md`.
 | 0 | Dependency gate, config/skeleton, import boundary | Verified and committed | Dependency/API gate and import-boundary test below |
 | 1 | Policy bundle, signing/verification, evaluation | Approved (`1265516`); CI green (`a21ccd7`) | Phase 1 approval below |
 | 2 | Receipts, chain, WAL, writer lease/epoch | Approved (`3c8579b`); CI green | Phase 2 approval below |
-| 3 | Idempotency, recovery, reconciliation | Blocked on Phase 2 | — |
+| 3 | Idempotency, recovery, reconciliation | Approved (`468e603`, fix `43357c8`); CI green | Phase 3 review/approval below |
 | 4 | Identity, sessions, MCP server, protocol pin | Not started | — |
 | 5 | Upstream client, mock upstream, end-to-end | Not started | — |
 | 6 | CI, docs/runbook, benchmark/soak, draft PR | Not started | — |
 
-Implementation stops at each user-requested checkpoint. Phases 1 and 2 are
-approved and CI-green. Phase 3 is authorized to start from `3c8579b` and must
-stop at its own checkpoint.
+Implementation stops at each user-requested checkpoint. Phases 1-3 are approved
+and CI-green. Phase 4 is authorized to start from `43357c8` and must stop at its
+own checkpoint.
 
 ---
 
@@ -371,6 +371,97 @@ dependency audit, and the build/artifact smoke.
 
 This `PROGRESS.md` update is a separate documentation commit; it is not part of
 `3c8579b`. PR #15 remains a draft, and PR #12 remains untouched.
+
+---
+
+## Phase 3 review (2026-11-10)
+
+**Scope:** `252f7d2..468e603` (`feat(gateway): add idempotency and recovery
+state machine`), exactly four new files: `agentscan/gateway/idempotency.py`
+(+501), `agentscan/gateway/recovery.py` (+269),
+`tests/test_gateway/test_idempotency.py` (+586), and
+`tests/test_gateway/test_recovery.py` (+621). `PROGRESS.md` is modified only by
+the coordinator.
+
+**Verdict:** approved. No spec conflict. Phase 4 may start after the CI run on
+the review-fix commit is green.
+
+Verified independently on `468e603`:
+
+- `pytest tests/test_gateway -q` -> `129 passed`.
+- `ruff check agentscan/gateway tests/test_gateway` -> clean.
+- `ruff format --check agentscan/gateway tests/test_gateway` -> 17 files
+  already formatted.
+- mypy 1.19.1 as pure Python (the mypyc `lookup` DLL is blocked by Windows
+  Application Control): `mypy --no-incremental agentscan` -> 202 files clean.
+- `mypy --no-incremental --platform linux agentscan` -> 202 files clean.
+
+Contract coverage:
+
+- `hash_key` hashes exact UTF-8 bytes, enforces 1..`max_key_bytes`, and never
+  stores or logs the raw key. `compute_request_hash` binds tenant, principal,
+  agent, tool identity, and canonical arguments while excluding trace/RPC IDs,
+  timestamps, and the key.
+- `pair_receipts` rejects orphans, duplicate decision trace IDs,
+  decision/outcome identity mismatches, denied decisions with outcomes, invalid
+  outcome transitions, missing `sha256:` response hashes, and `no_effect`
+  without an explicit confirmation note. The Phase 2 `validate_phase_status`
+  model check already rejects `pending`/`denied` outcome receipts, so the
+  suspected Phase 3 outcome-status gap is not a defect.
+- `IdempotencyIndex` is rebuilt from durable receipts, is scoped by
+  `(tenant, principal, tool_identity_hash, key_hash)`, returns conflict on a
+  changed request hash, replays completed outcomes, denies pending/unknown
+  retries, applies the same-content/new-key guard only while a prior state is
+  pending or unknown, and expires with the retention window. Denied decisions
+  are not dedupe entries.
+- `append_outcome` requires the held writer lease and a stored decision,
+  enforces the pending/unknown/terminal state machine and response-hash/null
+  rules, and writes through the WAL/JSONL chain.
+- `recover` verifies the chain and store cache, requires the lease, closes each
+  pending decision once as `unknown` with a reconciliation note, never queries
+  or retries upstream, and aborts without serving if an append fails.
+- `reconcile` requires a validated authenticated `UpstreamConfirmation`,
+  matches both key and request hashes, rejects a plain dict, refuses denied or
+  completed decisions, appends `no_effect` only on an explicit `no_effect`
+  confirmation, and keeps `unknown` for `applied`/`unknown` confirmations. No
+  `--force` or assume-no-effect path exists.
+
+Non-blocking Phase 4 invariant: `GatewayReceipt` does not couple
+`result.status` to `effective_action` and `authorization.decision`. Phase 4
+must construct coherent decision receipts (enforce deny =
+`denied`/`blocked`/`deny`; allow and shadow/observe = `pending`/`forwarded`)
+and test each mode. If the durable validator should enforce that coupling,
+add it with a dedicated pairing test rather than inferring it in Phase 4.
+
+### Phase 3 approval (2026-11-10)
+
+**Fix commit:** `43357c8` (`test(gateway): avoid pytest module name collisions`).
+**Verdict:** approved. Phase 4 is authorized to start from this checkpoint.
+
+The first CI run on `468e603` failed before executing tests: pytest's default
+prepend import mode loaded the new `tests/test_gateway/test_idempotency.py` and
+`test_recovery.py` by basename, colliding with the existing
+`tests/api/test_idempotency.py` and `tests/test_remediation/test_recovery.py`.
+`43357c8` renames the two Phase 3 modules to `test_gateway_idempotency.py` and
+`test_gateway_recovery.py`; no production code changed. Full-suite collection
+now reports `3219 tests collected`.
+
+Independent checks after the rename:
+
+- `pytest tests/test_gateway -q` -> `129 passed`.
+- `pytest tests .github/tests --collect-only -q` -> `3219 tests collected`.
+- `ruff check` / `ruff format --check` -> clean.
+- `mypy --no-incremental agentscan` -> 202 files clean.
+- `mypy --no-incremental --platform linux agentscan` -> 202 files clean.
+
+CI is green in run `42819566348`
+(<https://github.com/PrathaMesh3056/AgentScan/actions/runs/42819566348>):
+`validation / test (3.12)` and `validation / test (3.13)` both succeeded,
+covering pre-commit, ruff, mypy, the gateway CLI smoke, the full test suite,
+the dependency audit, and the build/artifact smoke.
+
+This `PROGRESS.md` update is a separate documentation commit. PR #15 remains a
+draft, and PR #12 remains untouched.
 
 ---
 
