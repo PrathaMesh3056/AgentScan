@@ -37,6 +37,9 @@ jobs:
       - name: Install locked validation dependencies
         run: uv sync --locked --python "$PYTHON_VERSION" --extra semgrep --extra ui --extra api --dev
 
+      - name: Run pre-commit hooks
+        run: uv run --no-sync pre-commit run --all-files --show-diff-on-failure
+
       - name: Run Ruff linter and formatting
         run: |
           uv run --no-sync ruff check .
@@ -46,7 +49,7 @@ jobs:
         run: uv run --no-sync mypy agentscan
 
       - name: Run tests and action boundary regressions
-        run: uv run --no-sync pytest tests .github/tests -m "not slow" --cov=agentscan --cov-report=xml
+        run: uv run --no-sync pytest tests .github/tests -m "not slow" --cov=agentscan --cov-report=xml --cov-fail-under=82
 
       - name: Audit locked dependencies (required)
         run: |
@@ -67,3 +70,42 @@ jobs:
           path: dist/*
           if-no-files-found: error
           retention-days: 7
+
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@caf0cab7a618c569241d31dcd442f54681755d39 # v3
+        with:
+          enable-cache: true
+          version: "0.12.3"
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install locked validation dependencies
+        run: uv sync --locked --python 3.12 --dev
+
+      - name: Verify frozen benchmark inputs on Windows
+        run: uv run --no-sync pytest tests/test_frozen_benchmark_digests.py -q
+
+  secrets:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Scan for committed secrets
+        uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITLEAKS_CONFIG: .gitleaks.toml
+          GITLEAKS_ENABLE_COMMENTS: "false"
