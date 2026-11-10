@@ -246,6 +246,29 @@ Phase 2 must not start until Luna fixes these, reruns the tests/ruff/mypy, and
 the coordinator verifies the new commit. CI/pre-commit must still run on the
 draft PR.
 
+### Phase 1 approval (2026-11-10)
+
+**Fix commit:** `1265516` (`fix(gateway): narrow validated policy types`).
+**Verdict:** approved. Phase 2 is authorized to start from this checkpoint.
+
+The fix changes only `agentscan/gateway/policy.py` (+13/-7): `_fail` is now
+`NoReturn`, `compose_node` rejects a `None` node, and the four validated values
+are cast to their declared `Literal` types before model construction. No
+validation branch, test, dependency, spec, or protected file changed.
+
+Independent checks on `1265516`:
+
+- `python -m pytest tests/test_gateway -q` -> `67 passed`.
+- `ruff check agentscan/gateway tests/test_gateway` -> `All checks passed!`.
+- `ruff format --check ...` -> `11 files already formatted`.
+- Mypy 1.19.1 (pure-Python copy, `compiled: no`) `mypy agentscan` ->
+  `Success: no issues found in 199 source files`.
+
+CI and the full pre-commit suite have not run yet because the branch has no
+draft PR. They must be green on the draft PR before Phase 1 is considered
+final, and before any merge or release sign-off. This does not block Phase 2
+implementation from starting.
+
 ---
 
 PR #12 is open and unmerged. Its `isDraft` value is `false`; the query was
