@@ -13,7 +13,7 @@ from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, NoReturn, cast
 
 import yaml
 from cryptography.exceptions import InvalidSignature
@@ -77,7 +77,10 @@ class _BundleSafeLoader(yaml.SafeLoader):
         event = self.peek_event()
         if getattr(event, "anchor", None) is not None:
             raise PolicyError("YAML anchors are not allowed")
-        return super().compose_node(parent, index)
+        node = super().compose_node(parent, index)
+        if node is None:
+            raise PolicyError("unexpected end of YAML document")
+        return node
 
 
 class _BundleSafeDumper(yaml.SafeDumper):
@@ -185,7 +188,7 @@ class VerifiedPolicyBundle:
     key_id: str
 
 
-def _fail(message: str) -> None:
+def _fail(message: str) -> NoReturn:
     raise PolicyError(message)
 
 
@@ -397,7 +400,7 @@ def validate_policy(value: Any) -> Policy:
             rules.append(
                 PolicyRule(
                     id=rule_id,
-                    decision=decision,
+                    decision=cast(PolicyActionName, decision),
                     principal_role=role,
                     tenant_match=tenant_match,
                     arguments=arguments,
@@ -406,9 +409,12 @@ def validate_policy(value: Any) -> Policy:
 
         tools[tool_name] = ToolPolicy(
             server=server,
-            risk=risk,
-            enforcement=enforcement,
-            resource_tenant_enforced=resource_tenant,
+            risk=cast(Literal["high", "low"], risk),
+            enforcement=cast(Literal["inline", "observe"], enforcement),
+            resource_tenant_enforced=cast(
+                Literal["upstream", "gateway", "none"] | None,
+                resource_tenant,
+            ),
             schema_hash=schema_hash,
             status_operation=status_operation,
             rules=tuple(rules),
