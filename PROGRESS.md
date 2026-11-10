@@ -264,10 +264,16 @@ Independent checks on `1265516`:
 - Mypy 1.19.1 (pure-Python copy, `compiled: no`) `mypy agentscan` ->
   `Success: no issues found in 199 source files`.
 
-CI and the full pre-commit suite have not run yet because the branch has no
-draft PR. They must be green on the draft PR before Phase 1 is considered
-final, and before any merge or release sign-off. This does not block Phase 2
-implementation from starting.
+CI and the full pre-commit suite passed on `0f305f7` in draft PR #15
+(<https://github.com/PrathaMesh3056/AgentScan/actions/runs/42769268471>):
+`validation / test (3.12)` and `validation / test (3.13)` both succeeded. The
+jobs cover pre-commit, mypy, the gateway CLI smoke test, the full test suite,
+the dependency audit, and the build/artifact smoke tests.
+
+The intervening change is `0f305f7` (`fix(ci): preserve Markdown line breaks in
+pre-commit`). It adds `--markdown-linebreak-ext=md` so the approved spec's
+deliberate two-space Markdown line breaks are not rewritten. The spec itself is
+unchanged. This `PROGRESS.md` update is documentation-only.
 
 ---
 
