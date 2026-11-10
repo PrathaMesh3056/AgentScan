@@ -42,6 +42,8 @@ repos:
     rev: v4.6.0
     hooks:
       - id: trailing-whitespace   # remove trailing spaces
+        # Preserve intentional two-space Markdown line breaks in approved docs.
+        args: [--markdown-linebreak-ext=md]
 
       - id: check-yaml            # validate YAML syntax
         args: [--allow-multiple-documents]
