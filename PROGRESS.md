@@ -2,6 +2,7 @@
 
 **Last updated:** 2026-11-10
 **Phase 0 commits:** `8654034` (skeleton), `2721a15` (strengthened test + gate evidence), `d074c9d` (coordinator evidence)
+**CI commit:** `1393c88` (gateway extra, pre-commit, CLI smoke)
 **Worktree:** `D:\prathamesh\AgentScan-gw-impl`
 **Branch:** `feat/runtime-gateway-v1`
 **Base:** `origin/main` @ `1ed8942` (`docs: mark runtime gateway spec approved`)
@@ -16,15 +17,16 @@ approval, and it does not replace `docs/RUNTIME_GATEWAY.md`.
 | Phase | Scope | Status | Evidence |
 |---|---|---|---|
 | 0 | Dependency gate, config/skeleton, import boundary | Verified and committed | Dependency/API gate and import-boundary test below |
-| 1 | Policy bundle, signing/verification, evaluation | Not started | — |
+| 1 | Policy bundle, signing/verification, evaluation | Authorized; Luna implements; not started | Phase 1 gate below |
 | 2 | Receipts, chain, WAL, writer lease/epoch | Not started | — |
 | 3 | Idempotency, recovery, reconciliation | Not started | — |
 | 4 | Identity, sessions, MCP server, protocol pin | Not started | — |
 | 5 | Upstream client, mock upstream, end-to-end | Not started | — |
 | 6 | CI, docs/runbook, benchmark/soak, draft PR | Not started | — |
 
-Implementation stops at each user-requested checkpoint. Phase 1 remains not
-started pending the user's review of this checkpoint.
+Implementation stops at each user-requested checkpoint. Phase 1 is authorized
+but not started. Phase 2 must not start until the coordinator has reviewed the
+Phase 1 diff and test evidence.
 
 ---
 
@@ -133,6 +135,63 @@ The direct `pytest` launcher remains blocked by Windows Application Control;
 the Python module invocation was used instead. No policy, identity, receipt,
 session, or upstream code was written.
 
+
+---
+
+## CI (Phase 0 follow-up)
+
+`.github/workflows/validate.yml` was updated in `1393c88` to:
+
+- install the `gateway` extra in both `uv sync` and `uv export`;
+- run `pre-commit run --all-files --show-diff-on-failure`, so the mypy,
+  check-toml, and check-merge-conflict hooks that Windows Application Control
+  blocked locally now execute in CI;
+- keep the explicit `mypy agentscan` step;
+- smoke-test `agentscan-gateway --help`.
+
+The gateway export was verified locally: 2,102 lines, including `mcp==1.30.0`,
+`cryptography==50.0.1`, and `pyjwt==2.15.1`.
+
+---
+
+## Phase 1 authorization and gate
+
+**Status:** authorized for Luna; not started.
+**Implementer:** Luna (Codex). The coordinator reviews and runs tests; it does
+not write policy verification code.
+
+Authorized scope, and nothing beyond it:
+
+- signed policy-bundle YAML envelope;
+- YAML loader that rejects duplicate keys and anchor/alias use;
+- Ed25519 signature verification **before** constructing any policy object;
+- key-ID derivation;
+- bundle/schema validation, including unknown-field rejection;
+- deterministic rule precedence, including overlapping rules;
+- redaction configuration;
+- `policy sign` and `policy verify`;
+- unit tests for: expired bundle, tenant mismatch, key mismatch, duplicate YAML
+  keys, anchors/aliases, invalid regex, unknown fields, overlapping rules, and
+  key rotation.
+
+Required invariants for review:
+
+1. Signature is verified over the exact signed bytes before YAML policy
+   structures are materialized into policy objects.
+2. The loader rejects duplicate keys at every mapping depth.
+3. Anchors and aliases are rejected, not silently expanded.
+4. Unknown fields are errors, not ignored.
+5. Precedence is deterministic and tested for overlapping rules.
+6. Key rotation selects a trusted key by derived key ID and fails closed on an
+   unknown or mismatched key.
+
+**Hard stop:** Phase 1 ends with a checkpoint. Do not start Phase 2
+(receipts/WAL/sessions) until the coordinator has inspected the full Phase 1
+diff, run the policy test matrix, ruff, and mypy, and reported the evidence.
+
+Phase 1 must not modify `agentscan/core/`, `agentscan/action/`, or PR #12.
+
+---
 
 PR #12 is open and unmerged. Its `isDraft` value is `false`; the query was
 read-only and did not modify the PR.
