@@ -45,6 +45,7 @@ dependencies = [
 
 [project.scripts]
 agentscan = "agentscan.cli:app"
+agentscan-gateway = "agentscan.gateway.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/PrathaMesh3056/AgentScan"
@@ -91,8 +92,15 @@ telemetry = [
     "opentelemetry-instrumentation-httpx>=0.46b0",
     "prometheus-client>=0.20.0",
 ]
+gateway = [
+    "mcp>=1.30.0,<2",
+    "cryptography>=43.0.0",
+    "pyjwt[crypto]>=2.15.1",
+    "filelock>=4.2.1",
+    "uvicorn>=0.32.0",
+]
 full = [
-    "agentscan[deep,semantic,browser,pdf,llm,ui,semgrep,api,telemetry]",
+    "agentscan[deep,semantic,browser,pdf,llm,ui,semgrep,api,telemetry,gateway]",
 ]
 
 # Shared exclusions also protect a direct wheel build from local credentials,
