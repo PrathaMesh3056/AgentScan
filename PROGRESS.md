@@ -1,7 +1,7 @@
 # AgentScan Runtime Gateway v1 — Implementation Progress
 
 **Last updated:** 2026-11-10
-**Phase 0 head:** `2721a15` (skeleton `8654034`; test/evidence `2721a15`)
+**Phase 0 commits:** `8654034` (skeleton), `2721a15` (strengthened test + gate evidence), `d074c9d` (coordinator evidence)
 **Worktree:** `D:\prathamesh\AgentScan-gw-impl`
 **Branch:** `feat/runtime-gateway-v1`
 **Base:** `origin/main` @ `1ed8942` (`docs: mark runtime gateway spec approved`)
@@ -67,6 +67,7 @@ Checkpoint commits:
 - `8654034` — skeleton: script/extra, gateway package, import-boundary test,
   initial `PROGRESS.md`.
 - `2721a15` — strengthened import-boundary test and captured gate evidence.
+- `d074c9d` — coordinator rerun evidence and stale-handoff correction.
 
 ---
 
