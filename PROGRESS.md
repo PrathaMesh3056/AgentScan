@@ -458,7 +458,9 @@ CI is green in run `42819566348`
 (<https://github.com/PrathaMesh3056/AgentScan/actions/runs/42819566348>):
 `validation / test (3.12)` and `validation / test (3.13)` both succeeded,
 covering pre-commit, ruff, mypy, the gateway CLI smoke, the full test suite,
-the dependency audit, and the build/artifact smoke.
+the dependency audit, and the build/artifact smoke. The phase-approval docs
+commit `dcb8b0a` is also green in run `42820211660`
+(<https://github.com/PrathaMesh3056/AgentScan/actions/runs/42820211660>).
 
 This `PROGRESS.md` update is a separate documentation commit. PR #15 remains a
 draft, and PR #12 remains untouched.
@@ -467,9 +469,9 @@ draft, and PR #12 remains untouched.
 
 ## CI hardening backlog (deferred, 2026-11-10)
 
-Recorded for planning only. Do not implement until Phase 2 is approved: CI
-changes are outside the Phase 2 scope (`agentscan/gateway/receipts.py` and
-`tests/test_gateway/test_receipts.py`) and would mix review scopes.
+Recorded for planning on 2026-11-10. The first pass is implemented in draft PR
+#16 (`chore/repo-hardening`); the remaining gaps are listed below. CI changes
+were kept out of the Phase 2 and Phase 3 review scopes.
 
 What CI already enforces (`.github/workflows/validate.yml`, Python 3.12 and
 3.13): pre-commit (ruff lint/format, mypy, YAML/TOML, conflict markers), ruff
@@ -477,19 +479,40 @@ lint and format check, `mypy agentscan`, the gateway CLI smoke, `pytest tests
 .github/tests`, the hashed `pip-audit` dependency audit, wheel/sdist build, and
 the artifact-install smoke.
 
-Planned follow-up PR, in priority order:
+Implemented in draft PR #16 (`chore/repo-hardening`, head `441c445`):
 
-1. **Coverage gate.** `--cov` currently produces a report that nothing
-   enforces. Add a global floor calibrated to the measured value, plus a
-   focused gate for `agentscan/gateway/policy.py` and
-   `agentscan/gateway/receipts.py`.
-2. **Secret scanning.** Add `gitleaks` to pre-commit and CI. No current check
-   enforces the "no credentials or committed private keys" requirement.
-3. **Windows job (conditional).** Run `tests/test_gateway` on `windows-latest`
-   only if Windows is a supported runtime. The gateway now contains
-   Windows-specific durability and locking paths that Linux CI cannot exercise.
-4. **Maintenance.** Dependabot for `github-actions` and `uv`; `concurrency`
-   cancellation for superseded runs.
+1. **Coverage gate.** Global total floor at 82% against the measured 83.46%
+   baseline.
+2. **Secret scanning.** A gitleaks CI job with a fixture allowlist, on pull
+   requests and main pushes.
+3. **Windows job.** A `windows-latest` job that verifies the frozen input
+   digests, including the nested ATK-001 manifest.
+4. **Maintenance.** Grouped weekly Dependabot updates for `uv` and
+   GitHub Actions, plus `concurrency` cancellation for superseded runs.
+
+Still open after #16:
+
+- Per-module coverage floor for `agentscan/gateway/policy.py` and
+  `agentscan/gateway/receipts.py`.
+- A gitleaks pre-commit hook and a periodic full-history audit.
+- A Windows job that runs the gateway tests and mypy, not only the digest
+  regression.
+- CODEOWNERS and required human approval, blocked until a second collaborator
+  exists.
+
+Repository setting applied on 2026-11-10, independent of the draft PR: the
+active `Protect main branch` ruleset requires pull requests, the four
+`validation` checks, review-thread resolution, up-to-date branches, and
+squash-only merges; it blocks deletion and non-fast-forward pushes. Bypass
+actors are empty, so administrators are enforced. Zero required approvals is
+intentional while there is one collaborator. If PR #16 is closed without
+merging, the ruleset must be relaxed or removed because the required checks are
+defined by that PR.
+
+All four checks are green on `441c445` in run `42820657082`
+(<https://github.com/PrathaMesh3056/AgentScan/actions/runs/42820657082>).
+PR #16 remains a draft; merging it and updating this backlog afterward are
+owner actions.
 
 Deferred for evaluation after the items above: a scoped Semgrep self-scan over
 `agentscan/gateway` (the `semgrep` extra is installed for the product, not as a
