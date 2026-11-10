@@ -213,6 +213,39 @@ the policy/catalog pairing and fail closed before serving or dispatching when a
 rule names an argument absent from the schema. This is a sequencing deferral,
 not a waiver. The approved spec is not edited.
 
+### Phase 1 review (2026-11-10)
+
+**Commit:** `4534330` (`feat(gateway): implement Phase 1 signed policies`).
+**Verdict:** not approved yet; Phase 2 remains blocked.
+
+Scope is correct: only `agentscan/gateway/policy.py`,
+`agentscan/gateway/cli.py`, and `tests/test_gateway/test_policy.py` changed.
+`docs/RUNTIME_GATEWAY.md`, `PROGRESS.md`, dependencies, and protected areas
+were untouched. The worktree is clean.
+
+Independent checks:
+
+- `python -m pytest tests/test_gateway -q` -> `67 passed`.
+- `ruff check agentscan/gateway tests/test_gateway` -> `All checks passed!`.
+- `ruff format --check ...` -> `11 files already formatted`.
+- Direct mypy remains blocked by Windows Application Control. Mypy 1.19.1 was
+  run from a pure-Python copy of the installed package (`compiled: no`):
+  `mypy agentscan` -> 20 errors, all in `agentscan/gateway/policy.py`; no
+  errors elsewhere.
+
+Blocking mypy errors:
+
+- `_fail` is annotated `-> None`; it must be `NoReturn` so validation branches
+  narrow types after raising.
+- `compose_node` must handle the base-class `Node | None` return.
+- Validated `decision`, `risk`, `enforcement`, and
+  `resource_tenant_enforced` values need explicit `Literal` casts (or
+  equivalent) before constructing `PolicyRule`/`ToolPolicy`.
+
+Phase 2 must not start until Luna fixes these, reruns the tests/ruff/mypy, and
+the coordinator verifies the new commit. CI/pre-commit must still run on the
+draft PR.
+
 ---
 
 PR #12 is open and unmerged. Its `isDraft` value is `false`; the query was
