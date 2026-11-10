@@ -1,6 +1,7 @@
 # AgentScan Runtime Gateway v1 — Implementation Progress
 
 **Last updated:** 2026-11-10
+**Phase 0 head:** `2721a15` (skeleton `8654034`; test/evidence `2721a15`)
 **Worktree:** `D:\prathamesh\AgentScan-gw-impl`
 **Branch:** `feat/runtime-gateway-v1`
 **Base:** `origin/main` @ `1ed8942` (`docs: mark runtime gateway spec approved`)
@@ -29,6 +30,11 @@ started pending the user's review of this checkpoint.
 
 ## Phase 0 summary
 
+Handoff §4's clean-worktree snapshot was stale at takeover: Luna's uncommitted
+Phase 0 files (`pyproject.toml`, `uv.lock`, the gateway package, and the
+import-boundary test) were already present. They were preserved, then committed
+as the Phase 0 checkpoint.
+
 The Phase 0 checkpoint contains:
 
 - `pyproject.toml`: `agentscan-gateway` script, `gateway` extra, and `gateway`
@@ -55,6 +61,12 @@ requested a stronger import test and exact gate evidence. Contents:
 - `PROGRESS.md` — this file.
 
 The checkpoint is **not** a claim that the v1 security gates are met.
+
+Checkpoint commits:
+
+- `8654034` — skeleton: script/extra, gateway package, import-boundary test,
+  initial `PROGRESS.md`.
+- `2721a15` — strengthened import-boundary test and captured gate evidence.
 
 ---
 
@@ -95,6 +107,31 @@ gh pr view 12 --json state,isDraft,mergedAt
 locked package versions. Windows Application Control blocked direct execution
 of the generated `pytest` and `agentscan-gateway` executables, so the Python
 module commands above were used and passed.
+
+### Coordinator rerun (2026-11-10)
+
+The coordinator independently re-ran the gate after commit `2721a15`:
+
+```text
+uv sync --locked --extra gateway --dev
+Resolved 203 packages in 1ms
+Checked 118 packages in 8ms
+
+MCP API gate
+mcp gate ok
+
+uv run --no-sync python -m pytest -q tests/test_gateway/test_import_boundary.py
+.                                                                        [100%]
+1 passed in 0.46s
+
+gh pr view 12 --json state,isDraft,mergedAt
+{"isDraft":false,"mergedAt":null,"state":"OPEN"}
+```
+
+The direct `pytest` launcher remains blocked by Windows Application Control;
+the Python module invocation was used instead. No policy, identity, receipt,
+session, or upstream code was written.
+
 
 PR #12 is open and unmerged. Its `isDraft` value is `false`; the query was
 read-only and did not modify the PR.
