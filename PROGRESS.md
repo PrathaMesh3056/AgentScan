@@ -469,9 +469,9 @@ draft, and PR #12 remains untouched.
 
 ## CI hardening backlog (deferred, 2026-11-10)
 
-Recorded for planning on 2026-11-10. The first pass is implemented in draft PR
-#16 (`chore/repo-hardening`); the remaining gaps are listed below. CI changes
-were kept out of the Phase 2 and Phase 3 review scopes.
+Recorded for planning on 2026-11-10. The first pass was merged in PR #16
+(`401c874`); the remaining gaps are listed below. CI changes were kept out of
+the Phase 2 and Phase 3 review scopes.
 
 What CI already enforces (`.github/workflows/validate.yml`, Python 3.12 and
 3.13): pre-commit (ruff lint/format, mypy, YAML/TOML, conflict markers), ruff
@@ -479,7 +479,7 @@ lint and format check, `mypy agentscan`, the gateway CLI smoke, `pytest tests
 .github/tests`, the hashed `pip-audit` dependency audit, wheel/sdist build, and
 the artifact-install smoke.
 
-Implemented in draft PR #16 (`chore/repo-hardening`, head `441c445`):
+Implemented and merged in PR #16 (`401c874`, 2026-11-10):
 
 1. **Coverage gate.** Global total floor at 82% against the measured 83.46%
    baseline.
@@ -500,19 +500,21 @@ Still open after #16:
 - CODEOWNERS and required human approval, blocked until a second collaborator
   exists.
 
-Repository setting applied on 2026-11-10, independent of the draft PR: the
-active `Protect main branch` ruleset requires pull requests, the four
-`validation` checks, review-thread resolution, up-to-date branches, and
-squash-only merges; it blocks deletion and non-fast-forward pushes. Bypass
-actors are empty, so administrators are enforced. Zero required approvals is
-intentional while there is one collaborator. If PR #16 is closed without
-merging, the ruleset must be relaxed or removed because the required checks are
-defined by that PR.
+Repository setting applied on 2026-11-10, independent of PR #16: the active
+`Protect main branch` ruleset requires pull requests, the four `validation`
+checks, review-thread resolution, up-to-date branches, and squash-only merges;
+it blocks deletion and non-fast-forward pushes. Bypass actors are empty, so
+administrators are enforced. Zero required approvals is intentional while there
+is one collaborator.
 
-All four checks are green on `441c445` in run `42820657082`
-(<https://github.com/PrathaMesh3056/AgentScan/actions/runs/42820657082>).
-PR #16 remains a draft; merging it and updating this backlog afterward are
-owner actions.
+All four checks were green on the PR head `a48fbe5` in run `42821689769`
+(<https://github.com/PrathaMesh3056/AgentScan/actions/runs/42821689769>).
+PR #16 was squash-merged as `401c874` at 2026-11-10T13:23:01Z, and the
+post-merge `main` CI run `42824011774`
+(<https://github.com/PrathaMesh3056/AgentScan/actions/runs/42824011774>)
+passed all four jobs. The gateway branch was then updated from `main` in merge
+commit `bea2814`, which brings the four-check workflow onto PR #15; its checks
+run on the new head.
 
 Deferred for evaluation after the items above: a scoped Semgrep self-scan over
 `agentscan/gateway` (the `semgrep` extra is installed for the product, not as a
