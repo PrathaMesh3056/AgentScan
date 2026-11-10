@@ -35,7 +35,10 @@ jobs:
         run: uv python install "$PYTHON_VERSION"
 
       - name: Install locked validation dependencies
-        run: uv sync --locked --python "$PYTHON_VERSION" --extra semgrep --extra ui --extra api --dev
+        run: uv sync --locked --python "$PYTHON_VERSION" --extra semgrep --extra ui --extra api --extra gateway --dev
+
+      - name: Run pre-commit hooks
+        run: uv run --no-sync pre-commit run --all-files --show-diff-on-failure
 
       - name: Run Ruff linter and formatting
         run: |
@@ -45,13 +48,16 @@ jobs:
       - name: Run Mypy type checking
         run: uv run --no-sync mypy agentscan
 
+      - name: Gateway CLI smoke
+        run: uv run --no-sync agentscan-gateway --help
+
       - name: Run tests and action boundary regressions
         run: uv run --no-sync pytest tests .github/tests -m "not slow" --cov=agentscan --cov-report=xml
 
       - name: Audit locked dependencies (required)
         run: |
           set -euo pipefail
-          uv export --frozen --extra semgrep --extra ui --extra api --dev --no-emit-project --format requirements-txt --output-file "$RUNNER_TEMP/agentscan-audit-requirements.txt"
+          uv export --frozen --extra semgrep --extra ui --extra api --extra gateway --dev --no-emit-project --format requirements-txt --output-file "$RUNNER_TEMP/agentscan-audit-requirements.txt"
           uvx --from pip-audit==2.10.1 pip-audit --strict --require-hashes --disable-pip --no-deps --desc on --requirement "$RUNNER_TEMP/agentscan-audit-requirements.txt"
 
       - name: Build wheel and sdist
