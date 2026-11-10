@@ -1,0 +1,12 @@
+# Extend the default rules. The allowlist covers credential-shaped strings that
+# exist only to exercise the secret scanners; they are not real credentials.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Intentional secret-scanner test fixtures"
+paths = [
+  '''(^|/)tests/fixtures/''',
+  '''(^|/)tests/test_attacks/''',
+  '''(^|/)tests/test_e2e\.py$''',
+]

@@ -8,8 +8,8 @@ We provide security updates and bug fixes for the following versions:
 
 | Version | Supported | Notes |
 | :--- | :---: | :--- |
-| `0.1.x` | ✅ | Current active development release. |
-| `< 0.1.0` | ❌ | Pre-release alpha builds. Please upgrade. |
+| `0.2.x` | ✅ | Current active development release. |
+| `< 0.2.0` | ❌ | Pre-release builds. Please upgrade. |
 
 ---
 
