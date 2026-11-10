@@ -17,16 +17,16 @@ approval, and it does not replace `docs/RUNTIME_GATEWAY.md`.
 | Phase | Scope | Status | Evidence |
 |---|---|---|---|
 | 0 | Dependency gate, config/skeleton, import boundary | Verified and committed | Dependency/API gate and import-boundary test below |
-| 1 | Policy bundle, signing/verification, evaluation | Authorized; Luna implements; not started | Phase 1 gate below |
-| 2 | Receipts, chain, WAL, writer lease/epoch | Not started | — |
-| 3 | Idempotency, recovery, reconciliation | Not started | — |
+| 1 | Policy bundle, signing/verification, evaluation | Approved (`1265516`); CI green (`a21ccd7`) | Phase 1 approval below |
+| 2 | Receipts, chain, WAL, writer lease/epoch | Approved (`3c8579b`); CI green | Phase 2 approval below |
+| 3 | Idempotency, recovery, reconciliation | Blocked on Phase 2 | — |
 | 4 | Identity, sessions, MCP server, protocol pin | Not started | — |
 | 5 | Upstream client, mock upstream, end-to-end | Not started | — |
 | 6 | CI, docs/runbook, benchmark/soak, draft PR | Not started | — |
 
-Implementation stops at each user-requested checkpoint. Phase 1 is authorized
-but not started. Phase 2 must not start until the coordinator has reviewed the
-Phase 1 diff and test evidence.
+Implementation stops at each user-requested checkpoint. Phases 1 and 2 are
+approved and CI-green. Phase 3 is authorized to start from `3c8579b` and must
+stop at its own checkpoint.
 
 ---
 
@@ -279,3 +279,132 @@ unchanged. This `PROGRESS.md` update is documentation-only.
 
 PR #12 is open and unmerged. Its `isDraft` value is `false`; the query was
 read-only and did not modify the PR.
+
+---
+
+## Phase 2 review (2026-11-10)
+
+**Scope:** staged additions only — `agentscan/gateway/receipts.py` (+780) and
+`tests/test_gateway/test_receipts.py` (+531). HEAD remains `a21ccd7`; no Phase 2
+commit exists. `PROGRESS.md` is modified only by the coordinator.
+
+**Verdict:** not approved. The five prior findings are substantively fixed and
+have regression tests, but two CI-gating defects and one receipt-state gap
+remain. Phase 3 stays blocked.
+
+Verified independently:
+
+- `pytest tests/test_gateway -q` -> `103 passed`.
+- `ruff check` and `ruff format --check` on the gateway and its tests -> clean.
+- Windows `mypy agentscan` -> 200 files clean.
+- `mypy --platform linux agentscan` -> 5 errors in `receipts.py`
+  (`ctypes.WinDLL`, `ctypes.WinError`, `ctypes.get_last_error`). CI runs mypy on
+  Ubuntu, so the staged diff would fail CI as-is.
+- Windows `_fsync_directory` probe on a temporary directory succeeds.
+- Full local suite: `42 failed, 3117 passed, 32 skipped`. Every failure is a
+  frozen benchmark-digest mismatch in untouched files, caused by the Windows
+  CRLF checkout; after CRLF-to-LF normalization the frozen digests match for
+  ATK-002, ATK-008, ATK-009, and ATK-011. Those failures are environmental and
+  do not block Phase 2.
+
+Fix coverage: mixed tenant/gateway/chain identity, foreign WAL replay (including
+a full-proposal check before any JSONL write), and expired retention lookup each
+have dedicated tests; the `require_approval` model check and parent-directory
+fsync have tests as well.
+
+Blocking:
+
+1. **Linux mypy.** Guard the Windows branch with `sys.platform == "win32"` and
+   keep the `ctypes`/`wintypes` imports inside it. Mypy narrows `sys.platform`,
+   so Linux skips the Windows-only attributes while Windows still checks them.
+   The pattern was validated against mypy 1.19.1 with `--platform linux` and the
+   Windows default.
+2. **Time-dependent retention test.**
+   `test_retention_index_expires_entries_by_receipt_timestamp` calls `lookup()`
+   without `now`, so it reads the wall clock. Its 29-day-old receipt expires at
+   `2026-11-11T12:00Z`, and the test fails from then on. Pass `now=NOW` to both
+   lookups.
+3. **`require_approval` state.** The validator requires deny and blocked but
+   still accepts `result.status == "pending"`. Spec §10 defines `pending` as an
+   allowed call awaiting an outcome and a deny as terminal, so a v1
+   `require_approval` receipt must record `denied`. Enforce it and extend the
+   test to cover the forwarded-only case.
+
+After the fixes: rerun the gateway tests, ruff, `mypy agentscan`, and
+`mypy --platform linux agentscan`; commit only the two Phase 2 files; report the
+hash without pushing. The coordinator re-reviews before CI.
+
+Open note (not blocking): `response_hash` remains nullable for every phase. The
+two-phase audit rule implies a decision receipt cannot carry a response hash,
+but §10 does not state that rule explicitly. Decide before Phase 3 rather than
+inventing a constraint now.
+
+### Phase 2 approval (2026-11-10)
+
+**Fix commit:** `3c8579b` (`feat(gateway): add receipt chain and WAL`).
+**Verdict:** approved. Phase 3 is authorized to start from this checkpoint.
+
+The commit contains only `agentscan/gateway/receipts.py` (+784) and
+`tests/test_gateway/test_receipts.py` (+550). It resolves all three review
+blockers:
+
+- The Windows durability branch is scoped to `sys.platform == "win32"` with the
+  `ctypes`/`wintypes` imports inside it.
+- Both retention lookups pass `now=NOW`, so the test no longer reads the wall
+  clock.
+- `require_approval` requires `denied`, `blocked`, and terminal status, with
+  invalid and valid regression cases.
+
+Independent checks on `3c8579b`:
+
+- `pytest tests/test_gateway -q` -> `103 passed`.
+- `ruff check` and `ruff format --check` -> clean.
+- `mypy --no-incremental agentscan` -> 200 files clean.
+- `mypy --no-incremental --platform linux agentscan` -> 200 files clean.
+- `git show --name-status 3c8579b` -> only the two Phase 2 files.
+
+CI is green in run `42780293528`
+(<https://github.com/PrathaMesh3056/AgentScan/actions/runs/42780293528>):
+`validation / test (3.12)` and `validation / test (3.13)` both succeeded,
+covering pre-commit, ruff, mypy, the CLI smoke, the full test suite, the
+dependency audit, and the build/artifact smoke.
+
+This `PROGRESS.md` update is a separate documentation commit; it is not part of
+`3c8579b`. PR #15 remains a draft, and PR #12 remains untouched.
+
+---
+
+## CI hardening backlog (deferred, 2026-11-10)
+
+Recorded for planning only. Do not implement until Phase 2 is approved: CI
+changes are outside the Phase 2 scope (`agentscan/gateway/receipts.py` and
+`tests/test_gateway/test_receipts.py`) and would mix review scopes.
+
+What CI already enforces (`.github/workflows/validate.yml`, Python 3.12 and
+3.13): pre-commit (ruff lint/format, mypy, YAML/TOML, conflict markers), ruff
+lint and format check, `mypy agentscan`, the gateway CLI smoke, `pytest tests
+.github/tests`, the hashed `pip-audit` dependency audit, wheel/sdist build, and
+the artifact-install smoke.
+
+Planned follow-up PR, in priority order:
+
+1. **Coverage gate.** `--cov` currently produces a report that nothing
+   enforces. Add a global floor calibrated to the measured value, plus a
+   focused gate for `agentscan/gateway/policy.py` and
+   `agentscan/gateway/receipts.py`.
+2. **Secret scanning.** Add `gitleaks` to pre-commit and CI. No current check
+   enforces the "no credentials or committed private keys" requirement.
+3. **Windows job (conditional).** Run `tests/test_gateway` on `windows-latest`
+   only if Windows is a supported runtime. The gateway now contains
+   Windows-specific durability and locking paths that Linux CI cannot exercise.
+4. **Maintenance.** Dependabot for `github-actions` and `uv`; `concurrency`
+   cancellation for superseded runs.
+
+Deferred for evaluation after the items above: a scoped Semgrep self-scan over
+`agentscan/gateway` (the `semgrep` extra is installed for the product, not as a
+self-check).
+
+Not planned: extra Python/OS matrix combinations, external coverage upload
+services, docs/changelog jobs, nightly suites, or per-PR mutation testing.
+Each adds maintenance and false-positive cost without covering a threat in the
+gateway threat model.
