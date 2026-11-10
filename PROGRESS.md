@@ -189,7 +189,29 @@ Required invariants for review:
 (receipts/WAL/sessions) until the coordinator has inspected the full Phase 1
 diff, run the policy test matrix, ruff, and mypy, and reported the evidence.
 
-Phase 1 must not modify `agentscan/core/`, `agentscan/action/`, or PR #12.
+Phase 1 protected areas:
+
+- `docs/RUNTIME_GATEWAY.md` is the approved spec. It must not be edited to
+  match the implementation; conflicts stop the phase and are reported.
+- `agentscan/cli.py` is a read-only reference. It must not be edited, and the
+  gateway must not import it.
+- Phase 1 CLI work is limited to `policy sign` and `policy verify`. No serve
+  behavior, config fields, identity code, or server wiring.
+- Policy models may live in `agentscan/gateway/models.py` if needed, with a
+  minimal change.
+- `agentscan/core/`, `agentscan/action/`, the action-verification spike, and
+  PR #12 remain untouched.
+
+### Phase 1 schema-validation decision (2026-11-10)
+
+The v1 envelope carries only `schema_hash`; it contains no tool schema, and
+`policy sign`/`policy verify` accept no schema input. Prompt §6.2's
+argument-name-to-schema membership check therefore cannot run in Phase 1.
+Phase 1 validates all bundle-contained structure and defers that check to
+Phase 5, where the upstream catalog provides `inputSchema`. Phase 5 must reject
+the policy/catalog pairing and fail closed before serving or dispatching when a
+rule names an argument absent from the schema. This is a sequencing deferral,
+not a waiver. The approved spec is not edited.
 
 ---
 
