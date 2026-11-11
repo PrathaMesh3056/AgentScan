@@ -131,8 +131,8 @@ def create_app(
     metrics: MetricsRegistry | None = None,
 ) -> Starlette:
     """Create the authenticated Streamable HTTP gateway app."""
-    tool_runtime = runtime or UnavailableToolRuntime()
-    metric_registry = metrics or MetricsRegistry()
+    tool_runtime = runtime if runtime is not None else UnavailableToolRuntime()
+    metric_registry = metrics if metrics is not None else MetricsRegistry()
     probe = readiness or tool_runtime.readiness
     mcp_server = Server(name="agentscan-gateway")
 
@@ -142,6 +142,10 @@ def create_app(
             return ServerResult(ListToolsResult(tools=list(tools)))
         except GatewayError as exc:
             raise _mcp_error(exc) from None
+        except Exception:
+            raise _mcp_error(
+                GatewayError(ErrorCode.UPSTREAM_ERROR, "Tool runtime failed")
+            ) from None
 
     async def call_tool(request: CallToolRequest) -> ServerResult:
         try:
@@ -151,6 +155,10 @@ def create_app(
             return ServerResult(result)
         except GatewayError as exc:
             raise _mcp_error(exc) from None
+        except Exception:
+            raise _mcp_error(
+                GatewayError(ErrorCode.UPSTREAM_ERROR, "Tool runtime failed")
+            ) from None
 
     mcp_server.request_handlers[ListToolsRequest] = list_tools
     mcp_server.request_handlers[CallToolRequest] = call_tool
@@ -178,6 +186,8 @@ def create_app(
     async def readyz(_request: Request) -> JSONResponse:
         try:
             current = probe()
+            if not isinstance(current, Readiness):
+                current = Readiness()
         except Exception:
             current = Readiness()
         issues = current.issues()

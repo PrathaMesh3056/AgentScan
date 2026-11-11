@@ -97,13 +97,12 @@ class McpGuardMiddleware:
         message: str = "Request rejected",
     ) -> None:
         if self.metrics is not None:
-            counter = (
-                "auth_failures"
-                if code == ErrorCode.IDENTITY_MISSING.value
-                else "identity_mismatches"
-                if code == ErrorCode.IDENTITY_MISMATCH.value
-                else "protocol_failures"
-            )
+            if code == ErrorCode.IDENTITY_MISMATCH.value:
+                counter = "identity_mismatches"
+            elif code == ErrorCode.IDENTITY_MISSING.value and status == 401:
+                counter = "auth_failures"
+            else:
+                counter = "protocol_failures"
             self.metrics.increment(counter, reason=code.lower())
         body = json.dumps(
             {"agentscan_code": code, "message": message}, separators=(",", ":")

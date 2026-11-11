@@ -602,3 +602,114 @@ async def test_localhost_expired_session_requires_reinitialize() -> None:
         reinit, new_sid = await _initialize(client, private)
         assert reinit.status_code == 200
         assert new_sid != sid
+
+
+class _SecretRuntime:
+    async def list_tools(self, context: GatewayRequestContext) -> Sequence[Tool]:
+        raise RuntimeError("secret/path/token-value")
+
+    async def call_tool(
+        self, context: GatewayRequestContext, name: str, arguments: Mapping[str, Any]
+    ) -> CallToolResult:
+        raise RuntimeError("secret/path/token-value")
+
+    def readiness(self) -> Readiness:
+        return Readiness(True, False, True, True, True, True)
+
+
+@pytest.mark.asyncio
+async def test_localhost_runtime_exception_is_contained() -> None:
+    async with _started_gateway(runtime=_SecretRuntime()) as (
+        client,
+        _runtime,
+        private,
+        _port,
+        _sessions,
+    ):
+        init, sid = await _initialize(client, private)
+        assert init.status_code == 200
+
+        listed = await client.post(
+            "/mcp",
+            headers={"Mcp-Session-Id": sid, "MCP-Protocol-Version": PINNED_PROTOCOL_VERSION},
+            json={"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}},
+        )
+        assert listed.status_code == 200
+        listed_body = listed.json()
+        assert listed_body["error"]["code"] == -32000
+        assert listed_body["error"]["data"]["agentscan_code"] == "UPSTREAM_ERROR"
+        assert "secret/path" not in listed.text
+        assert "token-value" not in listed.text
+
+        called = await client.post(
+            "/mcp",
+            headers={"Mcp-Session-Id": sid, "MCP-Protocol-Version": PINNED_PROTOCOL_VERSION},
+            json={
+                "jsonrpc": "2.0",
+                "id": 3,
+                "method": "tools/call",
+                "params": {"name": "echo", "arguments": {"value": "hello"}},
+            },
+        )
+        assert called.status_code == 200
+        called_body = called.json()
+        assert called_body["error"]["code"] == -32000
+        assert called_body["error"]["data"]["agentscan_code"] == "UPSTREAM_ERROR"
+        assert "secret/path" not in called.text
+        assert "token-value" not in called.text
+
+
+@pytest.mark.asyncio
+async def test_localhost_rejection_counters_are_status_aware(gateway) -> None:
+    client, _runtime, _private, _port = gateway
+
+    no_auth = httpx.AsyncClient(base_url=str(client.base_url), timeout=3)
+    try:
+        before = await no_auth.get("/metrics")
+        before_auth = _metric_value(
+            before.text, "agentscan_gateway_auth_failures_total", "identity_missing"
+        )
+        unauthenticated = await no_auth.post(
+            "/mcp",
+            json={"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
+        )
+        assert unauthenticated.status_code == 401
+        after = await no_auth.get("/metrics")
+        assert (
+            _metric_value(after.text, "agentscan_gateway_auth_failures_total", "identity_missing")
+            == before_auth + 1
+        )
+    finally:
+        await no_auth.aclose()
+
+    before_protocol_client = await client.get("/metrics")
+    before_protocol = _metric_value(
+        before_protocol_client.text, "agentscan_gateway_protocol_failures_total", "identity_missing"
+    )
+    before_auth_protocol = _metric_value(
+        before_protocol_client.text, "agentscan_gateway_auth_failures_total", "identity_missing"
+    )
+    missing_session = await client.post(
+        "/mcp",
+        headers={
+            "Mcp-Session-Id": "missing-session",
+            "MCP-Protocol-Version": PINNED_PROTOCOL_VERSION,
+        },
+        json={"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}},
+    )
+    assert missing_session.status_code == 404
+    after_protocol_client = await client.get("/metrics")
+    assert (
+        _metric_value(
+            after_protocol_client.text,
+            "agentscan_gateway_protocol_failures_total",
+            "identity_missing",
+        )
+        == before_protocol + 1
+    )
+    assert (
+        _metric_value(
+            after_protocol_client.text, "agentscan_gateway_auth_failures_total", "identity_missing"
+        )
+        == before_auth_protocol
+    )

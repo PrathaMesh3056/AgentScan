@@ -97,11 +97,11 @@ class MetricsRegistry:
             lines.extend(
                 (f"# HELP {metric} Gateway {name.replace('_', ' ')}.", f"# TYPE {metric} summary")
             )
-            for quantile, value in (
+            for quantile, quantile_value in (
                 ("0.5", self.quantile(name, 0.5)),
                 ("0.99", self.quantile(name, 0.99)),
             ):
-                lines.append(f'{metric}{{quantile="{quantile}"}} {value}')
+                lines.append(f'{metric}{{quantile="{quantile}"}} {quantile_value}')
             lines.append(f"{metric}_count {len(values)}")
             lines.append(f"{metric}_sum {sum(values)}")
         return "\n".join(lines) + "\n"
