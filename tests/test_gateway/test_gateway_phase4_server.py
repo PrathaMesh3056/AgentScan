@@ -17,6 +17,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from mcp.client.session import ClientSession
 from mcp.client.streamable_http import streamable_http_client
 from mcp.types import CallToolResult, TextContent, Tool
+from starlette.testclient import TestClient
 
 from agentscan.gateway.config import GatewaySettings
 from agentscan.gateway.errors import GatewayError
@@ -713,3 +714,161 @@ async def test_localhost_rejection_counters_are_status_aware(gateway) -> None:
         )
         == before_auth_protocol
     )
+
+
+def _minimal_fail_closed_settings() -> GatewaySettings:
+    return GatewaySettings.model_validate(
+        {
+            "tenant": "tenant-a",
+            "gateway_id": "gw",
+            "chain_id": "chain",
+            "writer_id": "writer",
+            "audience": "agentscan",
+            "trusted_issuer": "issuer-a",
+            "listen_host": "127.0.0.1",
+            "listen_port": 8765,
+            "upstream_url": "http://127.0.0.1:9999",
+            "upstream_server_id": "fake",
+            "upstream_credential_env": "FAKE_TOKEN",
+            "policy_bundle": "policy.yaml",
+            "policy_public_key": "policy.pub",
+            "trust_keys": "trust.json",
+            "receipt_dir": "receipts",
+        }
+    )
+
+
+def _minimal_fail_closed_dependencies() -> tuple[IdentityVerifier, SessionRegistry]:
+    return (
+        IdentityVerifier(
+            trusted_issuer="issuer-a", audience="agentscan", tenant="tenant-a", trust_keys={}
+        ),
+        SessionRegistry(idle_timeout_seconds=300, max_lifetime_seconds=900),
+    )
+
+
+def test_readyz_fail_closed_defaults() -> None:
+    settings = _minimal_fail_closed_settings()
+    identity_verifier, sessions = _minimal_fail_closed_dependencies()
+    app = create_app(settings, identity_verifier=identity_verifier, sessions=sessions)
+    with TestClient(app) as client:
+        response = client.get("/readyz")
+        assert response.status_code == 503
+        body = response.json()
+        assert body["status"] == "not_ready"
+        assert body["agentscan_code"] == "GATEWAY_UNAVAILABLE"
+        assert body["reason"] == "policy_missing"
+        assert "," not in body["reason"]
+        assert re.fullmatch(r"[a-z0-9_]{1,64}", body["reason"]) is not None
+
+
+def test_readyz_fail_closed_for_non_readiness_probe_results() -> None:
+    settings = _minimal_fail_closed_settings()
+    identity_verifier, sessions = _minimal_fail_closed_dependencies()
+    for probe in (lambda: None, lambda: {"policy_loaded": True}, lambda: "ready"):
+        app = create_app(
+            settings,
+            identity_verifier=identity_verifier,
+            sessions=sessions,
+            readiness=probe,  # type: ignore[arg-type]
+        )
+        with TestClient(app) as client:
+            response = client.get("/readyz")
+            assert response.status_code == 503
+            body = response.json()
+            assert body["status"] == "not_ready"
+            assert body["reason"] == "policy_missing"
+            assert "," not in body["reason"]
+            assert re.fullmatch(r"[a-z0-9_]{1,64}", body["reason"]) is not None
+
+
+def test_readyz_fail_closed_for_raising_probe() -> None:
+    settings = _minimal_fail_closed_settings()
+    identity_verifier, sessions = _minimal_fail_closed_dependencies()
+
+    def raising_probe() -> Readiness:
+        raise RuntimeError("secret/path")
+
+    app = create_app(
+        settings,
+        identity_verifier=identity_verifier,
+        sessions=sessions,
+        readiness=raising_probe,
+    )
+    with TestClient(app) as client:
+        response = client.get("/readyz")
+        assert response.status_code == 503
+        body = response.json()
+        assert body["status"] == "not_ready"
+        assert "secret/path" not in response.text
+
+
+def test_readyz_ready_for_complete_probe() -> None:
+    settings = _minimal_fail_closed_settings()
+    identity_verifier, sessions = _minimal_fail_closed_dependencies()
+    app = create_app(
+        settings,
+        identity_verifier=identity_verifier,
+        sessions=sessions,
+        readiness=lambda: Readiness(True, False, True, True, True, True),
+    )
+    with TestClient(app) as client:
+        response = client.get("/readyz")
+        assert response.status_code == 200
+        assert response.json() == {"status": "ready"}
+
+
+class _FalsyReadyProbe:
+    def __bool__(self) -> bool:
+        return False
+
+    def __call__(self) -> Readiness:
+        return Readiness(True, False, True, True, True, True)
+
+
+class _FalsyRuntime:
+    def __bool__(self) -> bool:
+        return False
+
+    async def list_tools(self, context: GatewayRequestContext) -> Sequence[Tool]:
+        raise AssertionError("not used")
+
+    async def call_tool(
+        self, context: GatewayRequestContext, name: str, arguments: Mapping[str, Any]
+    ) -> CallToolResult:
+        raise AssertionError("not used")
+
+    def readiness(self) -> Readiness:
+        return Readiness(True, False, True, True, True, True)
+
+
+def test_readyz_uses_runtime_fallback_with_is_not_none() -> None:
+    settings = _minimal_fail_closed_settings()
+    identity_verifier, sessions = _minimal_fail_closed_dependencies()
+    app = create_app(
+        settings,
+        identity_verifier=identity_verifier,
+        sessions=sessions,
+        runtime=_FalsyRuntime(),
+        readiness=None,
+    )
+    with TestClient(app) as client:
+        response = client.get("/readyz")
+        assert response.status_code == 200
+        assert response.json() == {"status": "ready"}
+
+
+def test_readyz_honors_falsy_injected_probe() -> None:
+    settings = _minimal_fail_closed_settings()
+    identity_verifier, sessions = _minimal_fail_closed_dependencies()
+    app = create_app(
+        settings,
+        identity_verifier=identity_verifier,
+        sessions=sessions,
+        runtime=UnavailableToolRuntime(),
+        readiness=_FalsyReadyProbe(),
+    )
+    with TestClient(app) as client:
+        response = client.get("/readyz")
+        assert response.status_code == 200
+        assert response.json() == {"status": "ready"}

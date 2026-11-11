@@ -133,7 +133,7 @@ def create_app(
     """Create the authenticated Streamable HTTP gateway app."""
     tool_runtime = runtime if runtime is not None else UnavailableToolRuntime()
     metric_registry = metrics if metrics is not None else MetricsRegistry()
-    probe = readiness or tool_runtime.readiness
+    probe = readiness if readiness is not None else tool_runtime.readiness
     mcp_server = Server(name="agentscan-gateway")
 
     async def list_tools(_request: ListToolsRequest) -> ServerResult:

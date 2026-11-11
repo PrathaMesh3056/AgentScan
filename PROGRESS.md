@@ -565,3 +565,5 @@ Follow-up fixes (commit `efa8672`): contained runtime exceptions as bounded `UPS
 Final CI run `42974929860`: all four jobs passed (`validation / test (3.12)`, `validation / test (3.13)`, `validation / windows`, `validation / secrets`).
 
 PR #15 remains draft; PR #12 remains untouched.
+
+Phase 5 operational limit: the session registry removes expired records on access and exposes `prune_expired`, but no background scheduler invokes it; the MCP transport caps concurrent sessions at the SDK default (10,000). Phase 5 must schedule registry pruning or enforce a registry cap before production. This is not fixed in Phase 4.
