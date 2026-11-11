@@ -1,4 +1,3 @@
-// dashboard-app-actions.js - actions, SSE, theme, init
     function openScanModal() {
       document.getElementById('scan-external-consent').checked = false;
       const m = document.getElementById('modal-scan');

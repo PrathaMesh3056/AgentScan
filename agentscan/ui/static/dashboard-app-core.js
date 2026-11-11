@@ -1,4 +1,3 @@
-// dashboard-app-core.js - state, helpers, toast, modal, sidebar, spotlight, tabs, telemetry
 
 
     /* ========================================================

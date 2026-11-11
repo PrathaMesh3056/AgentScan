@@ -1,4 +1,3 @@
-// dashboard-app-renderers.js - renderOverview through renderMcp
     function renderOverview() {
       DashboardSemantics.renderOverview(globalTelemetry);
     }
