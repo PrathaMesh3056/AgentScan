@@ -553,11 +553,15 @@ explanations without probe cards, and dashboard fetch failures render a distinct
 `request_failed` state.
 
 Verification:
-- `python -m pytest tests/test_gateway tests/test_ui_gateway_status.py tests/test_ui_features.py -q` -> `304 passed`.
-- `python -m ruff check ...` -> `All checks passed!`.
-- `python -m ruff format --check ...` -> `49 files already formatted`.
+- `python -m pytest tests/test_gateway tests/test_ui_gateway_status.py tests/test_ui_features.py -q` -> `306 passed`.
+- Full suite `python -m pytest tests -q` -> `3230 passed`, `48 failed`, `38 skipped`; failures are pre-existing frozen benchmark digest mismatches on Windows (CRLF), not gateway/UI changes.
+- `python -m ruff check agentscan tests` -> `All checks passed!`.
+- `python -m ruff format --check agentscan tests` -> `415 files already formatted`.
 - `python -m mypy --no-incremental agentscan/gateway agentscan/ui` -> blocked by
-  Windows Application Control (`ImportError: DLL load failed ... semanal_infer`).
+  Windows Application Control (`ImportError: DLL load failed ... semanal_infer`); CI mypy is authoritative.
 - `node --check` on the extracted inline script -> passed.
+
+Follow-up fixes (commit `efa8672`): contained runtime exceptions as bounded `UPSTREAM_ERROR`, status-aware rejection counters, metrics mypy fix, and request-context extraction cast.
+Final CI run `42974464785`: all four jobs passed (`validation / test (3.12)`, `validation / test (3.13)`, `validation / windows`, `validation / secrets`).
 
 PR #15 remains draft; PR #12 remains untouched.
