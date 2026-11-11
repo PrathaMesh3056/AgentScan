@@ -20,7 +20,7 @@ approval, and it does not replace `docs/RUNTIME_GATEWAY.md`.
 | 1 | Policy bundle, signing/verification, evaluation | Approved (`1265516`); CI green (`a21ccd7`) | Phase 1 approval below |
 | 2 | Receipts, chain, WAL, writer lease/epoch | Approved (`3c8579b`); CI green | Phase 2 approval below |
 | 3 | Idempotency, recovery, reconciliation | Approved (`468e603`, fix `43357c8`); CI green | Phase 3 review/approval below |
-| 4 | Identity, sessions, MCP server, protocol pin | Not started | — |
+| 4 | Identity, sessions, MCP server, protocol pin | Checkpoint complete | Evidence below; Phase 5 still blocked |
 | 5 | Upstream client, mock upstream, end-to-end | Not started | — |
 | 6 | CI, docs/runbook, benchmark/soak, draft PR | Not started | — |
 
@@ -524,3 +524,40 @@ Not planned: extra Python/OS matrix combinations, external coverage upload
 services, docs/changelog jobs, nightly suites, or per-PR mutation testing.
 Each adds maintenance and false-positive cost without covering a threat in the
 gateway threat model.
+
+---
+
+## Phase 4 checkpoint (2026-11-11)
+
+**Scope:** identity verification, session binding, MCP transport guards, protocol
+pinning, metrics, and the dashboard read-only gateway status surface.
+
+Modules added:
+- `agentscan/gateway/identity.py` — Ed25519 identity verification and tenant/principal binding.
+- `agentscan/gateway/sessions.py` — session registry, identity binding, expiry.
+- `agentscan/gateway/middleware.py` — authentication backend and strict MCP guards.
+- `agentscan/gateway/server.py` — Streamable HTTP MCP app, `/healthz`, `/readyz`, `/metrics`.
+- `agentscan/gateway/metrics.py` — bounded in-process metrics registry.
+
+Readiness stays fail-closed: `Readiness` defaults false and `/readyz` returns 503
+with one bounded reason (`issues[0]`) until Phase 5 wires policy/receipt/upstream
+catalog state.
+
+Identity-mismatch metric behavior: `IDENTITY_MISMATCH` increments
+`agentscan_gateway_identity_mismatches_total{reason="identity_mismatch"}` and does
+not increment `agentscan_gateway_protocol_failures_total` for the same reason.
+
+Dashboard status surface: read-only `GET /api/gateway/status` plus the Runtime
+Gateway tab rendering; misconfigured and unrecognized states render honest
+explanations without probe cards, and dashboard fetch failures render a distinct
+`request_failed` state.
+
+Verification:
+- `python -m pytest tests/test_gateway tests/test_ui_gateway_status.py tests/test_ui_features.py -q` -> `304 passed`.
+- `python -m ruff check ...` -> `All checks passed!`.
+- `python -m ruff format --check ...` -> `49 files already formatted`.
+- `python -m mypy --no-incremental agentscan/gateway agentscan/ui` -> blocked by
+  Windows Application Control (`ImportError: DLL load failed ... semanal_infer`).
+- `node --check` on the extracted inline script -> passed.
+
+PR #15 remains draft; PR #12 remains untouched.
