@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 
 from mcp.server.lowlevel import Server
 from mcp.server.lowlevel.server import request_ctx
@@ -93,9 +93,9 @@ class UnavailableToolRuntime:
 
 def _context_or_error() -> GatewayRequestContext:
     try:
-        request = request_ctx.get().request
+        request = cast(Any, request_ctx.get()).request
         scope = request.scope if hasattr(request, "scope") else request
-        context = scope.get("state", {}).get("gateway_request_context")
+        context = cast(Any, scope).get("state", {}).get("gateway_request_context")
     except LookupError:
         context = None
     if not isinstance(context, GatewayRequestContext):
