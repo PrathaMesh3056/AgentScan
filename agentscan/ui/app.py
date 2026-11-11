@@ -24,8 +24,7 @@ from agentscan.ui.state import (  # noqa: F401
     state,
 )
 
-# Single source of truth for dashboard page routes. The gateway branch adds
-# `/gateway` to this list; that change is expected to rebase cleanly.
+# Single source of truth for dashboard page routes.
 PAGE_ROUTES: tuple[str, ...] = (
     "/",
     "/report",
