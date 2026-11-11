@@ -553,16 +553,19 @@ explanations without probe cards, and dashboard fetch failures render a distinct
 `request_failed` state.
 
 Verification:
-- `python -m pytest tests/test_gateway tests/test_ui_gateway_status.py tests/test_ui_features.py -q` -> `306 passed`.
-- Full suite `python -m pytest tests -q` -> `3230 passed`, `48 failed`, `38 skipped`; failures are pre-existing frozen benchmark digest mismatches on Windows (CRLF), not gateway/UI changes.
-- `python -m ruff check agentscan tests` -> `All checks passed!`.
-- `python -m ruff format --check agentscan tests` -> `415 files already formatted`.
+- `python -m pytest tests/test_gateway tests/test_ui_gateway_status.py tests/test_ui_features.py -q` -> `310 passed`.
+- Full suite `python -m pytest tests -q` -> `3234 passed`, `48 failed`, `38 skipped`; failures are pre-existing frozen benchmark digest mismatches on Windows (CRLF), not gateway/UI changes.
+- `python -m ruff check agentscan tests .github` -> `All checks passed!`.
+- `python -m ruff format --check agentscan tests .github` -> `419 files already formatted`.
 - `python -m mypy --no-incremental agentscan/gateway agentscan/ui` -> blocked by
   Windows Application Control (`ImportError: DLL load failed ... semanal_infer`); CI mypy is authoritative.
 - `node --check` on the extracted inline script -> passed.
 
 Follow-up fixes (commit `efa8672`): contained runtime exceptions as bounded `UPSTREAM_ERROR`, status-aware rejection counters, metrics mypy fix, and request-context extraction cast.
-Final CI run `42974929860`: all four jobs passed (`validation / test (3.12)`, `validation / test (3.13)`, `validation / windows`, `validation / secrets`).
+
+Audit fixes (commit `cae3247`): removed the duplicate CI pre-commit step; changed the readiness probe fallback to `is not None`; added fail-closed tests for default, non-`Readiness`, raising, and falsy probe/runtime cases.
+
+Final CI run `42977747672` at `cae3247`: all four jobs passed (`validation / test (3.12)` and `(3.13)` -> `3358 passed, 32 skipped, 8 deselected`, 84.06% coverage; plus `validation / windows` and `validation / secrets`).
 
 PR #15 remains draft; PR #12 remains untouched.
 
