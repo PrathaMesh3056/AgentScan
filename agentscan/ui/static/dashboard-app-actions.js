@@ -985,6 +985,7 @@
       const initialTab = getTabFromUrl();
       switchTab(initialTab);
       loadAllTelemetry();
+      loadGatewayStatus();
       initEventStream();
 
       const searchInput = document.getElementById('top-search-input');
@@ -1052,3 +1053,4 @@
       });
     });
 
+  

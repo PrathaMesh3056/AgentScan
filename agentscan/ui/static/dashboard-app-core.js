@@ -1,5 +1,6 @@
 // dashboard-app-core.js - state, helpers, toast, modal, sidebar, spotlight, tabs, telemetry
 
+
     /* ========================================================
        APPLICATION STATE & TELEMETRY
        ======================================================== */
@@ -17,6 +18,7 @@
       certificate: null,
       sentinel: null,
       mcp: null,
+      gateway: null,
       findings: []
     };
 
@@ -247,6 +249,7 @@
         DashboardSemantics.showLaunchError('dashboard-operation-error', null);
         await DashboardSemantics.requestJSON('/api/reload', { method: 'POST' });
         await loadAllTelemetry();
+        await loadGatewayStatus();
         await loadFeatureGuide();
         showToast(document.getElementById('dashboard-data-errors').hidden ? 'Telemetry refreshed' : 'Some dashboard data could not refresh. Review the error panel.');
       } catch (err) {
@@ -285,7 +288,8 @@
         { name: 'Self-Healing Patches', id: 'healing', cat: 'Remediation' },
         { name: 'Configured Agent Team', id: 'team', cat: 'Inventory' },
         { name: 'Continuous Sentinel Monitor', id: 'sentinel', cat: 'Surveillance' },
-        { name: 'Native MCP Protocol Monitor', id: 'mcp', cat: 'Protocols' }
+        { name: 'Native MCP Protocol Monitor', id: 'mcp', cat: 'Protocols' },
+        { name: 'Runtime Gateway', id: 'gateway', cat: 'Runtime' }
       ];
 
       const matchedTabs = tabs.filter(t => t.name.toLowerCase().includes(query) || t.cat.toLowerCase().includes(query));
@@ -523,5 +527,139 @@
       } catch (err) {
         DashboardSemantics.showLaunchError('dashboard-operation-error', 'Dashboard rendering failed. Reload the page and review the service logs.');
       }
+    }
+
+    async function loadGatewayStatus() {
+      try {
+        const data = await DashboardSemantics.requestJSON('/api/gateway/status');
+        globalTelemetry.gateway = data;
+      } catch (err) {
+        globalTelemetry.gateway = { configured: false, status: 'request_failed', reason: 'status_request_failed', health: null, readiness: null, checked_at: null };
+      }
+      renderGateway();
+    }
+
+    function gatewayStatusMeta(status) {
+      const raw = status === null || status === undefined ? '' : String(status);
+      const recognized = ['ready', 'not_ready', 'unreachable', 'unhealthy', 'misconfigured', 'not_configured', 'request_failed'].includes(raw);
+      const value = recognized ? raw : raw;
+      const tones = { ready: 'status-complete', not_ready: 'status-warning', unreachable: 'status-error', unhealthy: 'status-error', misconfigured: 'status-error', not_configured: 'status-neutral', request_failed: 'status-error' };
+      const labels = { ready: 'Ready', not_ready: 'Not ready', unreachable: 'Unreachable', unhealthy: 'Unhealthy', misconfigured: 'Misconfigured', not_configured: 'Not configured', request_failed: 'Status request failed' };
+      return { value, tone: tones[value] || 'status-neutral', label: recognized ? (labels[value] || value) : value, recognized };
+    }
+
+    function renderGateway() {
+      const c = document.getElementById('gateway-status-container');
+      if (!c) return;
+      const gw = globalTelemetry.gateway || {};
+      const meta = gatewayStatusMeta(gw.status);
+      const configured = gw.configured === true;
+      const health = gw.health && typeof gw.health === 'object' ? gw.health : null;
+      const readiness = gw.readiness && typeof gw.readiness === 'object' ? gw.readiness : null;
+      const healthStatus = health ? health.status : null;
+      const readinessStatus = readiness ? readiness.status : null;
+      const healthHttpStatus = health ? health.http_status : null;
+      const readinessHttpStatus = readiness ? readiness.http_status : null;
+      const healthLatency = health ? health.latency_ms : null;
+      const readinessLatency = readiness ? readiness.latency_ms : null;
+      const readinessReason = readiness ? readiness.reason : null;
+      const lastChecked = gw.checked_at || null;
+      const badgeText = meta.label.toUpperCase();
+
+      const honest = 'Health and readiness only. This panel does not evaluate policy, receipts, or tool decisions. /readyz fails closed until Phase 5 wires the runtime.';
+      const notConfiguredCopy = 'AGENTSCAN_GATEWAY_URL=http://127.0.0.1:8765 is the expected loopback gateway value. The gateway serve command arrives in Phase 5.';
+      const misconfiguredCopy = 'The configured AGENTSCAN_GATEWAY_URL is not a valid loopback gateway endpoint. Fix the environment value before retrying.';
+      const requestFailedCopy = 'The dashboard could not reach its own status API. This says nothing about gateway health.';
+      const unrecognizedCopy = `Unrecognized gateway status value: ${meta.value}. No probe conclusions were drawn.`;
+      const notReadyCopy = `The gateway process is reachable but its readiness probe is failing. Bounded readiness reason: ${readinessReason || 'unknown_reason'}.`;
+
+      const probedStates = new Set(['ready', 'not_ready', 'unhealthy', 'unreachable']);
+      const showProbeCards = configured && probedStates.has(meta.value) && (health !== null || readiness !== null);
+
+      if (meta.value === 'request_failed') {
+        c.innerHTML = `
+          <div class="dl-card p-6 bg-white space-y-3" style="border-color: var(--border)">
+            <div class="flex items-center justify-between">
+              <span class="text-[10px] font-extrabold uppercase tracking-wider text-[#666666]">Runtime Gateway</span>
+              <span class="assessment-badge ${meta.tone}">${escapeHtml(badgeText)}</span>
+            </div>
+            <div class="text-2xl font-extrabold text-[#1A1A1A]">${escapeHtml(meta.label)}</div>
+            <p class="text-xs text-[#666666]">${escapeHtml(requestFailedCopy)}</p>
+          </div>`;
+        return;
+      }
+
+      if (!meta.recognized) {
+        c.innerHTML = `
+          <div class="dl-card p-6 bg-white space-y-3" style="border-color: var(--border)">
+            <div class="flex items-center justify-between">
+              <span class="text-[10px] font-extrabold uppercase tracking-wider text-[#666666]">Runtime Gateway</span>
+              <span class="assessment-badge ${meta.tone}">${escapeHtml(badgeText)}</span>
+            </div>
+            <div class="text-2xl font-extrabold text-[#1A1A1A]">${escapeHtml(meta.value)}</div>
+            <p class="text-xs text-[#666666]">${escapeHtml(unrecognizedCopy)}</p>
+          </div>`;
+        return;
+      }
+
+      if (meta.value === 'not_configured') {
+        c.innerHTML = `
+          <div class="overview-empty-state">
+            <span class="empty-state-symbol" aria-hidden="true">◎</span>
+            <strong>Runtime gateway not configured</strong>
+            <p>${escapeHtml(notConfiguredCopy)}</p>
+          </div>`;
+        return;
+      }
+
+      if (meta.value === 'misconfigured') {
+        c.innerHTML = `
+          <div class="dl-card p-6 bg-white space-y-3" style="border-color: var(--border)">
+            <div class="flex items-center justify-between">
+              <span class="text-[10px] font-extrabold uppercase tracking-wider text-[#666666]">Runtime Gateway</span>
+              <span class="assessment-badge ${meta.tone}">${escapeHtml(badgeText)}</span>
+            </div>
+            <div class="text-2xl font-extrabold text-[#1A1A1A]">${escapeHtml(meta.label)}</div>
+            <p class="text-xs text-[#666666]">${escapeHtml(misconfiguredCopy)}</p>
+          </div>`;
+        return;
+      }
+
+      const healthCard = health !== null ? `
+            <div class="dl-card p-6 bg-white space-y-3" style="border-color: var(--border)">
+              <div class="flex items-center justify-between">
+                <span class="text-[10px] font-extrabold uppercase tracking-wider text-[#666666]">Health /healthz</span>
+                <span class="text-2xl font-extrabold text-[#1A1A1A]">${escapeHtml(healthHttpStatus ?? '—')}</span>
+              </div>
+              <p class="text-xs text-[#666666]">Status: ${escapeHtml(healthStatus || 'unknown')} · Latency: ${escapeHtml(String(healthLatency ?? '—'))} ms</p>
+            </div>` : '';
+      const readinessCard = readiness !== null ? `
+            <div class="dl-card p-6 bg-white space-y-3" style="border-color: var(--border)">
+              <div class="flex items-center justify-between">
+                <span class="text-[10px] font-extrabold uppercase tracking-wider text-[#666666]">Readiness /readyz</span>
+                <span class="text-2xl font-extrabold text-[#1A1A1A]">${escapeHtml(readinessHttpStatus ?? '—')}</span>
+              </div>
+              <p class="text-xs text-[#666666]">Status: ${escapeHtml(readinessStatus || 'unknown')} · Latency: ${escapeHtml(String(readinessLatency ?? '—'))} ms · Reason: ${escapeHtml(readinessReason || 'unknown_reason')}</p>
+            </div>` : '';
+      const probeCards = showProbeCards ? `
+          <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            ${healthCard}
+            ${readinessCard}
+          </div>` : '';
+
+      c.innerHTML = `
+        <div class="dl-card p-6 bg-white space-y-3" style="border-color: var(--border)">
+          <div class="flex items-center justify-between">
+            <span class="text-[10px] font-extrabold uppercase tracking-wider text-[#666666]">Runtime Gateway</span>
+            <span class="assessment-badge ${meta.tone}">${escapeHtml(badgeText)}</span>
+          </div>
+          <div class="text-2xl font-extrabold text-[#1A1A1A]">${escapeHtml(meta.label)}</div>
+          <p class="text-xs text-[#666666]">${configured && gw.url ? escapeHtml(gw.url) : 'Not configured'}</p>
+          <p class="text-xs text-[#666666]">${escapeHtml(honest)}</p>
+          <p class="text-xs text-[#666666]">Last checked: ${escapeHtml(lastChecked || 'Not checked yet')}</p>
+        </div>
+        ${probeCards}
+        ${meta.value === 'not_ready' ? `<p class="text-xs text-[#666666]">${escapeHtml(notReadyCopy)}</p>` : ''}
+      `;
     }
 

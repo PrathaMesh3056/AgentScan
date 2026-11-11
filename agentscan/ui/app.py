@@ -37,6 +37,7 @@ PAGE_ROUTES: tuple[str, ...] = (
     "/identity",
     "/traffic",
     "/guardrails",
+    "/gateway",
     "/compliance",
     "/heal",
     "/healing",

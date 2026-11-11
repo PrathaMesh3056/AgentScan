@@ -88,5 +88,8 @@ def test_external_scripts_contain_expected_functions() -> None:
         "renderFindings",
         "openScanModal",
         "initEventStream",
+        "loadGatewayStatus",
+        "gatewayStatusMeta",
+        "renderGateway",
     ):
         assert needle in combined

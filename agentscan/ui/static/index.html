@@ -711,6 +711,14 @@
           </svg>
           <span class="sidebar-label tracking-wide uppercase">Native MCP</span>
         </a>
+
+        <a href="#gateway" data-tab="gateway" onclick="switchTab('gateway', event)"
+           class="sidebar-nav-item flex items-center gap-2 px-2.5 py-2.5 rounded-xl text-xs font-bold text-[#666666] hover:text-[#1A1A1A] hover:bg-[#EDE9DE] transition-all cursor-pointer">
+          <svg class="w-4 h-4 shrink-0 text-[#666666]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+            <path d="M22 12h-4l-3 9L9 3l-3 9H2"></path>
+          </svg>
+          <span class="sidebar-label tracking-wide uppercase">Runtime Gateway</span>
+        </a>
       </nav>
     </div>
 
@@ -1322,6 +1330,27 @@
         </div>
 
         <div id="mcp-container" class="space-y-6">
+        </div>
+      </section>
+
+      <!-- ========================================================
+           TAB 13: RUNTIME GATEWAY
+           ======================================================== -->
+      <section id="tab-gateway" class="tab-pane space-y-8">
+        <div class="flex flex-col md:flex-row md:items-end justify-between gap-4 pb-6 border-b" style="border-color: var(--border)">
+          <div>
+            <span class="text-[10px] font-extrabold tracking-widest uppercase text-[#1E5E54]">Runtime Gateway</span>
+            <h2 class="text-3xl font-extrabold text-[#1A1A1A]">Identity, session and transport status</h2>
+            <p class="text-xs text-[#666666] mt-1 font-medium">Read-only health and readiness probe for the local runtime gateway. This is not the guardrail configuration export.</p>
+          </div>
+          <div class="flex items-center gap-2">
+            <button onclick="loadGatewayStatus()" class="btn-pill-teal text-xs cursor-pointer">
+              &rarr; Refresh Runtime Gateway
+            </button>
+          </div>
+        </div>
+
+        <div id="gateway-status-container" class="space-y-6" aria-live="polite" role="status">
         </div>
       </section>
 
