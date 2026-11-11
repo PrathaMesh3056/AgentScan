@@ -562,6 +562,6 @@ Verification:
 - `node --check` on the extracted inline script -> passed.
 
 Follow-up fixes (commit `efa8672`): contained runtime exceptions as bounded `UPSTREAM_ERROR`, status-aware rejection counters, metrics mypy fix, and request-context extraction cast.
-Final CI run `42974464785`: all four jobs passed (`validation / test (3.12)`, `validation / test (3.13)`, `validation / windows`, `validation / secrets`).
+Final CI run `42974929860`: all four jobs passed (`validation / test (3.12)`, `validation / test (3.13)`, `validation / windows`, `validation / secrets`).
 
 PR #15 remains draft; PR #12 remains untouched.
