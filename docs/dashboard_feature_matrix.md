@@ -28,6 +28,7 @@ unavailable. Local reference observations are separate from target findings.
 | AI bill of materials and dependency graph | Feature guide actions and audit views | Existing `/api/aibom`, `/api/aibom/download` and `/api/dependencies/graph`. Declared and unresolved inventory must not be shown as observed model/runtime versions. |
 | Identity and RBAC | Identity and authorization views | Existing manifest inspection and permission graphs. Manifest declarations alone do not prove actual runtime permission enforcement. |
 | Guardrail configuration | Guardrails | Existing LiteLLM, Cloudflare and Bedrock export representations. This generates configuration; it does not deploy or verify a gateway. |
+| Runtime gateway health and readiness | Runtime Gateway tab | New read-only `GET /api/gateway/status` added by this work probes the configured loopback gateway `/healthz` and `/readyz` only and reports bounded probe state. The panel does not evaluate policy, receipts or tool decisions, does not expose or call `/metrics`, and the gateway `serve` command is not wired until Phase 5. `/readyz` fails closed until then. |
 | Compliance mapping and signed report verification | Compliance and verification controls | Findings-to-framework mappings do not certify compliance. Signing requires a private configured key; integrity verification is separate from assessment completeness. |
 | Remediation preview and explicit apply | Healing | Existing local remediation endpoints use the configured project root. Review plans before applying. Unsupported or ambiguous rewrites remain manual. |
 | Multi-agent evaluation | Team / swarm controls | Existing `/api/swarms/run`; fresh scan observations and the same analysis classification policy apply. |
@@ -68,6 +69,20 @@ See [ATK-001 setup and assessment limits](modules/prompt_injection.md).
 `GET /api/report/download?format=json|sarif|html` downloads the current scan report. Authentication and localhost/origin controls remain in effect. HTML is autoescaped, self-contained and delivered as an attachment with a sandbox content-security policy. The SARIF download includes assessment status, coverage and errors in run properties so a failed scan is not reduced to an empty findings list. No filesystem export, PDF download, ZIP vault, automatic publishing or provider call occurs.
 
 The local report API and these downloads are not a secret vault. Review target evidence before sharing an exported report. Local evidence retention follows the operator's filesystem policy; the tenant service's retention setting does not apply to local dashboard memory or files.
+
+## Runtime gateway status API
+
+`GET /api/gateway/status` is a read-only status surface for the local runtime gateway. It reads the `AGENTSCAN_GATEWAY_URL` environment variable and makes no network call when the variable is unset or blank.
+
+- Unset or blank: HTTP 200 with `configured: false`, `status: "not_configured"`, `reason: "gateway_url_unset"`, null probes, and no network activity.
+- Configured but invalid: HTTP 200 with `status: "misconfigured"` and the bounded reason `gateway_url_invalid`, with null probes. Only loopback HTTP(S) base URLs are accepted (`127.0.0.1`, `localhost` or `::1`); credentials, query, fragment or path components are rejected. The raw URL is not echoed in the response.
+- Configured and valid: the endpoint probes `{base}/healthz` then `{base}/readyz` with a 1.5 second timeout, no redirects and no environment credential forwarding. It never calls `/metrics`.
+
+The response reports `status` of `ready`, `not_ready`, `unreachable`, `unhealthy`, `misconfigured` or `not_configured`, the bounded `reason` (for readiness failures the gateway-supplied reason is validated against a lowercase identifier pattern and falls back to `unknown_reason`), per-probe HTTP status and latency, and a UTC ISO `checked_at`. Failures use bounded reason codes such as `health_unreachable`, `health_timeout`, `health_status_<code>`, `health_invalid` and readiness codes; exception text, paths, tokens or response bodies are never included.
+
+The response uses `Cache-Control: no-store`.
+
+The dashboard Runtime Gateway tab renders this probe state only. It does not evaluate policy, receipts or tool decisions, does not use `/metrics`, and the gateway `serve` command is not wired until Phase 5. `/readyz` fails closed until Phase 5 wires the runtime.
 
 ## Failure interpretation
 
