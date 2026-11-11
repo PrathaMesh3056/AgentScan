@@ -39,10 +39,6 @@ jobs:
 
       - name: Run pre-commit hooks
         run: uv run --no-sync pre-commit run --all-files --show-diff-on-failure
-
-      - name: Run pre-commit hooks
-        run: uv run --no-sync pre-commit run --all-files --show-diff-on-failure
-
       - name: Run Ruff linter and formatting
         run: |
           uv run --no-sync ruff check .
