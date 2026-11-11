@@ -70,6 +70,13 @@ def test_referenced_static_scripts_exist() -> None:
         assert path.is_file(), ref
 
 
+def test_no_stale_monolithic_dashboard_script() -> None:
+    assert not (STATIC_DIR / "dashboard-app.js").exists()
+    html = INDEX_PATH.read_text(encoding="utf-8")
+    assert not re.search(r"""src=["']/static/dashboard-app\.js["']""", html, re.IGNORECASE)
+    assert "/static/dashboard-app.js" not in html
+
+
 def test_external_scripts_contain_expected_functions() -> None:
     combined = ""
     for name in ("dashboard-app-core.js", "dashboard-app-renderers.js", "dashboard-app-actions.js"):

@@ -388,14 +388,13 @@ def test_every_authored_control_has_validation_and_invalid_value_case():
     html = (root / "agentscan/ui/static/index.html").read_text(encoding="utf-8")
     # Authored controls may live in the externalized dashboard scripts too.
     for script_name in (
-        "dashboard-app.js",
         "dashboard-app-core.js",
         "dashboard-app-renderers.js",
         "dashboard-app-actions.js",
     ):
         script_path = root / "agentscan/ui/static" / script_name
-        if script_path.is_file():
-            html += "\n" + script_path.read_text(encoding="utf-8")
+        assert script_path.is_file(), script_name
+        html += "\n" + script_path.read_text(encoding="utf-8")
     control_ids = authored_control_ids(html)
     script = r"""
     const assert = require('node:assert/strict');
