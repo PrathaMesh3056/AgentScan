@@ -249,6 +249,8 @@ class UpstreamClient:
                     result = await session.list_tools(cursor=cursor)
                 except TimeoutError as exc:
                     raise UpstreamTimeout() from exc
+                except httpx.TimeoutException as exc:
+                    raise UpstreamTimeout() from exc
                 except McpError as exc:
                     raise UpstreamProtocolError() from exc
                 except httpx.HTTPError as exc:
@@ -292,6 +294,8 @@ class UpstreamClient:
                         meta=request_meta,
                     )
             except TimeoutError as exc:
+                raise UpstreamTimeout(may_have_sent=True) from exc
+            except httpx.TimeoutException as exc:
                 raise UpstreamTimeout(may_have_sent=True) from exc
             except McpError as exc:
                 raise UpstreamProtocolError(may_have_sent=True) from exc

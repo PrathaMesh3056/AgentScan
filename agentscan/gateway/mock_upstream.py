@@ -128,7 +128,7 @@ class MockUpstreamState:
             return {
                 "status": "unknown",
                 "key_hash": key_hash,
-                "request_hash": request_hash,
+                "request_hash": started.request_hash,
                 "confirmation_id": f"mock-{uuid.uuid4()}",
                 "observed_at": started.observed_at,
             }
@@ -238,8 +238,10 @@ def create_mock_upstream_app(config: MockUpstreamConfig) -> Starlette:
         arguments: dict[str, Any], key_hash: str, request_hash: str
     ) -> CallToolResult:
         customer_id = arguments.get("customer_id")
+        if not isinstance(customer_id, str):
+            return _error_result(_UPSTREAM_ERROR)
         async with lock:
-            tenant = state.customers.get(customer_id) if isinstance(customer_id, str) else None
+            tenant = state.customers.get(customer_id)
             if tenant is None:
                 return _error_result(_UPSTREAM_ERROR)
             if tenant != config.tenant:

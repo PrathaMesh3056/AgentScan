@@ -458,6 +458,12 @@ async def test_crash_after_start_leaves_unknown_outcome() -> None:
             effect = await client.check_effect(
                 STATUS_TOOL, key_hash=key_hash, request_hash=request_hash
             )
+            with pytest.raises(UpstreamProtocolError):
+                await client.check_effect(
+                    STATUS_TOOL,
+                    key_hash=key_hash,
+                    request_hash=_hash_of('{"customer_id":"cust-1002"}'),
+                )
         assert effect.status == "unknown"
         assert state.deleted == set()
         assert [record.status for record in state.records] == ["started"]
@@ -467,10 +473,10 @@ async def test_crash_after_start_leaves_unknown_outcome() -> None:
 async def test_upstream_timeout_is_bounded_and_sanitized() -> None:
     key_hash = _hash_of("gw-key-canary-slow")
     request_hash = _hash_of('{"customer_id":"cust-1001"}')
-    config = MockUpstreamConfig(gateway_credential=GATEWAY_CREDENTIAL, call_delay_seconds=1.5)
+    config = MockUpstreamConfig(gateway_credential=GATEWAY_CREDENTIAL, call_delay_seconds=1.0)
     async with _mock_server(config) as (port, state):
         with pytest.raises(UpstreamTimeout) as excinfo:
-            async with _started_client(port, timeout_seconds=0.2) as client:
+            async with _started_client(port, timeout_seconds=0.3) as client:
                 await client.call_tool(
                     PUBLIC_TOOL,
                     {"customer_id": "cust-1001"},
@@ -481,7 +487,19 @@ async def test_upstream_timeout_is_bounded_and_sanitized() -> None:
         assert f"http://127.0.0.1:{port}" not in message
         assert GATEWAY_CREDENTIAL not in message
         assert FAKE_AGENT_JWT not in message
-        assert state.deleted == set()
+        # A timeout proves only that the effect is uncertain. The delayed
+        # handler may have completed after the client deadline, or it may
+        # have been cancelled after recording "started".
+        assert any(
+            record.key_hash == key_hash and record.status == "started" for record in state.records
+        )
+        assert state.deleted <= {"cust-1001"}
+        await asyncio.sleep(1.2)
+        async with _started_client(port) as client:
+            effect = await client.check_effect(
+                STATUS_TOOL, key_hash=key_hash, request_hash=request_hash
+            )
+        assert effect.status in {"applied", "unknown"}
 
 
 @pytest.mark.asyncio
