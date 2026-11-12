@@ -176,6 +176,12 @@ class UpstreamClient:
         """Open the long-lived MCP session; on failure close everything."""
         if self._stack is not None:
             return
+        # Probe before entering any MCP/anyio context. Entering the streamable
+        # client starts task groups whose cancel scopes must stay in this task;
+        # a post-timeout probe in a worker thread corrupts them on Linux.
+        probe = await asyncio.to_thread(self._probe_reachable, min(0.5, self._timeout_seconds))
+        if probe is False:
+            raise UpstreamUnavailable()
         stack = AsyncExitStack()
         timed_out = False
         try:
@@ -199,30 +205,33 @@ class UpstreamClient:
                     await session.initialize()
             except TimeoutError:
                 timed_out = True
+        except asyncio.CancelledError:
+            with suppress(BaseException):
+                await stack.aclose()
+            raise
         except Exception:
-            with suppress(Exception):
+            with suppress(BaseException):
                 await stack.aclose()
             raise UpstreamUnavailable() from None
         if not timed_out:
             self._stack = stack
             self._session = session
             return
-        # The MCP client does not surface connection failures to initialize();
-        # close the session first, then classify the deadline by probing.
-        with suppress(Exception):
+        # The deadline expired while initializing. Close the stack and treat
+        # the server as reachable but unresponsive; never probe after this
+        # point because anyio cancel scopes are already unwinding.
+        with suppress(BaseException):
             await stack.aclose()
-        if (await asyncio.to_thread(self._probe_reachable)) is False:
-            raise UpstreamUnavailable() from None
         raise UpstreamTimeout() from None
 
-    def _probe_reachable(self) -> bool | None:
+    def _probe_reachable(self, timeout_seconds: float) -> bool | None:
         """Quick TCP probe: True reachable, False refused immediately, None timed out."""
         parts = urlsplit(self._url)
         host = parts.hostname or ""
         fallback = 443 if parts.scheme == "https" else 80
         port = parts.port if parts.port is not None else fallback
         try:
-            with socket.create_connection((host, port), timeout=0.5):
+            with socket.create_connection((host, port), timeout=timeout_seconds):
                 return True
         except TimeoutError:
             return None

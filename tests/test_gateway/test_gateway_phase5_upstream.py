@@ -503,6 +503,32 @@ async def test_upstream_timeout_is_bounded_and_sanitized() -> None:
 
 
 @pytest.mark.asyncio
+async def test_start_proceeds_when_preflight_probe_times_out(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A probe timeout means "reachability unknown", not "unreachable": the MCP
+    # initialize deadline must decide, otherwise a slow-but-live server is
+    # misclassified as unavailable.
+    config = MockUpstreamConfig(gateway_credential=GATEWAY_CREDENTIAL)
+    async with _mock_server(config) as (port, _state):
+        client = UpstreamClient(
+            url=f"http://127.0.0.1:{port}/mcp",
+            server_id="mock-crm",
+            credential=GATEWAY_CREDENTIAL,
+            tenant=DEFAULT_TENANT,
+            timeout_seconds=2.0,
+        )
+        monkeypatch.setattr(client, "_probe_reachable", lambda _timeout: None)
+        try:
+            await client.start()
+            assert client.started is True
+            tools = await client.list_tools()
+            assert [tool.name for tool in tools] == [PUBLIC_TOOL]
+        finally:
+            await client.aclose()
+
+
+@pytest.mark.asyncio
 async def test_unreachable_loopback_port_raises_sanitized_unavailable() -> None:
     # Port 0 cannot serve client connections, so the TCP connect fails fast;
     # this Windows environment drops SYNs to closed ports instead of refusing.
