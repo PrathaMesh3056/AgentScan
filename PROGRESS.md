@@ -20,13 +20,12 @@ approval, and it does not replace `docs/RUNTIME_GATEWAY.md`.
 | 1 | Policy bundle, signing/verification, evaluation | Approved (`1265516`); CI green (`a21ccd7`) | Phase 1 approval below |
 | 2 | Receipts, chain, WAL, writer lease/epoch | Approved (`3c8579b`); CI green | Phase 2 approval below |
 | 3 | Idempotency, recovery, reconciliation | Approved (`468e603`, fix `43357c8`); CI green | Phase 3 review/approval below |
-| 4 | Identity, sessions, MCP server, protocol pin | Checkpoint complete | Evidence below; Phase 5 still blocked |
-| 5 | Upstream client, mock upstream, end-to-end | Not started | — |
+| 4 | Identity, sessions, MCP server, protocol pin | Checkpoint complete | Phase 4 checkpoint below |
+| 5 | Upstream client, mock upstream, end-to-end | Checkpoint complete (`870c72b`); CI green (`43349900818`) | Phase 5 checkpoint below |
 | 6 | CI, docs/runbook, benchmark/soak, draft PR | Not started | — |
 
-Implementation stops at each user-requested checkpoint. Phases 1-3 are approved
-and CI-green. Phase 4 is authorized to start from `43357c8` and must stop at its
-own checkpoint.
+Implementation stops at each user-requested checkpoint. Phases 1-3 are approved.
+Phases 4-5 are checkpointed and CI-green. Phase 6 requires authorization.
 
 ---
 
@@ -569,4 +568,70 @@ Final CI run `42977747672` at `cae3247`: all four jobs passed (`validation / tes
 
 PR #15 remains draft; PR #12 remains untouched.
 
-Phase 5 operational limit: the session registry removes expired records on access and exposes `prune_expired`, but no background scheduler invokes it; the MCP transport caps concurrent sessions at the SDK default (10,000). Phase 5 must schedule registry pruning or enforce a registry cap before production. This is not fixed in Phase 4.
+Phase 5 operational limit: the session registry removes expired records on access and exposes `prune_expired`, but no background scheduler invokes it; the MCP transport caps concurrent sessions at the SDK default (10,000). Phase 5 must schedule registry pruning or enforce a registry cap before production. This is not fixed in Phase 4. Closed in Phase 5 by `870c72b`; see below.
+
+## Phase 5 checkpoint (2026-11-13)
+
+**Scope:** authenticated upstream client, loopback mock upstream, upstream
+catalog and schema-drift gating, receipt-backed dispatch, crash recovery,
+`serve`/`reconcile` CLI wiring, and scheduled session pruning.
+
+Modules added:
+- `agentscan/gateway/upstream.py` — bounded MCP Streamable HTTP client with a TCP
+  preflight, typed unavailability/timeout/protocol errors, and an authenticated
+  `check_effect` status call.
+- `agentscan/gateway/mock_upstream.py` — loopback-only mock CRM with fake data,
+  constant-time credential and tenant checks, and idempotent effect records.
+- `agentscan/gateway/catalog.py` — immutable catalog snapshot, canonical schema
+  hashes, tool identity hashes, and policy/catalog mismatch detection
+  (`server_mismatch`, `missing_upstream`, `schema_drift`,
+  `rule_argument_missing`).
+- `agentscan/gateway/runtime.py` — tool dispatcher with identity/session checks,
+  catalog refresh, schema-drift denial and `tools/list` filtering, idempotency
+  replay/conflict/unknown guards, shadow and observe enforcement, durable
+  decision/outcome receipts, bounded upstream error mapping, and readiness.
+- `agentscan/gateway/cli.py` — `serve` and `reconcile` commands with signed-bundle
+  verification, credential environment lookup, startup recovery, writer lease
+  ownership, catalog load, uvicorn/TLS wiring, and bounded session pruning.
+
+Behavior:
+- Decision receipts are durable before dispatch. The outcome is appended after
+  the upstream call; an append failure falls back to `unknown`, returns
+  `OUTCOME_UNKNOWN` to the caller, and marks the sink unhealthy. A failed sink
+  short-circuits later calls with `GATEWAY_UNAVAILABLE`.
+- Missing idempotency keys on high-risk tools deny with `IDEMPOTENCY_REQUIRED`;
+  the denied receipt uses `reason="idempotency_required"`. Reuse with different
+  arguments denies `IDEMPOTENCY_CONFLICT`; a different key with the same content
+  while pending or unknown denies `OUTCOME_UNKNOWN` without dispatch.
+- Schema drift and rule-argument mismatches deny `SCHEMA_DRIFT`, are removed from
+  `tools/list`, and preserve the policy's observe enforcement mode.
+- `require_approval` stays blocked in v1, including shadow mode. Shadow forwarding
+  applies only to `deny`.
+- Startup recovery closes pending decisions as `unknown`. `reconcile` queries the
+  authenticated upstream `status_operation` and records `no_effect` only from
+  `pending`/`unknown` when the upstream confirms it.
+- The MCP client's own 408 `McpError` maps to `UpstreamTimeout`, matching the
+  outer deadline path.
+- The `serve` lifecycle starts a bounded pruner at `min(60s, idle/2)` and stops it
+  before releasing the upstream session and writer lease.
+
+Phase 5 commits: `ccb7fe5`, `8283c28`, `7dcd58e`, `72c0cc2`, `692671a`, `870c72b`.
+
+Verification:
+- `pytest tests/test_gateway -q` -> `329 passed` (Phase 5 adds 54 tests: 18
+  upstream/catalog/mock, 19 runtime, 10 CLI, 7 end-to-end serve).
+- `ruff check agentscan/gateway tests/test_gateway` -> clean;
+  `ruff format --check` -> 37 files formatted.
+- Local mypy remains blocked by Windows Application Control
+  (`ImportError: DLL load failed ... semanal_infer`); CI mypy is authoritative.
+- CI run `43349900818` at `870c72b`: all four jobs passed
+  (`validation / test (3.12)`, `validation / test (3.13)`,
+  `validation / windows`, `validation / secrets`). Both Linux test jobs report
+  `3420 passed, 32 skipped, 8 deselected` and 84.16% coverage against the 82%
+  floor.
+
+No changes to `agentscan/core/`, `agentscan/action/`, the action-verification
+spike, or PR #12. PR #15 remains draft.
+
+Phase 6 remains: CI/runbook polish, the latency benchmark, the one-hour soak,
+and final draft-PR packaging.
