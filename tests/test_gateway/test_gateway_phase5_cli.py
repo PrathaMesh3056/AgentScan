@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import sys
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
@@ -11,6 +12,30 @@ import pytest
 
 from agentscan.gateway import cli
 from agentscan.gateway.recovery import ReconciliationStatus
+
+
+@pytest.mark.parametrize(
+    ("idle_timeout", "expected"),
+    [(1, 1.0), (30, 15.0), (900, 60.0)],
+)
+def test_session_prune_interval_is_bounded(idle_timeout: int, expected: float) -> None:
+    settings = SimpleNamespace(session_idle_timeout_seconds=idle_timeout)
+    assert cli._session_prune_interval(settings) == expected
+
+
+async def test_session_pruner_prunes_then_stops() -> None:
+    stop = asyncio.Event()
+
+    class FakeSessions:
+        calls = 0
+
+        def prune_expired(self) -> int:
+            type(self).calls += 1
+            stop.set()
+            return 0
+
+    await asyncio.wait_for(cli._prune_sessions_forever(FakeSessions(), 0.01, stop=stop), timeout=1)
+    assert FakeSessions.calls == 1
 
 
 def test_main_without_command_returns(monkeypatch: pytest.MonkeyPatch) -> None:

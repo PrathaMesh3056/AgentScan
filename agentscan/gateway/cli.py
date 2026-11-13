@@ -8,7 +8,7 @@ import os
 import re
 import sys
 from collections.abc import AsyncIterator, Callable
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -22,9 +22,12 @@ if TYPE_CHECKING:
     from agentscan.gateway.receipts import ReceiptChainStore
     from agentscan.gateway.recovery import ReconciliationResult
     from agentscan.gateway.runtime import GatewayRuntime
+    from agentscan.gateway.sessions import SessionRegistry
     from agentscan.gateway.upstream import UpstreamClient
 
 _SHA256_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
+_SESSION_PRUNE_MIN_SECONDS = 1.0
+_SESSION_PRUNE_MAX_SECONDS = 60.0
 
 
 class GatewayCliError(RuntimeError):
@@ -41,7 +44,30 @@ class GatewayService:
     upstream: UpstreamClient
     catalog: ToolCatalog
     runtime: GatewayRuntime
+    sessions: SessionRegistry
     app: Starlette
+
+
+def _session_prune_interval(settings: GatewaySettings) -> float:
+    return max(
+        _SESSION_PRUNE_MIN_SECONDS,
+        min(_SESSION_PRUNE_MAX_SECONDS, settings.session_idle_timeout_seconds / 2.0),
+    )
+
+
+async def _prune_sessions_forever(
+    sessions: SessionRegistry,
+    interval_seconds: float,
+    *,
+    stop: asyncio.Event,
+) -> None:
+    """Prune expired sessions on a bounded interval until stopped."""
+    while not stop.is_set():
+        sessions.prune_expired()
+        try:
+            await asyncio.wait_for(stop.wait(), timeout=interval_seconds)
+        except TimeoutError:
+            continue
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -154,6 +180,8 @@ async def open_gateway_service(config_path: str | Path) -> AsyncIterator[Gateway
     bundle = _load_policy_bundle(settings)
     store = _receipt_store(settings)
     upstream: UpstreamClient | None = None
+    pruner: asyncio.Task[None] | None = None
+    prune_stop: asyncio.Event | None = None
     try:
         store.acquire_writer_lease()
         recovery = recover(store)
@@ -189,6 +217,14 @@ async def open_gateway_service(config_path: str | Path) -> AsyncIterator[Gateway
             runtime=runtime,
             metrics=metrics,
         )
+        prune_stop = asyncio.Event()
+        pruner = asyncio.create_task(
+            _prune_sessions_forever(
+                sessions,
+                _session_prune_interval(settings),
+                stop=prune_stop,
+            )
+        )
         yield GatewayService(
             settings=settings,
             bundle=bundle,
@@ -196,9 +232,16 @@ async def open_gateway_service(config_path: str | Path) -> AsyncIterator[Gateway
             upstream=upstream,
             catalog=catalog,
             runtime=runtime,
+            sessions=sessions,
             app=app,
         )
     finally:
+        if pruner is not None:
+            if prune_stop is not None:
+                prune_stop.set()
+            pruner.cancel()
+            with suppress(asyncio.CancelledError):
+                await pruner
         if upstream is not None:
             await upstream.aclose()
         store.close()
