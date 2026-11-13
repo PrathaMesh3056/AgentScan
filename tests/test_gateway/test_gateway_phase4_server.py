@@ -36,16 +36,23 @@ from agentscan.gateway.sessions import PINNED_PROTOCOL_VERSION, SessionRegistry
 class FakeRuntime:
     def __init__(self) -> None:
         self.calls: list[tuple[str, dict[str, Any]]] = []
+        self.metas: list[Mapping[str, Any] | None] = []
 
     async def list_tools(self, context: GatewayRequestContext) -> Sequence[Tool]:
         assert context.session is not None
         return [Tool(name="echo", description="echo", inputSchema={"type": "object"})]
 
     async def call_tool(
-        self, context: GatewayRequestContext, name: str, arguments: Mapping[str, Any]
+        self,
+        context: GatewayRequestContext,
+        name: str,
+        arguments: Mapping[str, Any],
+        *,
+        meta: Mapping[str, Any] | None = None,
     ) -> CallToolResult:
         if name == "fail":
             raise GatewayError(ErrorCode.POLICY_DENIED, "Request denied")
+        self.metas.append(meta)
         self.calls.append((name, dict(arguments)))
         return CallToolResult(
             content=[TextContent(type="text", text=str(arguments.get("value", "ok")))]
@@ -610,7 +617,12 @@ class _SecretRuntime:
         raise RuntimeError("secret/path/token-value")
 
     async def call_tool(
-        self, context: GatewayRequestContext, name: str, arguments: Mapping[str, Any]
+        self,
+        context: GatewayRequestContext,
+        name: str,
+        arguments: Mapping[str, Any],
+        *,
+        meta: Mapping[str, Any] | None = None,
     ) -> CallToolResult:
         raise RuntimeError("secret/path/token-value")
 
@@ -834,7 +846,12 @@ class _FalsyRuntime:
         raise AssertionError("not used")
 
     async def call_tool(
-        self, context: GatewayRequestContext, name: str, arguments: Mapping[str, Any]
+        self,
+        context: GatewayRequestContext,
+        name: str,
+        arguments: Mapping[str, Any],
+        *,
+        meta: Mapping[str, Any] | None = None,
     ) -> CallToolResult:
         raise AssertionError("not used")
 
@@ -872,3 +889,31 @@ def test_readyz_honors_falsy_injected_probe() -> None:
         response = client.get("/readyz")
         assert response.status_code == 200
         assert response.json() == {"status": "ready"}
+
+
+@pytest.mark.asyncio
+async def test_localhost_call_tool_meta_reaches_runtime(gateway) -> None:
+    client, runtime, _private, _port = gateway
+    async with (
+        streamable_http_client(str(client.base_url) + "/mcp", http_client=client) as (
+            read_stream,
+            write_stream,
+            _get_session_id,
+        ),
+        ClientSession(read_stream, write_stream) as session,
+    ):
+        await session.initialize()
+        result = await session.call_tool(
+            "echo",
+            {"value": "hello"},
+            meta={"agentscan.idempotency_key": "key-canary"},
+        )
+        assert not result.isError
+        assert result.content[0].text == "hello"
+    assert len(runtime.metas) == 1
+    received = runtime.metas[0]
+    assert received is not None
+    if isinstance(received, Mapping):
+        assert received["agentscan.idempotency_key"] == "key-canary"
+    else:
+        assert received.model_extra == {"agentscan.idempotency_key": "key-canary"}

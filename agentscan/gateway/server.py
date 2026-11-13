@@ -73,7 +73,12 @@ class GatewayRequestContext:
 class ToolRuntime(Protocol):
     async def list_tools(self, context: GatewayRequestContext) -> Sequence[Tool]: ...
     async def call_tool(
-        self, context: GatewayRequestContext, name: str, arguments: Mapping[str, Any]
+        self,
+        context: GatewayRequestContext,
+        name: str,
+        arguments: Mapping[str, Any],
+        *,
+        meta: Mapping[str, Any] | None = None,
     ) -> CallToolResult: ...
     def readiness(self) -> Readiness: ...
 
@@ -83,7 +88,12 @@ class UnavailableToolRuntime:
         raise GatewayError(ErrorCode.GATEWAY_UNAVAILABLE, "tool runtime unavailable", 503)
 
     async def call_tool(
-        self, context: GatewayRequestContext, name: str, arguments: Mapping[str, Any]
+        self,
+        context: GatewayRequestContext,
+        name: str,
+        arguments: Mapping[str, Any],
+        *,
+        meta: Mapping[str, Any] | None = None,
     ) -> CallToolResult:
         raise GatewayError(ErrorCode.GATEWAY_UNAVAILABLE, "tool runtime unavailable", 503)
 
@@ -151,7 +161,12 @@ def create_app(
         try:
             context = _context_or_error()
             arguments = request.params.arguments or {}
-            result = await tool_runtime.call_tool(context, request.params.name, arguments)
+            result = await tool_runtime.call_tool(
+                context,
+                request.params.name,
+                arguments,
+                meta=cast(Mapping[str, Any] | None, request.params.meta),
+            )
             return ServerResult(result)
         except GatewayError as exc:
             raise _mcp_error(exc) from None

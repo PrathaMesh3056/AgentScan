@@ -606,6 +606,11 @@ class ReceiptChainStore:
     def lease_held(self) -> bool:
         return self._lease is not None and self._lease.is_locked
 
+    @property
+    def healthy(self) -> bool:
+        """Whether the local sink still accepts durable appends."""
+        return self._healthy
+
     def acquire_writer_lease(self) -> int:
         if self.lease_held:
             raise WriterLeaseError("writer lease is already held")
