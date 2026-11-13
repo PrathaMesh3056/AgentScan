@@ -740,6 +740,13 @@ Full one-hour soak: **PENDING, not executed**. Exact command:
 - CLI help verified for `agentscan-gateway --help`, `serve --help`, `reconcile
   --help`, `policy sign --help`, and `policy verify --help`; the runbook quotes
   those exact interfaces.
+- CI run `43355984999` at `4fb2bb6`: all four jobs passed (`validation / test
+  (3.12)`, `validation / test (3.13)`, `validation / windows`, `validation /
+  secrets`). Linux gateway runs: `329 passed, 4 deselected`; `policy.py` 90.85%
+  against the 90% floor and `receipts.py` 85.51% against the 84% floor. Full
+  Linux suite: `3420 passed, 32 skipped, 12 deselected`, 84.16% coverage against
+  the 82% floor. Windows gateway job: `333 passed` (the four slow Phase 6 tests
+  run on Windows because that job omits `-m "not slow"`).
 
 ### Remaining owner actions
 
@@ -749,9 +756,8 @@ Full one-hour soak: **PENDING, not executed**. Exact command:
    and require gateway overhead p99 < 40 ms before performance acceptance.
 2. Run the full one-hour soak with the exact command above and record the
    result. The shortened smoke is not one-hour evidence.
-3. Confirm the Windows CI gateway run and the Linux per-module coverage floors
-   in the new CI run; adjust a floor only if the measured Linux value requires
-   it, and record the reason.
+The Windows gateway job and both Linux coverage floors are confirmed in run
+`43355984999`; no floor adjustment is needed.
 
 No changes to `agentscan/core/`, `agentscan/action/`, the action-verification
 spike, or PR #12. PR #15 remains draft.
