@@ -1,6 +1,6 @@
 # AgentScan Runtime Gateway v1 — Implementation Progress
 
-**Last updated:** 2026-11-10
+**Last updated:** 2026-11-13
 **Phase 0 commits:** `8654034` (skeleton), `2721a15` (strengthened test + gate evidence), `d074c9d` (coordinator evidence)
 **CI commit:** `1393c88` (gateway extra, pre-commit, CLI smoke)
 **Worktree:** `D:\prathamesh\AgentScan-gw-impl`
@@ -22,10 +22,13 @@ approval, and it does not replace `docs/RUNTIME_GATEWAY.md`.
 | 3 | Idempotency, recovery, reconciliation | Approved (`468e603`, fix `43357c8`); CI green | Phase 3 review/approval below |
 | 4 | Identity, sessions, MCP server, protocol pin | Checkpoint complete | Phase 4 checkpoint below |
 | 5 | Upstream client, mock upstream, end-to-end | Checkpoint complete (`870c72b`); CI green (`43349900818`) | Phase 5 checkpoint below |
-| 6 | CI, docs/runbook, benchmark/soak, draft PR | Not started | — |
+| 6 | CI, docs/runbook, benchmark/soak, draft PR | Checkpoint delivered; performance acceptance open (blocker) | Phase 6 checkpoint below |
 
 Implementation stops at each user-requested checkpoint. Phases 1-3 are approved.
-Phases 4-5 are checkpointed and CI-green. Phase 6 requires authorization.
+Phases 4-5 are checkpointed and CI-green. Phase 6 is checkpointed, but its
+performance acceptance is **not** complete: the gateway overhead p99 misses the
+approved 40 ms budget. See the Phase 6 checkpoint for evidence and the owner
+action.
 
 ---
 
@@ -633,5 +636,122 @@ Verification:
 No changes to `agentscan/core/`, `agentscan/action/`, the action-verification
 spike, or PR #12. PR #15 remains draft.
 
-Phase 6 remains: CI/runbook polish, the latency benchmark, the one-hour soak,
-and final draft-PR packaging.
+## Phase 6 checkpoint (2026-11-13)
+
+**Status:** checkpoint delivered; **Phase 6 performance acceptance is open**.
+The harness, runbook, CI changes, and draft-PR packaging are complete. The
+gateway-overhead p99 budget fails at 500 samples, so this phase must not be
+recorded as accepted until the hot-path blocker below is fixed and re-measured.
+
+**Scope:** latency and soak harnesses, operations runbook, Windows gateway
+CI, per-module coverage floors, stale dashboard-doc corrections, and draft-PR
+packaging. No production module changed in Phase 6.
+
+Files added:
+- `benchmarks/runtime_gateway/bench_gateway.py` and `README.md`.
+- `benchmarks/runtime_gateway/soak_gateway.py`.
+- `tests/test_gateway/test_gateway_phase6_performance.py` (4 slow-marked tests).
+- `docs/RUNTIME_GATEWAY_RUNBOOK.md`.
+
+Files changed:
+- `.github/workflows/validate.yml` - Windows installs the gateway extra and
+  runs `pytest tests/test_gateway -q`; Linux adds per-module coverage floors
+  (`policy.py` >= 90%, `receipts.py` >= 84%).
+- `docs/dashboard_feature_matrix.md` - removed the stale "serve not wired until
+  Phase 5" / "readyz fails closed until then" statements only. No dashboard
+  behavior, CSS, markup, or JavaScript changed, and PR #18 does not touch this
+  file.
+
+### Benchmark
+
+Command (full run, exact):
+
+```text
+.\.venv\Scripts\python.exe benchmarks\runtime_gateway\bench_gateway.py --samples 500 --policy-samples 5000 --warmup 50 --out .benchmarks/bench_phase6.json
+```
+
+Host: `Windows-11-10.0.26200-SP0`, AMD64, 12 CPUs, Python 3.12.7. Sample
+counts: policy 5000, append 500, gateway 500; warm-up 50 per metric. Raw
+samples and the full host profile are in the JSON report. Both chains verified
+(550 decision receipts; 1100 gateway receipts); no receipt was lost.
+
+| Metric | p50 | p99 | Mean | Max | Budget p99 | Result |
+|---|---:|---:|---:|---:|---:|---|
+| Policy decision | 0.003 ms | 0.006 ms | 0.003 ms | 0.084 ms | < 10 ms | PASS |
+| Decision-receipt append | 5.406 ms | 7.662 ms | 5.152 ms | 8.811 ms | < 20 ms | PASS |
+| Gateway overhead | 27.027 ms | **78.628 ms** | 33.127 ms | 127.447 ms | < 40 ms | **FAIL** |
+
+Scaling evidence (same host): gateway overhead p99 was 9.867 ms at 100 samples
+and 38.350 ms at 250 samples, then 78.628 ms at 500. The cost grows with chain
+length, so the 500-sample result is not host noise.
+
+Root cause measured at 1003 receipts: `RetentionDedupeIndex.rebuild` took
+18.89 ms, a plain durable `append` took 16.18 ms, and `append_outcome` took
+20.48 ms. Each gateway call appends two receipts, and each append rebuilds the
+retention index over the whole chain; `IdempotencyIndex.record` also rebuilds
+all pairs and indexes on every receipt; `append_outcome` re-pairs the whole
+chain twice. These are O(n) operations per append on the hot path.
+
+Phase 6 does not modify the approved Phase 2/3 receipt or idempotency modules.
+The blocker and the recommended follow-up are owner actions, not a silent
+performance rewrite.
+
+### Soak
+
+Smoke command (run; 60 s, exact):
+
+```text
+.\.venv\Scripts\python.exe benchmarks\runtime_gateway\soak_gateway.py --seconds 60 --rate 5 --receipt-dir .benchmarks/soak-smoke --out .benchmarks/soak_smoke.json
+```
+
+Result: **PASS** for chain and memory. 281 decisions in 60.125 s, 0 failures,
+562 receipts, 6 chain checks, chain verified from disk against the in-memory
+head, all outcomes terminal, 0 lost receipts. Heap growth 2,690,946 B total /
+9,576.3 B per decision against the 32,768 B per-decision bound (workingset RSS
++19,099,648 B). Latency with `tracemalloc` enabled was p50 152.95 ms and p99
+304.10 ms, consistent with the O(n) append path above.
+
+Full one-hour soak: **PENDING, not executed**. Exact command:
+
+```text
+.\.venv\Scripts\python.exe benchmarks\runtime_gateway\soak_gateway.py --seconds 3600 --rate 2 --receipt-dir .benchmarks/soak-1h --out .benchmarks/soak-1h.json
+```
+
+### Verification
+
+- `python -m pytest tests/test_gateway -q` -> `333 passed`.
+- `python -m pytest tests/test_gateway/test_gateway_phase6_performance.py -q -m slow`
+  -> `4 passed`.
+- `python -m pytest tests -q -m "not slow"` -> `48 failed, 3296 passed, 32
+  skipped, 12 deselected` in 516.37 s. All 48 are the known Windows CRLF
+  frozen-input digest failures in untouched files (42 ATK evaluation failures
+  from `Frozen ATK-002/005/008/009/011 cases changed`, plus 6
+  `test_frozen_benchmark_digests.py` cases); none is in gateway code or the new
+  harnesses.
+- `python -m ruff check agentscan tests .github benchmarks` -> `All checks passed!`.
+- `python -m ruff format --check agentscan tests .github benchmarks` -> `453
+  files already formatted`.
+- Local `python -m mypy agentscan` remains blocked by Windows Application
+  Control (`ImportError: DLL load failed ... semanal_infer`); CI mypy is
+  authoritative. The local pre-commit `mypy` and `check-yaml` hooks were skipped
+  only after both failed with the same Application Control block
+  (`WinError 4551` for the YAML hook); `validate.yml` was parsed directly with
+  PyYAML, and CI runs both hooks authoritatively.
+- CLI help verified for `agentscan-gateway --help`, `serve --help`, `reconcile
+  --help`, `policy sign --help`, and `policy verify --help`; the runbook quotes
+  those exact interfaces.
+
+### Remaining owner actions
+
+1. Decide whether to authorize a Phase 7 hot-path fix: incremental retention
+   index updates, incremental `IdempotencyIndex.record`, and an indexed
+   outcome/decision lookup instead of whole-chain pairing. Re-run the benchmark
+   and require gateway overhead p99 < 40 ms before performance acceptance.
+2. Run the full one-hour soak with the exact command above and record the
+   result. The shortened smoke is not one-hour evidence.
+3. Confirm the Windows CI gateway run and the Linux per-module coverage floors
+   in the new CI run; adjust a floor only if the measured Linux value requires
+   it, and record the reason.
+
+No changes to `agentscan/core/`, `agentscan/action/`, the action-verification
+spike, or PR #12. PR #15 remains draft.
