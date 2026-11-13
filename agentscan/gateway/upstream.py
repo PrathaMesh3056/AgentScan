@@ -307,6 +307,11 @@ class UpstreamClient:
             except httpx.TimeoutException as exc:
                 raise UpstreamTimeout(may_have_sent=True) from exc
             except McpError as exc:
+                # The MCP client raises its own 408 McpError when its read
+                # timeout fires, so map it to a timeout rather than a protocol
+                # failure. Which layer fires first is a scheduling race.
+                if exc.error.code == httpx.codes.REQUEST_TIMEOUT:
+                    raise UpstreamTimeout(may_have_sent=True) from exc
                 raise UpstreamProtocolError(may_have_sent=True) from exc
             except httpx.ConnectError as exc:
                 # The connection was never established, so nothing was sent.
