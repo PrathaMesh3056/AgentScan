@@ -1,6 +1,6 @@
 # AgentScan Runtime Gateway v1 — Implementation Progress
 
-**Last updated:** 2026-11-13
+**Last updated:** 2026-11-14
 **Phase 0 commits:** `8654034` (skeleton), `2721a15` (strengthened test + gate evidence), `d074c9d` (coordinator evidence)
 **CI commit:** `1393c88` (gateway extra, pre-commit, CLI smoke)
 **Worktree:** `D:\prathamesh\AgentScan-gw-impl`
@@ -22,13 +22,13 @@ approval, and it does not replace `docs/RUNTIME_GATEWAY.md`.
 | 3 | Idempotency, recovery, reconciliation | Approved (`468e603`, fix `43357c8`); CI green | Phase 3 review/approval below |
 | 4 | Identity, sessions, MCP server, protocol pin | Checkpoint complete | Phase 4 checkpoint below |
 | 5 | Upstream client, mock upstream, end-to-end | Checkpoint complete (`870c72b`); CI green (`43349900818`) | Phase 5 checkpoint below |
-| 6 | CI, docs/runbook, benchmark/soak, draft PR | Checkpoint delivered; performance acceptance open (blocker) | Phase 6 checkpoint below |
+| 6 | CI, docs/runbook, benchmark/soak, hot-path fix, draft PR | Accepted (`2262701`, `f7fc7e8`); CI green (`43587927683`); one-hour soak passed | Phase 6 checkpoint below |
 
 Implementation stops at each user-requested checkpoint. Phases 1-3 are approved.
-Phases 4-5 are checkpointed and CI-green. Phase 6 is checkpointed, but its
-performance acceptance is **not** complete: the gateway overhead p99 misses the
-approved 40 ms budget. See the Phase 6 checkpoint for evidence and the owner
-action.
+Phases 4-5 are checkpointed and CI-green. Phase 6 performance acceptance is
+complete: the authorized hot-path fix reduces gateway overhead p99 from
+78.628 ms to 9.864 ms against the 40 ms budget, and the full one-hour soak
+passed. See the Phase 6 checkpoint for evidence.
 
 ---
 
@@ -636,16 +636,16 @@ Verification:
 No changes to `agentscan/core/`, `agentscan/action/`, the action-verification
 spike, or PR #12. PR #15 remains draft.
 
-## Phase 6 checkpoint (2026-11-13)
+## Phase 6 checkpoint (2026-11-14)
 
-**Status:** checkpoint delivered; **Phase 6 performance acceptance is open**.
-The harness, runbook, CI changes, and draft-PR packaging are complete. The
-gateway-overhead p99 budget fails at 500 samples, so this phase must not be
-recorded as accepted until the hot-path blocker below is fixed and re-measured.
+**Status:** checkpoint delivered; **performance acceptance passed**. The
+gateway-overhead p99 blocker was fixed on 2026-11-14 (`2262701`) and the full
+one-hour soak passed, so Phase 6 is recorded as accepted.
 
 **Scope:** latency and soak harnesses, operations runbook, Windows gateway
-CI, per-module coverage floors, stale dashboard-doc corrections, and draft-PR
-packaging. No production module changed in Phase 6.
+CI, per-module coverage floors, stale dashboard-doc corrections, draft-PR
+packaging, and the owner-authorized hot-path fix in the approved Phase 2/3
+receipt and idempotency modules.
 
 Files added:
 - `benchmarks/runtime_gateway/bench_gateway.py` and `README.md`.
@@ -661,44 +661,62 @@ Files changed:
   Phase 5" / "readyz fails closed until then" statements only. No dashboard
   behavior, CSS, markup, or JavaScript changed, and PR #18 does not touch this
   file.
+- `agentscan/gateway/receipts.py` and `agentscan/gateway/idempotency.py` -
+  incremental retention/trace indexes and trace-scoped outcome validation
+  (`2262701`). This is the owner-authorized hot-path fix; behavior and receipt
+  format are unchanged.
+- `uv.lock` - `opentelemetry-api` 1.45.1 -> 1.45.2 to clear CVE-2026-126360
+  in the required dependency audit (`f7fc7e8`).
 
 ### Benchmark
 
-Command (full run, exact):
+Command (full run, exact; 2026-11-14):
 
 ```text
-.\.venv\Scripts\python.exe benchmarks\runtime_gateway\bench_gateway.py --samples 500 --policy-samples 5000 --warmup 50 --out .benchmarks/bench_phase6.json
+.\.venv\Scripts\python.exe benchmarks\runtime_gateway\bench_gateway.py --samples 500 --policy-samples 5000 --warmup 50 --out C:\Users\prath\AppData\Local\Temp\opencode\agentscan-bench-hotpath-20261114.json
 ```
 
 Host: `Windows-11-10.0.26200-SP0`, AMD64, 12 CPUs, Python 3.12.7. Sample
-counts: policy 5000, append 500, gateway 500; warm-up 50 per metric. Raw
-samples and the full host profile are in the JSON report. Both chains verified
-(550 decision receipts; 1100 gateway receipts); no receipt was lost.
+counts: policy 5000, append 500, gateway 500; warm-up 50 per metric; 550
+upstream calls. Raw samples and the full host profile are in the JSON report.
+Both chains verified (550 decision receipts; 1100 gateway receipts); no receipt
+was lost; `all_within_budget: true`.
 
 | Metric | p50 | p99 | Mean | Max | Budget p99 | Result |
 |---|---:|---:|---:|---:|---:|---|
-| Policy decision | 0.003 ms | 0.006 ms | 0.003 ms | 0.084 ms | < 10 ms | PASS |
-| Decision-receipt append | 5.406 ms | 7.662 ms | 5.152 ms | 8.811 ms | < 20 ms | PASS |
-| Gateway overhead | 27.027 ms | **78.628 ms** | 33.127 ms | 127.447 ms | < 40 ms | **FAIL** |
+| Policy decision | 0.002 ms | 0.005 ms | 0.003 ms | 0.132 ms | < 10 ms | PASS |
+| Decision-receipt append | 1.972 ms | 3.756 ms | 2.104 ms | 8.391 ms | < 20 ms | PASS |
+| Gateway overhead | 6.796 ms | **9.864 ms** | 6.671 ms | 47.531 ms | < 40 ms | PASS |
 
-Scaling evidence (same host): gateway overhead p99 was 9.867 ms at 100 samples
-and 38.350 ms at 250 samples, then 78.628 ms at 500. The cost grows with chain
-length, so the 500-sample result is not host noise.
+The approved gate is the p99; one gateway sample (47.531 ms) exceeds 40 ms and
+is recorded unadjusted. Before the fix, the same harness at `4fb2bb6` measured
+gateway overhead p99 78.628 ms (p50 27.027 ms), with scaling 9.867 ms at 100
+samples, 38.350 ms at 250, and 78.628 ms at 500. The pre-fix cost grew with
+chain length, so the blocker was structural rather than host noise.
 
 Root cause measured at 1003 receipts: `RetentionDedupeIndex.rebuild` took
 18.89 ms, a plain durable `append` took 16.18 ms, and `append_outcome` took
-20.48 ms. Each gateway call appends two receipts, and each append rebuilds the
-retention index over the whole chain; `IdempotencyIndex.record` also rebuilds
-all pairs and indexes on every receipt; `append_outcome` re-pairs the whole
-chain twice. These are O(n) operations per append on the hot path.
+20.48 ms. Each gateway call appends two receipts, and each append rebuilt the
+retention index over the whole chain; `IdempotencyIndex.record` also rebuilt
+all pairs and indexes on every receipt; `append_outcome` re-paired the whole
+chain twice. These were O(n) operations per append on the hot path.
 
-Phase 6 does not modify the approved Phase 2/3 receipt or idempotency modules.
-The blocker and the recommended follow-up are owner actions, not a silent
-performance rewrite.
+Fix (`2262701`):
+- `ReceiptChainStore` updates the retention index and a new per-trace receipt
+  index for each appended receipt instead of rebuilding; the trace index is
+  rebuilt when the writer lease is acquired.
+- `IdempotencyIndex.record` updates only the affected key/content scopes. The
+  per-pair outcome update replaces just that pair.
+- `append_outcome` validates only `store.receipts_for_trace(trace_id)` through
+  `_validate_pair`, instead of two whole-chain `pair_receipts` passes.
+
+Seven regression tests cover incremental retention pruning, per-trace lookup,
+scope indexing, outcome replacement, and trace-scoped outcome validation.
+Receipt format, chain hashes, validation rules, and CLI behavior are unchanged.
 
 ### Soak
 
-Smoke command (run; 60 s, exact):
+Shortened smoke (run before the hot-path fix; 60 s, exact):
 
 ```text
 .\.venv\Scripts\python.exe benchmarks\runtime_gateway\soak_gateway.py --seconds 60 --rate 5 --receipt-dir .benchmarks/soak-smoke --out .benchmarks/soak_smoke.json
@@ -709,27 +727,41 @@ Result: **PASS** for chain and memory. 281 decisions in 60.125 s, 0 failures,
 head, all outcomes terminal, 0 lost receipts. Heap growth 2,690,946 B total /
 9,576.3 B per decision against the 32,768 B per-decision bound (workingset RSS
 +19,099,648 B). Latency with `tracemalloc` enabled was p50 152.95 ms and p99
-304.10 ms, consistent with the O(n) append path above.
+304.10 ms, consistent with the pre-fix O(n) append path.
 
-Full one-hour soak: **PENDING, not executed**. Exact command:
+Full one-hour soak (run 2026-11-14, exact):
 
 ```text
-.\.venv\Scripts\python.exe benchmarks\runtime_gateway\soak_gateway.py --seconds 3600 --rate 2 --receipt-dir .benchmarks/soak-1h --out .benchmarks/soak-1h.json
+.\.venv\Scripts\python.exe benchmarks\runtime_gateway\soak_gateway.py --seconds 3600 --rate 2 --receipt-dir C:\Users\prath\AppData\Local\Temp\opencode\agentscan-soak-1h-20261114 --out C:\Users\prath\AppData\Local\Temp\opencode\agentscan-soak-1h-20261114.json
 ```
+
+Result: **PASS**. Ran 7,100 decisions in 3,620.594 s at 2.0/s, 0 failures.
+14,200 receipts (14,200 durable; two per decision), 143 chain checks, chain
+verified from disk against the in-memory head, all outcomes terminal, 0 lost
+receipts, final head
+`sha256:fbe40e811f9c257687f1f172781bf9dca989ff8e27efbcbdcf6ab948a9232686`.
+Heap growth 72,854,423 B total / 10,261.2 B per decision against the 32,768 B
+bound; peak 351,157,198 B; working-set RSS +578,621,440 B. Latency with
+`tracemalloc` enabled: p50 13.06 ms, p99 33.96 ms, max 132.11 ms. The JSON
+report and the 14,200-receipt chain remain under the recorded temp paths.
+
+The one-hour soak is the Phase 6 acceptance evidence; it exercises the fixed
+retention, trace, and idempotency indexes over a 14,200-receipt chain.
 
 ### Verification
 
-- `python -m pytest tests/test_gateway -q` -> `333 passed`.
+- `python -m pytest tests/test_gateway -q` -> `340 passed` (includes the four
+  slow Phase 6 tests).
 - `python -m pytest tests/test_gateway/test_gateway_phase6_performance.py -q -m slow`
   -> `4 passed`.
-- `python -m pytest tests -q -m "not slow"` -> `48 failed, 3296 passed, 32
-  skipped, 12 deselected` in 516.37 s. All 48 are the known Windows CRLF
+- `python -m pytest tests -q -m "not slow"` -> `48 failed, 3303 passed, 32
+  skipped, 12 deselected` in 515.87 s. All 48 are the known Windows CRLF
   frozen-input digest failures in untouched files (42 ATK evaluation failures
   from `Frozen ATK-002/005/008/009/011 cases changed`, plus 6
   `test_frozen_benchmark_digests.py` cases); none is in gateway code or the new
   harnesses.
 - `python -m ruff check agentscan tests .github benchmarks` -> `All checks passed!`.
-- `python -m ruff format --check agentscan tests .github benchmarks` -> `453
+- `python -m ruff format --check agentscan tests .github benchmarks` -> `454
   files already formatted`.
 - Local `python -m mypy agentscan` remains blocked by Windows Application
   Control (`ImportError: DLL load failed ... semanal_infer`); CI mypy is
@@ -740,24 +772,29 @@ Full one-hour soak: **PENDING, not executed**. Exact command:
 - CLI help verified for `agentscan-gateway --help`, `serve --help`, `reconcile
   --help`, `policy sign --help`, and `policy verify --help`; the runbook quotes
   those exact interfaces.
-- CI run `43355984999` at `4fb2bb6`: all four jobs passed (`validation / test
+- CI run `43587927683` at `f7fc7e8`: all four jobs passed (`validation / test
   (3.12)`, `validation / test (3.13)`, `validation / windows`, `validation /
-  secrets`). Linux gateway runs: `329 passed, 4 deselected`; `policy.py` 90.85%
-  against the 90% floor and `receipts.py` 85.51% against the 84% floor. Full
-  Linux suite: `3420 passed, 32 skipped, 12 deselected`, 84.16% coverage against
-  the 82% floor. Windows gateway job: `333 passed` (the four slow Phase 6 tests
+  secrets`). Linux gateway runs: `336 passed, 4 deselected`; `policy.py` 90.85%
+  against the 90% floor and `receipts.py` 85.79% against the 84% floor. Full
+  Linux suite: `3427 passed, 32 skipped, 12 deselected`, 84.17% coverage against
+  the 82% floor. Windows gateway job: `340 passed` (the four slow Phase 6 tests
   run on Windows because that job omits `-m "not slow"`).
+- The required dependency audit reports `No known vulnerabilities found` at
+  `f7fc7e8`; `opentelemetry-api` 1.45.2 clears CVE-2026-126360, and `uv lock
+  --check` passes.
 
 ### Remaining owner actions
 
-1. Decide whether to authorize a Phase 7 hot-path fix: incremental retention
-   index updates, incremental `IdempotencyIndex.record`, and an indexed
-   outcome/decision lookup instead of whole-chain pairing. Re-run the benchmark
-   and require gateway overhead p99 < 40 ms before performance acceptance.
-2. Run the full one-hour soak with the exact command above and record the
-   result. The shortened smoke is not one-hour evidence.
-The Windows gateway job and both Linux coverage floors are confirmed in run
-`43355984999`; no floor adjustment is needed.
+1. Owner review/approval of `2262701`, which changes two previously approved
+   Phase 2/3 modules. Receipt format, chain hashes, and validation rules are
+   unchanged; the seven new regression tests, the 500-sample benchmark, and the
+   one-hour soak are the acceptance evidence.
+2. Merge remains an owner action. PR #15 stays draft in this work; do not mark
+   it ready or merge from here. Credential rotation, the full-history gitleaks
+   audit, and CODEOWNERS/human review remain owner actions.
+
+Both Linux coverage floors and the Windows gateway job are confirmed in run
+`43587927683`; no floor adjustment is needed.
 
 No changes to `agentscan/core/`, `agentscan/action/`, the action-verification
 spike, or PR #12. PR #15 remains draft.
