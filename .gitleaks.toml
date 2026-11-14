@@ -10,3 +10,9 @@ paths = [
   '''(^|/)tests/test_attacks/''',
   '''(^|/)tests/test_e2e\.py$''',
 ]
+# Fake EdDSA canary used only as a bearer value in
+# tests/test_gateway/test_gateway_phase5_upstream.py. Matching the literal
+# signature marker keeps the rest of that test file scannable.
+regexes = [
+  '''gw-canary-signature''',
+]
