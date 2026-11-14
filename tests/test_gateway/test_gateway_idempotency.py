@@ -5,6 +5,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
+import agentscan.gateway.idempotency as idempotency_module
 from agentscan.gateway.canonical import canonical_json
 from agentscan.gateway.idempotency import (
     IdempotencyAction,
@@ -576,6 +577,124 @@ def test_index_rejects_two_active_decisions_with_same_key_scope() -> None:
     second = seal_receipt(make_receipt(trace_id="trace-2"), first.evidence.hash)
     with pytest.raises(ReceiptPairingError, match="multiple active decisions"):
         IdempotencyIndex().rebuild((first, second), now=NOW)
+
+
+def test_record_rejects_duplicate_active_key_scope_without_mutation() -> None:
+    first = seal_receipt(make_receipt(trace_id="trace-1"))
+    second = seal_receipt(
+        make_receipt(trace_id="trace-2", timestamp=utc_timestamp(NOW + timedelta(days=1))),
+        first.evidence.hash,
+    )
+    index = IdempotencyIndex()
+    index.record(first, now=NOW)
+    with pytest.raises(ReceiptPairingError, match="multiple active decisions"):
+        index.record(second, now=NOW)
+    state = index.check(
+        tenant="tenant-demo",
+        principal="user:123",
+        tool_identity_hash=IDENTITY_HASH,
+        key_hash=KEY_HASH,
+        request_hash=REQUEST_HASH,
+        now=NOW,
+    )
+    assert state.state == IdempotencyState.PENDING
+    assert state.prior == first
+
+
+def test_record_matches_rebuild_when_a_key_scope_expires() -> None:
+    first = seal_receipt(make_receipt(trace_id="trace-1"))
+    later = NOW + timedelta(days=31)
+    second = seal_receipt(
+        make_receipt(trace_id="trace-2", timestamp=utc_timestamp(later)),
+        first.evidence.hash,
+    )
+    index = IdempotencyIndex()
+    index.record(first, now=NOW)
+    index.record(second, now=later)
+    rebuilt = IdempotencyIndex()
+    rebuilt.rebuild((first, second), now=later)
+    for key_hash, request_hash in (
+        (KEY_HASH, REQUEST_HASH),
+        (KEY_HASH, OTHER_REQUEST_HASH),
+        (OTHER_KEY_HASH, REQUEST_HASH),
+        (OTHER_KEY_HASH, OTHER_REQUEST_HASH),
+    ):
+        query = dict(
+            tenant="tenant-demo",
+            principal="user:123",
+            tool_identity_hash=IDENTITY_HASH,
+            key_hash=key_hash,
+            request_hash=request_hash,
+            now=later,
+        )
+        assert index.check(**query) == rebuilt.check(**query)
+
+
+def test_record_outcome_updates_the_content_guard_like_rebuild() -> None:
+    decision = seal_receipt(make_receipt())
+    outcome = make_outcome(decision, "success", response_hash=RESPONSE_HASH)
+    index = IdempotencyIndex()
+    index.record(decision, now=NOW)
+    index.record(outcome, now=NOW)
+    rebuilt = IdempotencyIndex()
+    rebuilt.rebuild((decision, outcome), now=NOW)
+    query = dict(
+        tenant="tenant-demo",
+        principal="user:123",
+        tool_identity_hash=IDENTITY_HASH,
+        key_hash=OTHER_KEY_HASH,
+        request_hash=REQUEST_HASH,
+        now=NOW,
+    )
+    assert index.check(**query).action == IdempotencyAction.PROCEED
+    assert index.check(**query) == rebuilt.check(**query)
+
+
+def test_record_unknown_to_no_effect_matches_rebuild() -> None:
+    decision = seal_receipt(make_receipt())
+    unknown = make_outcome(decision, "unknown")
+    no_effect = make_outcome(
+        decision, "no_effect", reconciliation=no_effect_note(), previous=unknown
+    )
+    index = IdempotencyIndex()
+    for receipt in (decision, unknown, no_effect):
+        index.record(receipt, now=NOW)
+    rebuilt = IdempotencyIndex()
+    rebuilt.rebuild((decision, unknown, no_effect), now=NOW)
+    for key_hash, request_hash in (
+        (KEY_HASH, REQUEST_HASH),
+        (OTHER_KEY_HASH, REQUEST_HASH),
+        (OTHER_KEY_HASH, OTHER_REQUEST_HASH),
+    ):
+        query = dict(
+            tenant="tenant-demo",
+            principal="user:123",
+            tool_identity_hash=IDENTITY_HASH,
+            key_hash=key_hash,
+            request_hash=request_hash,
+            now=NOW,
+        )
+        assert index.check(**query) == rebuilt.check(**query)
+
+
+def test_append_outcome_uses_the_trace_index_without_rebuilding_pairing(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = make_store(tmp_path)
+    try:
+        decision = store.append(make_receipt())
+
+        def fail_pairing(*args: object, **kwargs: object) -> None:
+            raise AssertionError("append_outcome must not re-pair the whole store")
+
+        monkeypatch.setattr(idempotency_module, "pair_receipts", fail_pairing)
+        outcome = append_outcome(
+            store, decision, status="unknown", summary="unknown", response_hash=None
+        )
+        assert outcome.phase == "outcome"
+        assert store.receipts_for_trace(decision.trace_id) == (decision, outcome)
+    finally:
+        store.close()
 
 
 def test_hash_error_messages_never_include_raw_key() -> None:

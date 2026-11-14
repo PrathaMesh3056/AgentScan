@@ -288,6 +288,26 @@ class IdempotencyIndex:
         self._by_key: dict[_KeyScope, ReceiptPair] = {}
         self._by_content: dict[_ContentScope, list[ReceiptPair]] = {}
 
+    @staticmethod
+    def _key_scope(decision: GatewayReceipt) -> _KeyScope | None:
+        if decision.idempotency_key is None:
+            return None
+        return (
+            decision.tenant_id,
+            decision.principal,
+            decision.tool.identity_hash,
+            decision.idempotency_key,
+        )
+
+    @staticmethod
+    def _content_scope(decision: GatewayReceipt) -> _ContentScope:
+        return (
+            decision.tenant_id,
+            decision.principal,
+            decision.tool.identity_hash,
+            decision.request_hash,
+        )
+
     def _build_indexes(
         self, pairs: Iterable[ReceiptPair], now: datetime | None
     ) -> tuple[dict[_KeyScope, ReceiptPair], dict[_ContentScope, list[ReceiptPair]]]:
@@ -295,29 +315,19 @@ class IdempotencyIndex:
         by_content: dict[_ContentScope, list[ReceiptPair]] = {}
         for pair in pairs:
             decision = pair.decision
-            key_hash = decision.idempotency_key
-            if pair.state == IdempotencyState.DENIED or key_hash is None:
+            if pair.state == IdempotencyState.DENIED:
+                continue
+            key_scope = self._key_scope(decision)
+            if key_scope is None:
                 continue
             if self._retention.is_expired(decision.timestamp, now):
                 continue
-            key_scope = (
-                decision.tenant_id,
-                decision.principal,
-                decision.tool.identity_hash,
-                key_hash,
-            )
             if key_scope in by_key:
                 raise ReceiptPairingError(
                     "multiple active decisions share an idempotency key scope"
                 )
             by_key[key_scope] = pair
-            content_scope = (
-                decision.tenant_id,
-                decision.principal,
-                decision.tool.identity_hash,
-                decision.request_hash,
-            )
-            by_content.setdefault(content_scope, []).append(pair)
+            by_content.setdefault(self._content_scope(decision), []).append(pair)
         return by_key, by_content
 
     def rebuild(self, receipts: Iterable[GatewayReceipt], *, now: datetime | None = None) -> None:
@@ -334,24 +344,56 @@ class IdempotencyIndex:
         if receipt.phase == "handoff":
             self._receipts.append(receipt)
             return
-        pairs = dict(self._pairs)
         if receipt.phase == "decision":
-            if receipt.trace_id in pairs:
+            if receipt.trace_id in self._pairs:
                 raise ReceiptPairingError("duplicate decision trace id")
             pair = _validate_pair(receipt, ())
-        elif receipt.phase == "outcome":
-            prior = pairs.get(receipt.trace_id)
-            if prior is None:
-                raise ReceiptPairingError("outcome has no preceding decision")
-            pair = _validate_pair(prior.decision, (*prior.outcomes, receipt))
-        else:
+            key_scope = None if pair.state == IdempotencyState.DENIED else self._key_scope(receipt)
+            if key_scope is not None:
+                prior = self._by_key.get(key_scope)
+                if prior is not None and not self._retention.is_expired(
+                    prior.decision.timestamp, now
+                ):
+                    raise ReceiptPairingError(
+                        "multiple active decisions share an idempotency key scope"
+                    )
+            self._pairs[receipt.trace_id] = pair
+            self._receipts.append(receipt)
+            if key_scope is None or self._retention.is_expired(receipt.timestamp, now):
+                return
+            self._by_key[key_scope] = pair
+            self._by_content.setdefault(self._content_scope(receipt), []).append(pair)
+            return
+        if receipt.phase != "outcome":
             raise ReceiptPairingError("unsupported receipt phase")
-        pairs[receipt.trace_id] = pair
-        by_key, by_content = self._build_indexes(pairs.values(), now)
-        self._pairs = pairs
-        self._by_key = by_key
-        self._by_content = by_content
+        prior_pair = self._pairs.get(receipt.trace_id)
+        if prior_pair is None:
+            raise ReceiptPairingError("outcome has no preceding decision")
+        pair = _validate_pair(prior_pair.decision, (*prior_pair.outcomes, receipt))
+        key_scope = (
+            None
+            if prior_pair.state == IdempotencyState.DENIED
+            else self._key_scope(prior_pair.decision)
+        )
+        self._pairs[receipt.trace_id] = pair
         self._receipts.append(receipt)
+        if key_scope is None:
+            return
+        if self._by_key.get(key_scope) is prior_pair:
+            if self._retention.is_expired(pair.decision.timestamp, now):
+                del self._by_key[key_scope]
+            else:
+                self._by_key[key_scope] = pair
+        content_scope = self._content_scope(prior_pair.decision)
+        entries = self._by_content.get(content_scope)
+        if entries is not None:
+            for index, item in enumerate(entries):
+                if item.decision.trace_id == receipt.trace_id:
+                    if self._retention.is_expired(pair.decision.timestamp, now):
+                        entries.pop(index)
+                    else:
+                        entries[index] = pair
+                    break
 
     def check(
         self,
@@ -454,19 +496,18 @@ def append_outcome(
         raise IdempotencyStateError("writer lease is required to append an outcome")
     if decision.phase != "decision":
         raise IdempotencyStateError("outcome requires a decision receipt")
-    stored = [
-        receipt
-        for receipt in store.receipts
-        if receipt.phase == "decision" and receipt.trace_id == decision.trace_id
-    ]
+    trace_receipts = store.receipts_for_trace(decision.trace_id)
+    stored = [receipt for receipt in trace_receipts if receipt.phase == "decision"]
     if len(stored) != 1 or stored[0] != decision:
         raise IdempotencyStateError("decision is not present in the receipt store")
+    ordered = tuple(receipt for receipt in trace_receipts if receipt.phase != "handoff")
+    if not ordered or ordered[0] != decision:
+        raise IdempotencyStateError("receipt state is invalid")
     try:
-        pairs = pair_receipts(store.receipts)
+        pair = _validate_pair(decision, ordered[1:])
     except ReceiptPairingError as exc:
         raise IdempotencyStateError("receipt state is invalid") from exc
-    pair = next((item for item in pairs if item.decision.trace_id == decision.trace_id), None)
-    if pair is None or pair.state not in {IdempotencyState.PENDING, IdempotencyState.UNKNOWN}:
+    if pair.state not in {IdempotencyState.PENDING, IdempotencyState.UNKNOWN}:
         raise IdempotencyStateError("decision is already terminal")
     if pair.state == IdempotencyState.UNKNOWN and status != "no_effect":
         raise IdempotencyStateError("unknown decisions may only transition to no_effect")
@@ -493,7 +534,7 @@ def append_outcome(
     }
     try:
         candidate = GatewayReceipt.model_validate(payload)
-        pair_receipts((*store.receipts, candidate))
+        _validate_pair(decision, (*pair.outcomes, candidate))
     except (ValueError, TypeError) as exc:
         if isinstance(exc, IdempotencyError):
             raise

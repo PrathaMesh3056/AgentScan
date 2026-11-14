@@ -590,6 +590,7 @@ class ReceiptChainStore:
         self.writer_epoch: int | None = None
         self._lease: FileLock | None = None
         self._receipts: tuple[GatewayReceipt, ...] = ()
+        self._trace_receipts: dict[str, list[GatewayReceipt]] = {}
         self._head_hash = GENESIS_HASH
         self._healthy = True
         self._append_lock = threading.RLock()
@@ -597,6 +598,10 @@ class ReceiptChainStore:
     @property
     def receipts(self) -> tuple[GatewayReceipt, ...]:
         return self._receipts
+
+    def receipts_for_trace(self, trace_id: str) -> tuple[GatewayReceipt, ...]:
+        """Return the receipts appended for ``trace_id`` in chain order."""
+        return tuple(self._trace_receipts.get(trace_id, ()))
 
     @property
     def head_hash(self) -> str:
@@ -640,6 +645,7 @@ class ReceiptChainStore:
             _write_epoch_atomic(self.epoch_path, self.writer_epoch)
             self._receipts = verified.receipts
             self._head_hash = verified.head_hash
+            self._rebuild_trace_index()
             self.retention_index.rebuild(self._receipts)
             self._healthy = True
             return self.writer_epoch
@@ -743,6 +749,12 @@ class ReceiptChainStore:
             _append_fsynced(self.chain_path, appended)
         return verified
 
+    def _rebuild_trace_index(self) -> None:
+        trace_receipts: dict[str, list[GatewayReceipt]] = {}
+        for receipt in self._receipts:
+            trace_receipts.setdefault(receipt.trace_id, []).append(receipt)
+        self._trace_receipts = trace_receipts
+
     def append(self, receipt: GatewayReceipt) -> GatewayReceipt:
         return self.append_many((receipt,))[0]
 
@@ -782,7 +794,11 @@ class ReceiptChainStore:
                 raise
             self._receipts += tuple(sealed)
             self._head_hash = previous_hash
-            self.retention_index.rebuild(self._receipts)
+            # Both indexes update per appended receipt so the hot path stays
+            # linear in the batch size rather than the whole chain.
+            for sealed_receipt in sealed:
+                self.retention_index.add(sealed_receipt)
+                self._trace_receipts.setdefault(sealed_receipt.trace_id, []).append(sealed_receipt)
             return tuple(sealed)
 
     def close(self) -> None:
