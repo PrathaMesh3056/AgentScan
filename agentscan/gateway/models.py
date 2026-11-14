@@ -1,0 +1,33 @@
+"""Small shared types for the runtime gateway."""
+
+from __future__ import annotations
+
+from enum import StrEnum
+
+
+class ErrorCode(StrEnum):
+    POLICY_DENIED = "POLICY_DENIED"
+    IDENTITY_MISSING = "IDENTITY_MISSING"
+    IDENTITY_MISMATCH = "IDENTITY_MISMATCH"
+    UNSUPPORTED_PROTOCOL_VERSION = "UNSUPPORTED_PROTOCOL_VERSION"
+    SCHEMA_DRIFT = "SCHEMA_DRIFT"
+    RESOURCE_TENANT_UNVERIFIED = "RESOURCE_TENANT_UNVERIFIED"
+    APPROVAL_REQUIRED = "APPROVAL_REQUIRED"
+    IDEMPOTENCY_REQUIRED = "IDEMPOTENCY_REQUIRED"
+    IDEMPOTENCY_CONFLICT = "IDEMPOTENCY_CONFLICT"
+    OUTCOME_UNKNOWN = "OUTCOME_UNKNOWN"
+    GATEWAY_UNAVAILABLE = "GATEWAY_UNAVAILABLE"
+    UPSTREAM_ERROR = "UPSTREAM_ERROR"
+    TIMEOUT = "TIMEOUT"
+
+
+class ReceiptPhase(StrEnum):
+    DECISION = "decision"
+    OUTCOME = "outcome"
+    HANDOFF = "handoff"
+
+
+class PolicyAction(StrEnum):
+    ALLOW = "allow"
+    DENY = "deny"
+    REQUIRE_APPROVAL = "require_approval"

@@ -166,6 +166,7 @@ def create_app(
                 "/identity",
                 "/traffic",
                 "/guardrails",
+                "/gateway",
                 "/compliance",
                 "/heal",
                 "/healing",
@@ -278,6 +279,7 @@ def create_app(
     @app.get("/identity", include_in_schema=False)
     @app.get("/traffic", include_in_schema=False)
     @app.get("/guardrails", include_in_schema=False)
+    @app.get("/gateway", include_in_schema=False)
     @app.get("/compliance", include_in_schema=False)
     @app.get("/heal", include_in_schema=False)
     @app.get("/healing", include_in_schema=False)
