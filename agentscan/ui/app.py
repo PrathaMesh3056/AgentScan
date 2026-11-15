@@ -24,6 +24,29 @@ from agentscan.ui.state import (  # noqa: F401
     state,
 )
 
+# Single source of truth for dashboard page routes.
+PAGE_ROUTES: tuple[str, ...] = (
+    "/",
+    "/report",
+    "/overview",
+    "/pipelines",
+    "/findings",
+    "/trajectory",
+    "/rbac",
+    "/identity",
+    "/traffic",
+    "/guardrails",
+    "/gateway",
+    "/compliance",
+    "/heal",
+    "/healing",
+    "/team",
+    "/mcp",
+    "/sentinel",
+    "/audit",
+    "/benchmark",
+)
+
 
 def create_app(
     report_path: Path | None = None,
@@ -154,28 +177,7 @@ def create_app(
         # still cannot cross the dashboard's origin boundary.
         page_navigation = (
             request.method == "GET"
-            and request.url.path
-            in {
-                "/",
-                "/report",
-                "/overview",
-                "/pipelines",
-                "/findings",
-                "/trajectory",
-                "/rbac",
-                "/identity",
-                "/traffic",
-                "/guardrails",
-                "/gateway",
-                "/compliance",
-                "/heal",
-                "/healing",
-                "/team",
-                "/mcp",
-                "/sentinel",
-                "/audit",
-                "/benchmark",
-            }
+            and request.url.path in PAGE_ROUTES
             and request.headers.get("sec-fetch-mode") == "navigate"
             and request.headers.get("sec-fetch-dest") == "document"
         )
@@ -268,31 +270,15 @@ def create_app(
     if STATIC_DIR.exists():
         app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
-    # Static UI page routes
-    @app.get("/", include_in_schema=False)
-    @app.get("/report", include_in_schema=False)
-    @app.get("/overview", include_in_schema=False)
-    @app.get("/pipelines", include_in_schema=False)
-    @app.get("/findings", include_in_schema=False)
-    @app.get("/trajectory", include_in_schema=False)
-    @app.get("/rbac", include_in_schema=False)
-    @app.get("/identity", include_in_schema=False)
-    @app.get("/traffic", include_in_schema=False)
-    @app.get("/guardrails", include_in_schema=False)
-    @app.get("/gateway", include_in_schema=False)
-    @app.get("/compliance", include_in_schema=False)
-    @app.get("/heal", include_in_schema=False)
-    @app.get("/healing", include_in_schema=False)
-    @app.get("/team", include_in_schema=False)
-    @app.get("/mcp", include_in_schema=False)
-    @app.get("/sentinel", include_in_schema=False)
-    @app.get("/audit", include_in_schema=False)
-    @app.get("/benchmark", include_in_schema=False)
+    # Static UI page routes (PAGE_ROUTES is the single source of truth)
     async def index() -> Any:
         return FileResponse(
             STATIC_DIR / "index.html",
             headers={"Cache-Control": "no-store"},
         )
+
+    for _page_route in PAGE_ROUTES:
+        app.get(_page_route, include_in_schema=False)(index)
 
     @app.get("/api/docs", include_in_schema=False)
     async def api_docs_redirect() -> Any:

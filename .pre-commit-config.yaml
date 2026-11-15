@@ -43,6 +43,7 @@ repos:
     hooks:
       - id: trailing-whitespace   # remove trailing spaces
         args: [--markdown-linebreak-ext=md]  # preserve Markdown hard line breaks
+        exclude: ^agentscan/ui/static/dashboard-app-(core|renderers|actions)\.js$
 
       - id: check-yaml            # validate YAML syntax
         args: [--allow-multiple-documents]
