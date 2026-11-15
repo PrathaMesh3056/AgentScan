@@ -47,6 +47,11 @@ jobs:
       - name: Run Mypy type checking
         run: uv run --no-sync mypy agentscan
 
+      - name: Gateway policy and receipt coverage floors
+        run: |
+          uv run --no-sync pytest tests/test_gateway -q -m "not slow" --cov=agentscan.gateway.policy --cov-report=term-missing --cov-fail-under=90
+          uv run --no-sync pytest tests/test_gateway -q -m "not slow" --cov=agentscan.gateway.receipts --cov-report=term-missing --cov-fail-under=84
+
       - name: Gateway CLI smoke
         run: uv run --no-sync agentscan-gateway --help
 
@@ -91,10 +96,13 @@ jobs:
         run: uv python install 3.12
 
       - name: Install locked validation dependencies
-        run: uv sync --locked --python 3.12 --dev
+        run: uv sync --locked --python 3.12 --dev --extra gateway
 
       - name: Verify frozen benchmark inputs on Windows
         run: uv run --no-sync pytest tests/test_frozen_benchmark_digests.py -q
+
+      - name: Run gateway tests on Windows
+        run: uv run --no-sync pytest tests/test_gateway -q
 
   secrets:
     runs-on: ubuntu-latest

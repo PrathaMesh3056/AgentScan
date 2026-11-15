@@ -517,6 +517,64 @@ def test_retention_index_ignores_receipts_without_idempotency_keys() -> None:
     assert len(index) == 0
 
 
+def test_store_append_updates_retention_index_without_a_full_rebuild(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    chain = store(tmp_path)
+    chain.acquire_writer_lease()
+    try:
+        now = datetime.now(UTC)
+        recent = receipt(timestamp=utc_timestamp(now - timedelta(days=1)))
+        expired = receipt(
+            timestamp=utc_timestamp(now - timedelta(days=31)),
+            idempotency_key="sha256:" + "1" * 64,
+        )
+
+        def fail_rebuild(*args: object, **kwargs: object) -> None:
+            raise AssertionError("append must not rebuild the retention index")
+
+        with monkeypatch.context() as patch:
+            patch.setattr(RetentionDedupeIndex, "rebuild", fail_rebuild)
+            chain.append(recent)
+            chain.append(expired)
+
+        rebuilt = RetentionDedupeIndex()
+        rebuilt.rebuild(chain.receipts, now=now)
+        assert len(chain.retention_index) == len(rebuilt) == 1
+        assert chain.retention_index.lookup(
+            "tenant-demo", "user:123", IDENTITY_HASH, KEY_HASH, now=now
+        ) == rebuilt.lookup("tenant-demo", "user:123", IDENTITY_HASH, KEY_HASH, now=now)
+        assert (
+            chain.retention_index.lookup(
+                "tenant-demo",
+                "user:123",
+                IDENTITY_HASH,
+                expired.idempotency_key or "",
+                now=now,
+            )
+            == ()
+        )
+    finally:
+        chain.close()
+
+
+def test_store_trace_index_tracks_appends_and_reopen(tmp_path: Path) -> None:
+    chain = store(tmp_path)
+    chain.acquire_writer_lease()
+    decision = chain.append(receipt())
+    outcome = chain.append(receipt(phase="outcome", status="success"))
+    assert chain.receipts_for_trace("trace-1") == (decision, outcome)
+    assert chain.receipts_for_trace("missing") == ()
+    chain.close()
+
+    reopened = store(tmp_path)
+    reopened.acquire_writer_lease()
+    try:
+        assert reopened.receipts_for_trace("trace-1") == (decision, outcome)
+    finally:
+        reopened.close()
+
+
 @pytest.mark.parametrize(
     ("tenant", "chain_id"),
     [
