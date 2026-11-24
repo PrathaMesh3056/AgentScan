@@ -5,7 +5,7 @@ import hashlib
 import subprocess
 import sys
 from collections.abc import Mapping
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -146,6 +146,7 @@ def test_signed_round_trip_and_hash_are_stable(keys: tuple[Ed25519PrivateKey, by
         tenant="tenant-demo",
         issued_at=ISSUED_AT,
         expires_at=EXPIRES_AT,
+        now=NOW,
     )
     first = _verify(envelope, public_pem)
     second = verify_policy_bundle(_yaml(envelope), public_pem, now=NOW)
@@ -277,6 +278,7 @@ def test_envelope_and_policy_tenant_must_match(keys: tuple[Ed25519PrivateKey, by
             tenant="tenant-other",
             issued_at=ISSUED_AT,
             expires_at=EXPIRES_AT,
+            now=NOW,
         )
 
 
@@ -698,6 +700,7 @@ def test_public_private_and_non_ed25519_keys_are_rejected(
             tenant="tenant-demo",
             issued_at=ISSUED_AT,
             expires_at=EXPIRES_AT,
+            now=NOW,
         )
     assert public_pem
 
@@ -720,6 +723,7 @@ def test_bundle_and_signing_input_size_limit(
             tenant="tenant-demo",
             issued_at=ISSUED_AT,
             expires_at=EXPIRES_AT,
+            now=NOW,
             output_path=tmp_path / "out.yaml",
         )
 
@@ -734,6 +738,7 @@ def test_policy_key_rotation_old_and_new_bundles_verify_only_with_their_key() ->
         tenant="tenant-demo",
         issued_at=ISSUED_AT,
         expires_at=EXPIRES_AT,
+        now=NOW,
     )
     new_bundle = sign_policy(
         _policy(),
@@ -742,6 +747,7 @@ def test_policy_key_rotation_old_and_new_bundles_verify_only_with_their_key() ->
         tenant="tenant-demo",
         issued_at=ISSUED_AT,
         expires_at=EXPIRES_AT,
+        now=NOW,
     )
     old_hash = _verify(old_bundle, _public_pem(old_private)).policy_hash
     assert _verify(old_bundle, _public_pem(old_private)).key_id == policy_key_id(
@@ -766,6 +772,7 @@ def test_atomic_bundle_writer_replaces_target_without_temp_artifacts(tmp_path: P
         tenant="tenant-demo",
         issued_at=ISSUED_AT,
         expires_at=EXPIRES_AT,
+        now=NOW,
     )
     target = tmp_path / "bundle.yaml"
     target.write_text("old content", encoding="utf-8")
@@ -786,6 +793,12 @@ def test_cli_sign_verify_round_trip_and_tenant_failure(tmp_path: Path) -> None:
     private_path.write_bytes(_private_pem(private))
     public_path.write_bytes(_public_pem(private))
 
+    # The CLI always validates against the process clock, so its window must be live:
+    # an absolute fixture date would start failing the moment that date passed.
+    signed_at = datetime.now(UTC) - timedelta(minutes=5)
+    issued_at = signed_at.strftime("%Y-%m-%dT%H:%M:%SZ")
+    expires_at = (signed_at + timedelta(days=30)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
     command = [
         sys.executable,
         "-m",
@@ -801,9 +814,9 @@ def test_cli_sign_verify_round_trip_and_tenant_failure(tmp_path: Path) -> None:
         "--tenant",
         "tenant-demo",
         "--issued-at",
-        ISSUED_AT,
+        issued_at,
         "--expires-at",
-        EXPIRES_AT,
+        expires_at,
         "--out",
         str(bundle_path),
     ]

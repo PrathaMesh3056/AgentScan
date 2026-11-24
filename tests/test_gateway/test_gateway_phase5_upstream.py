@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import socket
+import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
@@ -80,11 +81,12 @@ async def _mock_server(
     server = uvicorn.Server(uvicorn.Config(app, log_level="critical", lifespan="on"))
     task = asyncio.create_task(server.serve(sockets=[listener]))
     try:
-        for _ in range(200):
-            if server.started:
-                break
+        # Wall-clock deadline instead of a fixed iteration count; a slow host must
+        # not be reported as a failed startup.
+        deadline = time.monotonic() + 15
+        while not server.started and time.monotonic() < deadline:
             await asyncio.sleep(0.01)
-        assert server.started
+        assert server.started, "mock upstream did not start within 15s"
         yield port, state
     finally:
         server.should_exit = True

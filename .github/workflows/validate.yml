@@ -47,16 +47,28 @@ jobs:
       - name: Run Mypy type checking
         run: uv run --no-sync mypy agentscan
 
-      - name: Gateway policy and receipt coverage floors
+      # Branch-aware: a policy or receipt branch that no test reaches is a security
+      # regression even when every statement still runs. Measured on the base commit:
+      # policy 83%, receipts 85%. Each floor sits two points lower so an unrelated
+      # change cannot trip it, while a dropped branch fails the job.
+      - name: Gateway policy and receipt branch coverage floors
         run: |
-          uv run --no-sync pytest tests/test_gateway -q -m "not slow" --cov=agentscan.gateway.policy --cov-report=term-missing --cov-fail-under=90
-          uv run --no-sync pytest tests/test_gateway -q -m "not slow" --cov=agentscan.gateway.receipts --cov-report=term-missing --cov-fail-under=84
+          uv run --no-sync pytest tests/test_gateway -q -m "not slow" --cov=agentscan.gateway.policy --cov-branch --cov-report=term-missing --cov-fail-under=81
+          uv run --no-sync pytest tests/test_gateway -q -m "not slow" --cov=agentscan.gateway.receipts --cov-branch --cov-report=term-missing --cov-fail-under=83
+
+      # Crash-safe remediation is a critical path: a recovery journal that no test
+      # reaches is where an interrupted fix silently eats an editor's changes.
+      # Measured 97% on the base commit after the in-process journal tests.
+      - name: Remediation recovery branch coverage floor
+        run: uv run --no-sync pytest tests/test_remediation -q -m "not slow" --cov=agentscan.remediation.recovery --cov-branch --cov-report=term-missing --cov-fail-under=95
 
       - name: Gateway CLI smoke
         run: uv run --no-sync agentscan-gateway --help
 
-      - name: Run tests and action boundary regressions
-        run: uv run --no-sync pytest tests .github/tests -m "not slow" --cov=agentscan --cov-report=xml --cov-fail-under=82
+      # Statement coverage hid half-tested control flow; the suite measures 82% with
+      # branch coverage on the base commit, so the floor leaves two points of slack.
+      - name: Run tests and action boundary regressions (branch coverage)
+        run: uv run --no-sync pytest tests .github/tests -m "not slow" --cov=agentscan --cov-branch --cov-report=xml --cov-fail-under=80
 
       - name: Audit locked dependencies (required)
         run: |

@@ -459,13 +459,18 @@ def sign_policy(
     tenant: str,
     issued_at: str,
     expires_at: str,
+    now: datetime | None = None,
 ) -> dict[str, Any]:
-    """Validate and sign an unsigned policy object as a v1 YAML envelope."""
+    """Validate and sign an unsigned policy object as a v1 YAML envelope.
+
+    The default clock is the process clock, so callers cannot silently extend or
+    ignore the validity window. Tests inject a fixed instant instead.
+    """
     if not isinstance(bundle_id, str) or not bundle_id.strip():
         _fail("bundle_id must be a non-empty string")
     if not isinstance(tenant, str) or not tenant.strip():
         _fail("tenant must be a non-empty string")
-    _validate_timestamps(issued_at, expires_at, None)
+    _validate_timestamps(issued_at, expires_at, now)
     parsed_policy = validate_policy(policy_data)
     if tenant != parsed_policy.tenant:
         _fail("envelope tenant must match policy tenant")
@@ -720,6 +725,7 @@ def sign_policy_file(
     issued_at: str,
     expires_at: str,
     output_path: str | Path,
+    now: datetime | None = None,
 ) -> dict[str, Any]:
     """CLI helper: load bounded inputs, sign, and atomically write an envelope."""
     policy_data = load_policy_yaml(policy_path)
@@ -734,6 +740,7 @@ def sign_policy_file(
         tenant=tenant,
         issued_at=issued_at,
         expires_at=expires_at,
+        now=now,
     )
     write_signed_policy_atomic(envelope, output_path)
     return envelope
