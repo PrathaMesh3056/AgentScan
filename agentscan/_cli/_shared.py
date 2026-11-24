@@ -6,6 +6,10 @@
 from __future__ import annotations
 
 import json
+import os
+import tempfile
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -107,26 +111,78 @@ def _fail_on_should_exit(findings: list[Finding], fail_on: str) -> bool:
     return any(_SEVERITY_ORDER.get(f.severity.value, 0) >= threshold for f in findings)
 
 
+_REPORT_OUTPUT_SUFFIXES = frozenset({".json", ".html", ".pdf", ".sarif"})
+_SUPPORTED_REPORT_FORMATS = ", ".join(sorted(_REPORT_OUTPUT_SUFFIXES))
+
+
+def validate_report_output(output_path: Path) -> None:
+    """Fail fast when a report destination or format is unusable."""
+    output_path = Path(output_path)
+    suffix = output_path.suffix
+    if suffix.lower() not in _REPORT_OUTPUT_SUFFIXES:
+        raise typer.BadParameter(
+            f"Unsupported output format for {output_path}: {suffix or '<none>'!r}. "
+            f"Supported formats: {_SUPPORTED_REPORT_FORMATS}."
+        )
+
+    parent = output_path.parent
+    if not parent.exists():
+        raise typer.BadParameter(
+            f"Output directory does not exist: {parent} (output path: {output_path})."
+        )
+    if not parent.is_dir():
+        raise typer.BadParameter(
+            f"Output parent is not a directory: {parent} (output path: {output_path})."
+        )
+    if output_path.is_dir():
+        raise typer.BadParameter(
+            f"Output path is an existing directory: {output_path}. Choose a file path."
+        )
+
+
+@contextmanager
+def _temporary_output_file(output_path: Path) -> Iterator[Path]:
+    """Yield a sibling temporary file and atomically move it into place on success."""
+    descriptor, temp_name = tempfile.mkstemp(
+        prefix=f".{output_path.name}.", suffix=".tmp", dir=output_path.parent
+    )
+    os.close(descriptor)
+    temp_path = Path(temp_name)
+    try:
+        yield temp_path
+        os.replace(temp_path, output_path)
+    finally:
+        temp_path.unlink(missing_ok=True)
+
+
+def _write_text_atomic(output_path: Path, text: str) -> None:
+    with _temporary_output_file(output_path) as temp_path:
+        temp_path.write_text(text, encoding="utf-8")
+
+
 def write_report(report: Any, output_path: Path) -> None:
-    """Write a ScanReport or IdentityReport to disk in the appropriate format."""
+    """Write a ScanReport or IdentityReport to disk atomically in the appropriate format."""
+    output_path = Path(output_path)
+    validate_report_output(output_path)
     ext = output_path.suffix.lower()
     if ext == ".json":
         data = report.to_dict() if hasattr(report, "to_dict") else report.model_dump(mode="json")
-        output_path.write_text(json.dumps(data, indent=2))
+        _write_text_atomic(output_path, json.dumps(data, indent=2))
     elif ext == ".html":
         from agentscan.reporting.html_report import render_html_report
 
         html = render_html_report(report)
-        output_path.write_text(html, encoding="utf-8")
+        _write_text_atomic(output_path, html)
     elif ext == ".pdf":
         from agentscan.reporting.pdf_report import render_pdf_report
 
-        render_pdf_report(report, output_path)
+        with _temporary_output_file(output_path) as temp_path:
+            render_pdf_report(report, temp_path)
     elif ext == ".sarif":
         from agentscan.reporting.sarif_report import to_sarif
 
         data = to_sarif(report)
-        output_path.write_text(json.dumps(data, indent=2))
+        _write_text_atomic(output_path, json.dumps(data, indent=2))
     else:
         raise typer.BadParameter(f"Unsupported output format: {ext}")
 

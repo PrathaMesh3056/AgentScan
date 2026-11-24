@@ -15,6 +15,7 @@ from agentscan._cli._shared import (
     _fail_on_should_exit,
     app,
     console,
+    validate_report_output,
     write_report,
 )
 from agentscan.core.models import Finding
@@ -73,6 +74,10 @@ def audit(  # noqa: PLR0912, PLR0913
     ),
 ) -> None:
     """Audit a project directory for AI supply-chain and identity risks."""
+    # Reject unusable report destinations before any scanner work starts.
+    if output is not None:
+        validate_report_output(output)
+
     # If no flag is given, run the built-in categories (Semgrep stays opt-in).
     run_all = not any(
         [

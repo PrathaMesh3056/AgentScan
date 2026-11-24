@@ -1,7 +1,7 @@
 # QA-044 ? Output path and format validation
 
 **Issue:** [#44 ? [P3] Output path and format validation](https://github.com/PrathaMesh3056/AgentScan/issues/44)
-**Status:** Draft PR / documentation-first. Implementation commits follow.
+**Status:** Implementation complete; awaiting owner review.
 **Base:** main at 7c17743
 
 ## Summary
@@ -60,6 +60,19 @@ Operator impact: wasted long-running scans, confusing tracebacks, and possible d
 - Targeted run: pytest tests/test_cli.py tests/test_reporting -q.
 - Ruff on changed Python files.
 
+## Implementation evidence
+
+Recorded on the clean clone with the synthetic loopback fixture (`http://127.0.0.1:9/chat`) and a patched runner:
+
+- Before: `--output missing-dir/report.json` ran the scanner, exited 1, and raised `FileNotFoundError`.
+- Before: an existing directory destination ran the scanner, exited 1, and raised `PermissionError` on Windows (`IsADirectoryError` on POSIX).
+- Before: `--output report.txt` ran the scanner, exited 2, and reported `Unsupported output format: .txt` only after the scan.
+- Before: a simulated PDF render failure left a 12-byte `report.pdf` destination behind.
+- After: all three scan cases exit 2 with a bounded `BadParameter` message and the scanner is not invoked.
+- After: the simulated PDF failure leaves no destination and no temporary file.
+- `pytest tests/test_cli.py tests/test_reporting -q`: 120 passed, 2 skipped.
+- `ruff check` on the changed Python files: All checks passed.
+
 ## Risks and rollback
 
 - Risk: preflight rejection of paths that previously worked (for example, a parent created by another process during the scan). Mitigation: only require the parent to exist at validation time; allow an existing directory only as the parent, never as the destination.
@@ -68,11 +81,11 @@ Operator impact: wasted long-running scans, confusing tracebacks, and possible d
 
 ## Review checklist
 
-- [ ] Reproduction recorded before the fix.
-- [ ] Failing test added first.
-- [ ] Validator called before scanners in scan and audit.
-- [ ] Atomic write leaves no partial destination on failure.
-- [ ] Uppercase and mismatched extensions covered.
-- [ ] Targeted tests and Ruff pass.
-- [ ] No changes under agentscan/core/, agentscan/action/, or the P1 workstreams.
-- [ ] Commit message references #44.
+- [x] Reproduction recorded before the fix.
+- [x] Failing test added first.
+- [x] Validator called before scanners in scan and audit.
+- [x] Atomic write leaves no partial destination on failure.
+- [x] Uppercase and mismatched extensions covered.
+- [x] Targeted tests and Ruff pass.
+- [x] No changes under agentscan/core/, agentscan/action/, or the P1 workstreams.
+- [x] Commit message references #44.
