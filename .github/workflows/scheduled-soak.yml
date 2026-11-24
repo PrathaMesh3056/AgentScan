@@ -1,0 +1,56 @@
+name: Scheduled security soak
+
+# Pull-request validation selects `-m "not slow"`, so the Docker containment, live
+# container, browser connector, deep activation probe and gateway soak suites never
+# gate a change. They are exactly the tests that catch a broken sandbox boundary, so
+# they run here on a schedule instead of never.
+
+on:
+  schedule:
+    # Mondays at 03:17 UTC; deliberately off the hour to avoid the cron peak.
+    - cron: "17 3 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: scheduled-soak
+  cancel-in-progress: false
+
+jobs:
+  soak:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          enable-cache: true
+          version: "0.12.3"
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install locked soak dependencies
+        run: uv sync --locked --python 3.12 --extra semgrep --extra ui --extra api --extra gateway --extra browser --dev
+
+      - name: Install Chromium for connector and browser probes
+        run: uv run --no-sync playwright install --with-deps chromium
+
+      - name: Report the selected slow suites
+        run: uv run --no-sync pytest tests -q -m slow --collect-only | tail -n 20
+
+      - name: Run slow containment, browser and soak suites
+        env:
+          # The containment suite skips itself unless this is set; the soak job is
+          # the only place a real container boundary is exercised.
+          AGENTSCAN_RUN_DOCKER_TESTS: "1"
+        run: uv run --no-sync pytest tests -q -m slow --durations=10

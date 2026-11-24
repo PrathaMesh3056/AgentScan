@@ -218,13 +218,14 @@ async def _start_server(
 ) -> tuple[uvicorn.Server, asyncio.Task[Any]]:
     server = uvicorn.Server(uvicorn.Config(app, log_level="critical", lifespan="on"))
     task = asyncio.create_task(server.serve(sockets=[listener]))
-    for _ in range(300):
+    deadline = time.monotonic() + 15
+    while time.monotonic() < deadline:
         if server.started:
             return server, task
         if task.done():
             raise RuntimeError("gateway server exited before startup")
         await asyncio.sleep(0.01)
-    raise RuntimeError("gateway server did not start")
+    raise RuntimeError("gateway server did not start within 15s")
 
 
 async def _stop_server(

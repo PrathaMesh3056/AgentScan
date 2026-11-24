@@ -181,6 +181,20 @@ markers = [
     "slow: marks tests as slow",
 ]
 
+# Branch coverage is the measure that matters for policy, receipt and guard code:
+# an untested except or early return is a security regression even when every
+# statement still runs. CI passes --cov-branch as well so a local run reports the
+# same numbers the gate enforces.
+[tool.coverage.run]
+branch = true
+source = ["agentscan"]
+relative_files = true
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false
+skip_empty = true
+
 [tool.ruff]
 line-length = 100
 target-version = "py312"

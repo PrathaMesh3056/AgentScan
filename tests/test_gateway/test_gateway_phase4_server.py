@@ -129,11 +129,12 @@ async def gateway():
     )
     server = uvicorn.Server(uvicorn.Config(app, log_level="critical", lifespan="on"))
     task = asyncio.create_task(server.serve(sockets=[listener]))
-    for _ in range(200):
-        if server.started:
-            break
+    # Poll for readiness on a wall-clock deadline: a fixed iteration count turns
+    # into a flaky startup failure whenever the host is busy.
+    deadline = time.monotonic() + 15
+    while not server.started and time.monotonic() < deadline:
         await asyncio.sleep(0.01)
-    assert server.started
+    assert server.started, "gateway server did not start within 15s"
     client = httpx.AsyncClient(
         base_url=f"http://127.0.0.1:{port}",
         headers={"Authorization": f"Bearer {_token(private)}", "Accept": "application/json"},
@@ -206,11 +207,12 @@ async def _started_gateway(
     )
     server = uvicorn.Server(uvicorn.Config(app, log_level="critical", lifespan="on"))
     task = asyncio.create_task(server.serve(sockets=[listener]))
-    for _ in range(200):
-        if server.started:
-            break
+    # Poll for readiness on a wall-clock deadline: a fixed iteration count turns
+    # into a flaky startup failure whenever the host is busy.
+    deadline = time.monotonic() + 15
+    while not server.started and time.monotonic() < deadline:
         await asyncio.sleep(0.01)
-    assert server.started
+    assert server.started, "gateway server did not start within 15s"
     client = httpx.AsyncClient(
         base_url=f"http://127.0.0.1:{port}",
         headers={"Authorization": f"Bearer {_token(private)}", "Accept": "application/json"},
