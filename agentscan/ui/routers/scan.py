@@ -383,11 +383,17 @@ async def api_scan_status() -> Any:
 
 @router.post("/api/scan/cancel")
 async def api_scan_cancel() -> Any:
-    if state.active_scan and not state.active_scan.done():
-        state.active_scan.cancel()
+    task = state.active_scan
+    # Only a live scan can be cancelled: Task.cancel() returning False means the scan
+    # finished between the done() check and the cancel, and a terminal status must win.
+    cancelled = task is not None and not task.done() and task.cancel()
+    if not cancelled:
+        return JSONResponse(
+            {"status": state.scan_status.get("status", "idle"), "cancelled": False}
+        )
     state.scan_status["status"] = "cancelled"
     await event_bus.publish({"type": "scan:cancel", "data": {"status": "cancelled"}})
-    return JSONResponse({"status": "cancelled"})
+    return JSONResponse({"status": "cancelled", "cancelled": True})
 
 
 @router.post("/api/discovery")

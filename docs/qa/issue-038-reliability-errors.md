@@ -1,7 +1,7 @@
 # QA-038 - Reliability and error handling
 
 **Issue:** [#38 - [P2] Reliability and error handling](https://github.com/PrathaMesh3056/AgentScan/issues/38)
-**Status:** Draft - written plan committed first; implementation follows on this branch.
+**Status:** Draft - plan committed first, implementation and regressions follow on this branch.
 **Base:** main at 7c17743
 **Constraint:** no changes under `agentscan/core/`, `agentscan/action/`,
 `agentscan/reporting/audit_verifier.py`, or `docs/RUNTIME_GATEWAY.md`; no P1 (#20-#34) files.
@@ -174,6 +174,88 @@ status the dashboard shows.
 - Targeted + related suite: `pytest tests/test_qa038_reliability.py tests/test_cli.py
   tests/test_ui.py tests/test_ui_lifecycle.py -q`; Ruff on changed files.
 
+## Implementation evidence
+
+Commits on `fix/qa-038-reliability-errors`:
+
+1. `docs(qa): plan reliability and error-handling fixes for #38` - this document (7f2d72b).
+2. `fix(cli,ui): bound reliability failures before and after scan work (#38)` - implementation
+   and regressions.
+
+### Before / after regression check
+
+The new tests were run in a detached worktree of base commit 7c17743 and again on this
+branch. On the base commit the behaviour tests fail for the recorded reasons:
+
+```
+19 failed (11 selected behaviour tests, including all parameterised profile cases)
+  occupied port            -> exit 3 from uvicorn, banner printed first
+  out-of-range port        -> banner + uvicorn traceback
+  wrong-typed profile      -> exit 1 with ValueError/TypeError
+  invalid framework        -> exit 1 with ValueError
+  missing Playwright       -> exit 1 traceback (init) / unexplainable scan failure
+  target 500/connection    -> no bounded cause on the terminal
+  cancel after completion  -> status clobbered to cancelled
+  cancel while idle        -> invented a cancelled scan
+```
+
+On this branch the same tests pass, together with the related CLI and dashboard suites:
+
+```
+tests/test_qa038_reliability.py                         25 passed
+tests/test_cli.py tests/test_ui.py
+tests/test_ui_lifecycle.py tests/test_ui_scan_diagnostics.py
+                                                        92 passed, 2 skipped
+ruff check (changed files)                              All checks passed
+```
+
+### End-to-end smoke checks (loopback only)
+
+```
+agentscan ui --port 0
+  AgentScan UI: http://127.0.0.1:57199        <- actual bound port, announced after bind
+  GET http://127.0.0.1:57199/ -> HTTP 200, 140305 bytes
+
+agentscan ui --port <occupied loopback port>
+  Cannot start the dashboard on 127.0.0.1:57206: the port is already in use.
+  Choose a different --port (use 0 to pick a free port) or free the address, then retry.
+  exit 1, no AgentScan UI banner, no traceback
+```
+
+### Files changed
+
+- `agentscan/_cli/_preflight.py` (new): profile type validation, Playwright availability
+  check with install guidance, bounded exception detail, and the incomplete-scan summary.
+- `agentscan/_cli/commands/scan.py`: validate the profile after YAML load; bound
+  `request_template`/`browser` model failures and invalid `framework`; require the browser
+  runtime for browser-backed scans; print the bounded failure summary before the generic
+  incomplete-scan message.
+- `agentscan/_cli/commands/misc.py`: `ui` announces the URL from a bind callback;
+  `init --browser` requires the runtime and bounds discovery failures.
+- `agentscan/ui/app.py`: `bind_socket()` maps address-in-use, permission, invalid-address
+  and out-of-range failures to one bounded `RuntimeError`; `serve_app()` binds first, calls
+  `on_bound(host, actual_port)`, then runs uvicorn on the listening socket.
+- `agentscan/ui/routers/scan.py`: `/api/scan/cancel` cancels only a live task, returns
+  `cancelled` plus the current status, and leaves terminal statuses untouched.
+- `tests/test_qa038_reliability.py` (new): 25 regressions across the five classes.
+- `tests/test_cli.py`, `tests/test_ui.py`: keep existing tests deterministic after the new
+  behaviour (stub Playwright availability where only target construction is under test;
+  keep the background scan live in the dashboard controller test).
+
+### Deviations and limits
+
+- `/api/scan/cancel` now returns `{"status": ..., "cancelled": bool}`. Clients that
+  ignore the new field keep working; the dashboard status is no longer overwritten.
+- `serve_app()` gained an optional `on_bound` callback; the previous no-argument call
+  still works and simply serves without announcing.
+- `agentscan api serve` still prints "Starting AgentScan API on ..." before uvicorn
+  starts. That wording does not claim a bound socket and the command delegates binding to
+  uvicorn's multi-worker parent, so it is left unchanged here.
+- Browser launch failures after a successful preflight (for example a corrupt Chromium
+  install) still surface through the scan report; the failure summary names the missing
+  package/binary when the report records it.
+- Profile validation covers the documented profile keys. Unknown keys are ignored, and
+  integer fields accept digit strings so an existing quoted YAML value keeps working.
 ## Risks and rollback
 
 - Risk: pre-binding the socket changes how uvicorn starts the dashboard. Mitigation: the
@@ -201,8 +283,8 @@ status the dashboard shows.
 ## Review checklist
 
 - [x] Written plan committed before implementation (this file).
-- [ ] Regression test per failure class.
-- [ ] Targeted tests and Ruff pass.
-- [ ] No changes under agentscan/core/, agentscan/action/, audit_verifier.py, or
+- [x] Regression test per failure class.
+- [x] Targeted tests and Ruff pass.
+- [x] No changes under agentscan/core/, agentscan/action/, audit_verifier.py, or
       docs/RUNTIME_GATEWAY.md.
-- [ ] Commit messages reference #38.
+- [x] Commit messages reference #38.

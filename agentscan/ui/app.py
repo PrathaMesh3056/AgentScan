@@ -4,10 +4,13 @@
 
 from __future__ import annotations
 
+import errno
 import json
 import os
 import secrets
+import socket
 import uuid
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
@@ -312,9 +315,64 @@ def build_uvicorn_config(app: Any, host: str = "127.0.0.1", port: int = 8765) ->
     )
 
 
-def serve_app(app: Any, host: str = "127.0.0.1", port: int = 8765) -> None:
-    """Serve the dashboard with uvicorn in-process (single worker, no reload)."""
+_BIND_FAILURE_REASONS = {
+    errno.EADDRINUSE: "the port is already in use",
+    errno.EACCES: "the address is not permitted for this process",
+    errno.EADDRNOTAVAIL: "the address is not available on this machine",
+    # The same failures as Windows socket errors (WSAEADDRINUSE and friends).
+    10013: "the address is not permitted for this process",
+    10048: "the port is already in use",
+    10049: "the address is not available on this machine",
+}
+
+
+def _bind_failure_reason(error: OSError) -> str:
+    code = getattr(error, "winerror", None) or error.errno
+    reason = _BIND_FAILURE_REASONS.get(code)
+    if reason is not None:
+        return reason
+    if isinstance(error, socket.gaierror):
+        return "the address could not be resolved"
+    return "the address could not be bound"
+
+
+def bind_socket(host: str, port: int) -> socket.socket:
+    """Bind the dashboard listening socket, raising one bounded RuntimeError on failure."""
+    if not 0 <= port <= 65535:
+        raise RuntimeError(
+            f"Cannot start the dashboard on {host}:{port}: the port must be in 0-65535 "
+            "(use 0 to let the operating system pick a free port)."
+        )
+    family = socket.AF_INET6 if ":" in host else socket.AF_INET
+    sock = socket.socket(family, socket.SOCK_STREAM)
+    try:
+        sock.bind((host, port))
+        sock.listen(128)
+    except OSError as error:
+        sock.close()
+        raise RuntimeError(
+            f"Cannot start the dashboard on {host}:{port}: {_bind_failure_reason(error)}. "
+            "Choose a different --port (use 0 to pick a free port) or free the address, "
+            "then retry."
+        ) from None
+    return sock
+
+
+def serve_app(
+    app: Any,
+    host: str = "127.0.0.1",
+    port: int = 8765,
+    on_bound: Callable[[str, int], None] | None = None,
+) -> None:
+    """Serve the dashboard in-process, announcing the URL only after a successful bind."""
     config = build_uvicorn_config(app, host=host, port=port)
     import uvicorn
 
-    uvicorn.Server(config).run()
+    sock = bind_socket(host, port)
+    try:
+        bound_port = sock.getsockname()[1]
+        if on_bound is not None:
+            on_bound(host, bound_port)
+        uvicorn.Server(config).run(sockets=[sock])
+    finally:
+        sock.close()

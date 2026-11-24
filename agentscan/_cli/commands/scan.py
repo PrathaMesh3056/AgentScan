@@ -14,6 +14,11 @@ import typer
 from pydantic import ValidationError
 from rich.table import Table
 
+from agentscan._cli._preflight import (
+    require_browser_runtime,
+    scan_failure_guidance,
+    validate_profile_fields,
+)
 from agentscan._cli._shared import (
     _SEVERITY_COLOURS,
     _confirm_exploit_mode,
@@ -256,6 +261,7 @@ def scan(  # noqa: PLR0913
             raise typer.BadParameter(
                 "Target profile must be readable YAML with a unique-key mapping; review its fields."
             ) from None
+        validate_profile_fields(cfg)
 
     exploit = exploit or bool(cfg.get("exploit"))
     deep = deep or bool(cfg.get("deep"))
@@ -316,7 +322,13 @@ def scan(  # noqa: PLR0913
             response_path=response_path,
         )
     elif cfg.get("request_template"):
-        request_template = RequestTemplate(**cfg["request_template"])
+        try:
+            request_template = RequestTemplate(**cfg["request_template"])
+        except ValidationError:
+            raise typer.BadParameter(
+                "Profile field 'request_template' has invalid settings; check method, url, "
+                "json_body, message_path and response_path."
+            ) from None
 
     browser_cfg = None
     if browser_url is not None:
@@ -337,7 +349,16 @@ def scan(  # noqa: PLR0913
     elif cfg.get("browser"):
         browser_data = dict(cfg["browser"])
         browser_data.setdefault("url", target or cfg.get("url"))
-        browser_cfg = BrowserConfig(**browser_data)
+        try:
+            browser_cfg = BrowserConfig(**browser_data)
+        except ValidationError:
+            raise typer.BadParameter(
+                "Profile field 'browser' has invalid settings; check url, the selectors and "
+                "the boolean options."
+            ) from None
+
+    if browser_cfg is not None:
+        require_browser_runtime()
 
     # Resolve the URL: positional target, else profile url, else connector url.
     url = (
@@ -428,6 +449,14 @@ def scan(  # noqa: PLR0913
             "indirect_adapter must be document_v1 or omitted from the profile."
         )
     try:
+        framework_enum = Framework(framework)
+    except ValueError:
+        valid_frameworks = ", ".join(item.value for item in Framework)
+        raise typer.BadParameter(
+            f"framework must be one of: {valid_frameworks}."
+        ) from None
+
+    try:
         target_obj = Target(
             analysis_mode=analysis_mode,
             local_model=local_model,
@@ -436,7 +465,7 @@ def scan(  # noqa: PLR0913
             canary_token=cfg.get("canary_token"),
             indirect_adapter=cfg.get("indirect_adapter"),
             url=url,
-            framework=Framework(framework),
+            framework=framework_enum,
             system_prompt=system_prompt,
             auth_header=auth_header,
             request_template=request_template,
@@ -714,6 +743,9 @@ def scan(  # noqa: PLR0913
         console.print(f"LLM log written to {llm_log} ({len(recorder.llm_calls)} calls)")
 
     if report.status != "COMPLETE":
+        guidance = scan_failure_guidance(report)
+        if guidance is not None:
+            console.print(f"[yellow]{guidance}[/yellow]")
         console.print(
             "[yellow]Assessment is incomplete. Review module outcomes and errors in the report; "
             "completed findings and requested exports have been retained.[/yellow]"

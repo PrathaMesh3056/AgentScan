@@ -17,6 +17,7 @@ from rich import print as rprint
 from rich.panel import Panel
 from rich.table import Table
 
+from agentscan._cli._preflight import bounded_error_detail, require_browser_runtime
 from agentscan._cli._shared import (
     api_app,
     app,
@@ -128,8 +129,17 @@ def init(
 
     # 2. Fall back to a browser widget unless --http restricts us to the API path.
     if profile is None and not http:
+        require_browser_runtime()
         console.print("Opening a browser to look for a chat widget…")
-        cfg = asyncio.run(discover_widget(url, headless=not headed))
+        try:
+            cfg = asyncio.run(discover_widget(url, headless=not headed))
+        except Exception as error:
+            console.print(
+                f"[red]Browser discovery failed:[/red] {bounded_error_detail(error)}. "
+                "Confirm Playwright and Chromium are installed (python -m playwright install "
+                "chromium) and that the URL is reachable."
+            )
+            raise typer.Exit(1) from None
         if cfg is not None:
             browser_block = {
                 k: v
@@ -295,11 +305,13 @@ def ui(
         console.print(f"[red]{e}[/red]")
         raise typer.Exit(1) from None
 
-    console.print(f"AgentScan UI: [cyan]http://{host}:{port}[/cyan]")
-    if token:
-        console.print("[dim]Authentication token enabled for dashboard access.[/dim]")
+    def announce_bound(display_host: str, bound_port: int) -> None:
+        console.print(f"AgentScan UI: [cyan]http://{display_host}:{bound_port}[/cyan]")
+        if token:
+            console.print("[dim]Authentication token enabled for dashboard access.[/dim]")
+
     try:
-        serve_app(dashboard, host=host, port=port)
+        serve_app(dashboard, host=host, port=port, on_bound=announce_bound)
     except RuntimeError as e:
         console.print(f"[red]{e}[/red]")
         raise typer.Exit(1) from None
