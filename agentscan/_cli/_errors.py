@@ -92,7 +92,8 @@ def text_field(value: Any, *, field: str, source: str) -> str:
 
 def yaml_error_detail(exc: Exception) -> str:
     """Compact YAML problem plus 1-based line/column when available."""
-    problem = getattr(exc, "problem", None) or str(exc).splitlines()[0] or "invalid YAML"
+    text = str(exc).strip()
+    problem = getattr(exc, "problem", None) or (text.splitlines()[0] if text else "invalid YAML")
     mark = getattr(exc, "problem_mark", None)
     if mark is not None:
         return f"line {mark.line + 1}, column {mark.column + 1}: {problem}"
