@@ -123,3 +123,6 @@ synthetic; the scan runner is monkeypatched and targets are loopback URLs.
   isolation and are environment-only: the MCP stdio cases cannot spawn the child server under the session
   sandbox (no journal file is written) and the remediation preimage write receives `PermissionError`.
   None of those code paths is touched by this change.
+* CI: `validation / windows` and `validation / secrets` pass. The Linux `test (3.12)` and `test (3.13)` jobs
+  run the full suite successfully and then fail at the `pip-audit` step on `wcmatch 8.5.2`
+  (`CVE-2026-132276`), a dependency advisory unrelated to this change.
