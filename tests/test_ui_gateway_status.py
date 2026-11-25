@@ -198,6 +198,21 @@ async def test_probe_gateway_timeout_reports_unreachable() -> None:
     assert result["health"]["status"] == "unreachable"
 
 
+def test_dashboard_gateway_copy_matches_shipped_commands() -> None:
+    source = (
+        Path(__file__).resolve().parents[1]
+        / "agentscan"
+        / "ui"
+        / "static"
+        / "dashboard-app-core.js"
+    ).read_text(encoding="utf-8")
+
+    assert "Phase 5" not in source
+    assert "agentscan-gateway serve" in source
+    assert "python -m agentscan.gateway serve" in source
+    assert "/readyz fails closed while the runtime is not ready" in source
+
+
 async def test_probe_gateway_unreachable_reports_bounded_reason() -> None:
     def health_unreachable(_request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectError("synthetic connect failure")

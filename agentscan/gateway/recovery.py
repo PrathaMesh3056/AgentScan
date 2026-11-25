@@ -245,12 +245,12 @@ def reconcile(
         result_status = ReconciliationStatus.NO_EFFECT_RECORDED
     elif pair.state == IdempotencyState.PENDING:
         outcome_status = "unknown"
-        summary = "reconciled: upstream effect status is not confirmed absent"
-        result_status = (
-            ReconciliationStatus.APPLIED
-            if confirmation.status == "applied"
-            else ReconciliationStatus.UNKNOWN
-        )
+        if confirmation.status == "applied":
+            summary = "reconciled: upstream confirmed the effect was applied"
+            result_status = ReconciliationStatus.APPLIED
+        else:
+            summary = "reconciled: upstream could not confirm the effect status"
+            result_status = ReconciliationStatus.UNKNOWN
     else:
         raise ReconciliationError("confirmation cannot advance this decision state")
 
