@@ -565,13 +565,13 @@
 <body class="dashboard min-h-screen flex antialiased bg-[#F7F5EE]">
 
   <!-- Mobile Sidebar Backdrop Overlay -->
-  <div id="sidebar-backdrop" onclick="toggleSidebarMobile(false)"
+  <div id="sidebar-backdrop" onclick="toggleSidebarMobile(false)" aria-hidden="true"
     class="fixed inset-0 bg-black/40 backdrop-blur-xs z-50 transition-opacity hidden"></div>
 
   <!-- ========================================================
        DESIGNLAB SIDEBAR NAVIGATION
        ======================================================== -->
-  <aside id="sidebar" class="border-r flex flex-col justify-between shrink-0 h-screen sticky top-0 z-40 select-none"
+  <aside id="sidebar" aria-label="Primary navigation" class="border-r flex flex-col justify-between shrink-0 h-screen sticky top-0 z-40 select-none"
     style="border-color: var(--border)">
 
     <div>
@@ -584,12 +584,12 @@
         </a>
       </div>
 
-      <nav class="px-2 py-2 space-y-1 overflow-y-auto max-h-[calc(100vh-8rem)]">
+      <nav aria-label="Primary" class="px-2 py-2 space-y-1 overflow-y-auto max-h-[calc(100vh-8rem)]">
         <div class="sidebar-section-title px-2 pt-2.5 pb-1 text-[9.5px] font-extrabold tracking-wider text-[#888888] uppercase">
           Command
         </div>
 
-        <a href="#overview" data-tab="overview" onclick="switchTab('overview', event)"
+        <a href="#overview" data-tab="overview" onclick="switchTab('overview', event)" aria-current="page"
            class="sidebar-nav-item active flex items-center gap-2 px-2.5 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer border shadow-xs"
            style="border-color: var(--border)">
           <svg class="w-4 h-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
@@ -769,7 +769,7 @@
 
       <div class="flex items-center gap-1.5 sm:gap-3 relative min-w-0 flex-1 sm:flex-initial" id="top-search-wrapper">
         <!-- Mobile hamburger menu button -->
-        <button id="btn-mobile-menu" onclick="toggleSidebarMobile(true)" aria-label="Open Navigation Menu"
+        <button id="btn-mobile-menu" onclick="toggleSidebarMobile(true)" aria-label="Open Navigation Menu" aria-controls="sidebar" aria-expanded="false"
           class="lg:hidden w-8 h-8 rounded-xl border bg-white text-[#1A1A1A] hover:bg-[#F2EFE8] cursor-pointer shadow-xs shrink-0 flex items-center justify-center"
           style="border-color: var(--border)">
           <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
@@ -2475,6 +2475,10 @@
   <!-- ========================================================
        APPLICATION LOGIC
        ======================================================== -->
+  <div id="toast-notification" role="status" aria-live="polite" aria-atomic="true"
+    class="fixed bottom-6 right-6 z-50 px-5 py-3.5 rounded-2xl bg-[#1A1A1A] text-white text-xs font-bold shadow-2xl flex items-center gap-3 transition-all duration-300 transform translate-y-12 opacity-0 pointer-events-none border border-white/10"></div>
+
+  <script src="/static/dashboard-a11y.js"></script>
   <script src="/static/dashboard-app-core.js"></script>
   <script src="/static/dashboard-app-renderers.js"></script>
   <script src="/static/dashboard-app-actions.js"></script>
