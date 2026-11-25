@@ -151,7 +151,11 @@ def test_ui_custom_secret_key_certificate(sample_report: Path) -> None:
     client.get("/")
 
     custom_key = "test_custom_secret_key_98765_at_least_32_bytes"
-    cert_resp = client.get(f"/api/certificate?secret_key={custom_key}")
+    # A signing key in the URL is rejected; the POST body is the accepted path.
+    rejected = client.get(f"/api/certificate?secret_key={custom_key}")
+    assert rejected.status_code == 400
+    assert custom_key not in rejected.text
+    cert_resp = client.post("/api/certificate", json={"secret_key": custom_key})
     assert cert_resp.status_code == 200
     cert = cert_resp.json()
 

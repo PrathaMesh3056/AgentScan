@@ -77,15 +77,22 @@ def _certificate_response(secret_key: str | None) -> Any:
 async def api_certificate(
     secret_key: str | None = Query(
         default=None,
-        description="Optional HMAC key (deprecated: use POST /api/certificate with JSON body)",
+        description="Rejected: signing keys are only accepted in a POST JSON body",
     ),
 ) -> Any:
     if secret_key:
-        logger.warning(
-            "Passing secret_key via query parameter is deprecated for security. "
-            "Use POST /api/certificate with a JSON body instead."
+        # A query string reaches browser history, referrers, proxy logs and the
+        # server access log; a signing key must never travel there.
+        logger.warning("Rejected a certificate signing key supplied in the request URL.")
+        return validation_error_response(
+            {
+                "secret_key": (
+                    "Signing keys are not accepted in the dashboard URL. "
+                    "Submit the key in the POST /api/certificate JSON body instead."
+                )
+            }
         )
-    return _certificate_response(secret_key)
+    return _certificate_response(None)
 
 
 @router.post("/api/verify-certificate")
