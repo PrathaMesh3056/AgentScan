@@ -234,6 +234,25 @@ def test_generate_pr_body_contains_required_fields() -> None:
     assert "```" in body
 
 
+def test_generate_pr_body_uses_repository_relative_paths(git_repo: Path) -> None:
+    """Generated PRs must not expose the operator's absolute filesystem layout."""
+    automator = GitPRAutomator(repo_path=git_repo)
+    action = FixAction(
+        path=str(git_repo / "src" / "nested" / "agent.py"),
+        kind="ast_patch",
+        finding_id="SC-011",
+        before="unsafe()\n",
+        after="safe()\n",
+    )
+
+    body = automator.generate_pr_body(FixPlan(actions=[action]))
+
+    assert "- **File Path**: `src/nested/agent.py`" in body
+    assert "a/src/nested/agent.py" in body
+    assert "b/src/nested/agent.py" in body
+    assert str(git_repo) not in body
+
+
 def test_cli_fix_apply_pr_flag(git_repo: Path) -> None:
     """Asserts agentscan fix --apply --pr CLI workflow."""
     runner = CliRunner()

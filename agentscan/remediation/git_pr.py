@@ -260,6 +260,7 @@ class GitPRAutomator:
             attack_id = action.finding_id
             owasp_id = resolve_owasp_id(attack_id, action.owasp_id)
             diff_summary = self._compute_diff_summary(action)
+            relative_path = self._relative_path(action.path)
 
             lines.extend(
                 [
@@ -267,7 +268,7 @@ class GitPRAutomator:
                     f"- **Attack ID**: `{attack_id}`",
                     f"- **OWASP ID**: `{owasp_id}`",
                     f"- **Remediation Kind**: `{action.kind}`",
-                    f"- **File Path**: `{action.path}`",
+                    f"- **File Path**: `{relative_path}`",
                     f"- **Diff Summary**: {diff_summary}",
                     "",
                     "```diff",
@@ -325,9 +326,20 @@ class GitPRAutomator:
         removed = max(0, len(before_lines) - len(after_lines))
         return f"+{added} / -{removed} lines modified"
 
+    def _relative_path(self, path: str) -> str:
+        """Render an action path relative to the repository for PR output."""
+        candidate = Path(path)
+        if not candidate.is_absolute():
+            return candidate.as_posix()
+        try:
+            return candidate.resolve().relative_to(self.repo_path).as_posix()
+        except (OSError, ValueError):
+            # Never put an absolute host path into a PR body.
+            return candidate.name
+
     def _generate_unified_diff(self, action: FixAction) -> str:
         """Generate unified diff string between before and after contents."""
-        path_name = Path(action.path).name
+        path_name = self._relative_path(action.path)
         diff_lines = list(
             difflib.unified_diff(
                 action.before.splitlines(keepends=True),
