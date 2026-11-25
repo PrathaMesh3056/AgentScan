@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import socket
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
@@ -41,9 +42,13 @@ def _incomplete_report(*errors: str) -> ScanReport:
     return report
 
 
+_ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;]*m")
+
+
 def _panel_text(output: str) -> str:
-    """Join Rich panel text across wrapped lines so phrases stay assertable."""
-    return " ".join(output.replace("\u2502", " ").split())
+    """Strip Rich styling and join wrapped panel lines so phrases stay assertable."""
+    plain = _ANSI_ESCAPE.sub("", output).replace("\u2502", " ")
+    return " ".join(plain.split())
 
 
 def _ui_client():
