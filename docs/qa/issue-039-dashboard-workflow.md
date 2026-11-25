@@ -119,3 +119,7 @@ synthetic; the scan runner is monkeypatched and targets are loopback URLs.
   `tests/test_ui_target_selection.py` -> `436 passed, 1 skipped`.
 * `ruff check` and `ruff format --check` pass on the changed Python files; `node --check` passes on every
   changed JavaScript file.
+* Full suite (`pytest tests -q`): `3368 passed, 38 skipped, 5 failed`. The five failures reproduce in
+  isolation and are environment-only: the MCP stdio cases cannot spawn the child server under the session
+  sandbox (no journal file is written) and the remediation preimage write receives `PermissionError`.
+  None of those code paths is touched by this change.
