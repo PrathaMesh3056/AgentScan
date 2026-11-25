@@ -41,6 +41,10 @@
 
     /* Modern Toast Notification Helper */
     function showToast(message) {
+      if (window.AgentScanA11y && typeof window.AgentScanA11y.toast === 'function') {
+        window.AgentScanA11y.toast(message);
+        return;
+      }
       let t = document.getElementById('toast-notification');
       if (!t) {
         t = document.createElement('div');
@@ -143,10 +147,31 @@
       }
     }
 
+    let mobileDrawer = null;
+    function mobileDrawerController() {
+      if (!window.AgentScanA11y || typeof window.AgentScanA11y.createDrawerController !== 'function') return null;
+      if (!mobileDrawer) {
+        mobileDrawer = window.AgentScanA11y.createDrawerController({
+          document: document,
+          drawer: document.getElementById('sidebar'),
+          toggle: document.getElementById('btn-mobile-menu'),
+          backdrop: document.getElementById('sidebar-backdrop')
+        });
+      }
+      return mobileDrawer;
+    }
+
     function toggleSidebarMobile(forceState) {
       const sb = document.getElementById('sidebar');
       const backdrop = document.getElementById('sidebar-backdrop');
       if (!sb) return;
+      const controller = mobileDrawerController();
+      if (controller) {
+        const isOpen = forceState !== undefined ? forceState : !controller.isOpen();
+        if (isOpen) controller.open(document.getElementById('btn-mobile-menu'));
+        else controller.close();
+        return;
+      }
       const isOpen = forceState !== undefined ? forceState : !sb.classList.contains('mobile-open');
       if (isOpen) {
         sb.classList.add('mobile-open');
@@ -390,6 +415,14 @@
       if (activeNav) {
         activeNav.classList.remove('text-[#666666]');
         activeNav.classList.add('active', 'text-[#1A1A1A]', 'font-bold', 'shadow-sm');
+      }
+      if (window.AgentScanA11y && typeof window.AgentScanA11y.setActiveNavItem === 'function') {
+        window.AgentScanA11y.setActiveNavItem(tabId, { document: document });
+      } else {
+        document.querySelectorAll('.sidebar-nav-item').forEach(el => {
+          if (el === activeNav) el.setAttribute('aria-current', 'page');
+          else el.removeAttribute('aria-current');
+        });
       }
     }
 

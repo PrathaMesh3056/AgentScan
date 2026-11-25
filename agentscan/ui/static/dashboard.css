@@ -337,4 +337,32 @@ html body [aria-invalid="true"] { border-color: var(--critical) !important; outl
 .audit-checks-grid { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: .6rem; }
 .audit-check-option { display: flex; align-items: flex-start; gap: .6rem; color: var(--text-main); line-height: 1.5; }
 .audit-check-option input { margin-top: .2rem; accent-color: var(--defense-teal); }
+
+/* Issue #40 (QA-187): interactive controls expose at least a 24x24 CSS px target. */
+html body button,
+html body [role="button"],
+html body summary {
+  min-height: 24px;
+  min-width: 24px;
+}
+
+html body :is(.coverage-link, .hero-secondary) {
+  min-height: 24px;
+}
+
+/* `min-height` only applies to non-inline boxes, so make the inline text action a box. */
+html body .coverage-link {
+  display: inline-flex;
+  align-items: center;
+}
+
+/* Issue #40 (QA-185): the toast live region keeps its decorative status dot in CSS. */
+html body #toast-notification::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-radius: 9999px;
+  background: #1E655C;
+  flex-shrink: 0;
+}
 @media (max-width: 420px) { .audit-checks-grid { grid-template-columns: minmax(0,1fr); } }
