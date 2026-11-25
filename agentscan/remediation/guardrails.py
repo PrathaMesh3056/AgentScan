@@ -145,32 +145,36 @@ def plan_guardrails(findings: list[Finding], root_path: Path) -> list[FixAction]
         root_path, target_dir / "guardrails" / "system_prompt_guard.md"
     )
 
-    # Colang rules
+    # Colang rules: skip the action when the file already contains this exact policy.
     colang_content = _generate_colang_rules(atk_ids)
-    actions.append(
-        FixAction(
-            path=str(colang_path.resolve()),
-            kind="guardrails",
-            finding_id=atk_findings[0].attack_id,
-            before=colang_path.read_text(encoding="utf-8") if colang_path.exists() else "",
-            after=colang_content,
-            applied=False,
+    colang_before = colang_path.read_text(encoding="utf-8") if colang_path.exists() else ""
+    if colang_before != colang_content:
+        actions.append(
+            FixAction(
+                path=str(colang_path.resolve()),
+                kind="guardrails",
+                finding_id=atk_findings[0].attack_id,
+                before=colang_before,
+                after=colang_content,
+                applied=False,
+            )
         )
-    )
 
-    # Prompt guard markdown
+    # Prompt guard markdown: same no-op guard for an already-current file.
     prompt_guard_content = _generate_system_prompt_guard(atk_ids)
-    actions.append(
-        FixAction(
-            path=str(prompt_guard_path.resolve()),
-            kind="guardrails",
-            finding_id=atk_findings[0].attack_id,
-            before=prompt_guard_path.read_text(encoding="utf-8")
-            if prompt_guard_path.exists()
-            else "",
-            after=prompt_guard_content,
-            applied=False,
-        )
+    prompt_guard_before = (
+        prompt_guard_path.read_text(encoding="utf-8") if prompt_guard_path.exists() else ""
     )
+    if prompt_guard_before != prompt_guard_content:
+        actions.append(
+            FixAction(
+                path=str(prompt_guard_path.resolve()),
+                kind="guardrails",
+                finding_id=atk_findings[0].attack_id,
+                before=prompt_guard_before,
+                after=prompt_guard_content,
+                applied=False,
+            )
+        )
 
     return actions
