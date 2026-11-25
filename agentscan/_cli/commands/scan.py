@@ -269,7 +269,7 @@ def scan(  # noqa: PLR0913
         except (ValueError, TypeError) as exc:
             detail = str(exc) or "duplicate keys or invalid mapping"
             raise typer.BadParameter(
-                f"Target profile has an invalid mapping: {config} ({detail})"
+                f"Target profile must have a unique-key mapping: {config} ({detail})"
             ) from None
         except RecursionError:
             raise typer.BadParameter(f"Target profile is nested too deeply: {config}") from None

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import codecs
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -25,10 +26,11 @@ def _write_bom_json(path: Path, data: object) -> None:
 
 
 def _compact(value: str) -> str:
-    # Rich/Typer wraps long Windows paths inside the error panel, inserting a box
-    # border between the wrapped segments. Compare without whitespace/borders so
-    # a wrapped path still counts as named.
-    return "".join(ch for ch in value if not ch.isspace() and ch not in "│┃").lower()
+    # Rich/Typer wraps long paths inside the error panel, inserting ANSI resets and
+    # a box border between the wrapped segments. Compare without styling or
+    # whitespace/borders so a wrapped path still counts as named.
+    text = re.sub(r"\x1b\[[0-9;]*m", "", value)
+    return "".join(ch for ch in text if not ch.isspace() and ch not in "│┃").lower()
 
 
 def _assert_bounded(result, *needles: str) -> None:
