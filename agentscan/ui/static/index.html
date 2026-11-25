@@ -1522,6 +1522,15 @@
           <p class="text-[11px] text-[#666666] mt-1">Enter the agent service you want to assess, separate from this dashboard. HTTP scans send POST JSON <code>{"message": "..."}</code>; use a configured CLI transport if your API expects another request format.</p>
         </div>
 
+        <div class="space-y-1">
+          <label for="scan-auth-header" class="font-bold text-[#1A1A1A] uppercase text-[10px] tracking-wider">Target authentication header <span class="text-[#888888] normal-case">(optional)</span></label>
+          <input type="password" id="scan-auth-header" autocomplete="off" spellcheck="false"
+            aria-describedby="scan-auth-header-help"
+            class="w-full px-3.5 py-2 rounded-xl bg-[#F7F5EE] border border-[#1A1A1A]/10 text-xs font-mono font-bold text-[#1A1A1A] focus:outline-none focus:border-[#1A1A1A]"
+            placeholder="Authorization: Bearer synthetic-token">
+          <p id="scan-auth-header-help" class="text-[11px] text-[#666666] mt-1">Sent only to the target by this dashboard. Use a synthetic or loopback credential; it is never written to the report and is cleared when this dialog closes.</p>
+        </div>
+
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div class="space-y-1">
             <label for="scan-mode" class="font-bold text-[#1A1A1A] uppercase text-[10px] tracking-wider">Scan Mode</label>

@@ -203,6 +203,55 @@
       ${summary.referenceCount ? `<p class="coverage-footnote">${summary.referenceCount} local reference observations · excluded from target findings and score.</p>` : ''}`;
   }
 
+  const SEVERITY_ORDER = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW', 'INFO', 'PASS', 'UNCLASSIFIED'];
+
+  function severityRank(value) {
+    const index = SEVERITY_ORDER.indexOf(String(value ?? '').toUpperCase());
+    return index === -1 ? SEVERITY_ORDER.length : index;
+  }
+
+  function sortFindings(findings) {
+    // Stable CRITICAL-first ordering; the report's own order breaks ties.
+    return [...(Array.isArray(findings) ? findings : [])]
+      .map((finding, index) => ({ finding, index }))
+      .sort((left, right) => severityRank(left.finding?.severity) - severityRank(right.finding?.severity) || left.index - right.index)
+      .map(entry => entry.finding);
+  }
+
+  const SCAN_STATUS_META = {
+    idle: { label: 'IDLE', tone: 'neutral', terminal: true, active: false },
+    running: { label: 'RUNNING', tone: 'neutral', terminal: false, active: true },
+    completed: { label: 'COMPLETE', tone: 'complete', terminal: true, active: false },
+    inconclusive: { label: 'INCONCLUSIVE', tone: 'warning', terminal: true, active: false },
+    failed: { label: 'FAILED', tone: 'error', terminal: true, active: false },
+    cancelled: { label: 'CANCELLED', tone: 'warning', terminal: true, active: false }
+  };
+
+  function scanStatusView(value) {
+    const status = String(value ?? '').trim().toLowerCase();
+    const known = SCAN_STATUS_META[status];
+    if (!known) {
+      // An unknown status is never treated as terminal, so the controller keeps polling and
+      // the operator can still cancel the run.
+      return { status: status || 'unknown', label: status ? status.toUpperCase() : 'UNKNOWN', tone: 'warning', terminal: false, active: true };
+    }
+    return { status, ...known };
+  }
+
+  function scanProgressPercent(statusData) {
+    const data = statusData && typeof statusData === 'object' ? statusData : {};
+    const view = scanStatusView(data.status);
+    if (view.status === 'completed' || view.status === 'inconclusive') return 100;
+    const selected = Number(data.tests_selected);
+    const evaluated = Number(data.tests_run);
+    if (Number.isFinite(selected) && selected > 0 && Number.isFinite(evaluated)) {
+      return Math.max(0, Math.min(100, Math.round(evaluated / selected * 100)));
+    }
+    const progress = Number(data.progress);
+    if (Number.isFinite(progress)) return Math.max(0, Math.min(100, Math.round(progress)));
+    return view.active ? 5 : 0;
+  }
+
   function renderOverview(telemetry) {
     const report = telemetry.report;
     const summary = summarize(report);
@@ -252,14 +301,14 @@
       container.innerHTML = `<div class="overview-empty-state col-span-1 sm:col-span-2 lg:col-span-4"><span class="empty-state-symbol" aria-hidden="true">◎</span><strong>No findings recorded</strong><p>${report ? 'Review assessment coverage before drawing a security conclusion.' : 'Launch a scan or load a saved report to collect evidence.'}</p><button class="btn-pill-light" onclick="openScanModal()">Launch a scan →</button></div>`;
       return;
     }
-    container.innerHTML = findings.slice(0, 4).map(f => `<div class="finding-card finding-preview">
+    container.innerHTML = sortFindings(findings).slice(0, 4).map(f => `<div class="finding-card finding-preview">
       <div class="finding-preview-head"><code>${escape(f.attack_id)}</code><span class="${severityClass(f.severity)}">${escape(f.severity)}</span></div>
       <h3>${escape(f.title)}</h3><p>${escape(f.description)}</p>
       <div class="finding-preview-footer"><span>${f.remediation ? 'Guidance available' : 'Review evidence'}</span><button onclick="switchTab('findings'); openFindingInspector(${inlineArgument(f.cve)})" class="finding-inspect">Inspect →</button></div>
     </div>`).join('');
   }
 
-  const api = { summarize, severityClass, inlineArgument, coverageMarkup, renderOverview, targetEndpoint, errorText, errorGuidance, assessmentErrorMarkup, showLaunchError, responseError, requestJSON, escape };
+  const api = { summarize, severityClass, severityRank, sortFindings, scanStatusView, scanProgressPercent, inlineArgument, coverageMarkup, renderOverview, targetEndpoint, errorText, errorGuidance, assessmentErrorMarkup, showLaunchError, responseError, requestJSON, escape };
   root.DashboardSemantics = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })(typeof window === 'undefined' ? globalThis : window);

@@ -486,7 +486,7 @@
           rawFindings = globalTelemetry.report.findings;
         }
 
-        globalTelemetry.findings = rawFindings.map((record, i) => {
+        globalTelemetry.findings = DashboardSemantics.sortFindings(rawFindings.map((record, i) => {
           const f = record && typeof record === 'object' && !Array.isArray(record) ? record : {};
           const attackId = f.attack_id || f.id || `Finding-${i + 1}`;
           const cve = f.cve || `${attackId}:${i + 1}`;
@@ -507,7 +507,7 @@
             evidence: f.evidence || '',
             turn: f.turn_number ?? null
           };
-        });
+        }));
 
         renderOverview();
         renderFindings(activeFilterSeverity);

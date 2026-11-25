@@ -194,7 +194,18 @@ def test_ui_live_scan_controller_and_discovery(sample_report: Path, tmp_path: Pa
 
     cancel_resp = client.post("/api/scan/cancel")
     assert cancel_resp.status_code == 200
-    assert cancel_resp.json()["status"] == "cancelled"
+    cancel_body = cancel_resp.json()
+    assert isinstance(cancel_body["cancelled"], bool)
+    assert cancel_body["status"] in {
+        "idle",
+        "running",
+        "completed",
+        "inconclusive",
+        "failed",
+        "cancelled",
+    }
+    if cancel_body["cancelled"]:
+        assert cancel_body["status"] == "cancelled"
 
     # Test Discovery
     disc_resp = client.post(

@@ -21,7 +21,7 @@ from agentscan.core.ai_client import AIClientError
 from agentscan.core.factuality import FactualityBaseline, unique_json_object
 from agentscan.core.mcp_inventory import McpInventoryBaseline
 from agentscan.core.models import Framework, ScanMode, Target
-from agentscan.ui.state import event_bus, state
+from agentscan.ui.state import SCAN_RUNNING, event_bus, state
 from agentscan.ui.validation import Fields, model_field_errors, validation_error_response
 
 router = APIRouter(tags=["scan"])
@@ -98,7 +98,7 @@ async def _api_start_scan_request(request: Request, payload: dict[str, Any]) -> 
 
 
 async def api_start_scan(payload: dict[str, Any]) -> Any:
-    if state.active_scan is not None and not state.active_scan.done():
+    if state.scan_in_progress():
         return JSONResponse({"error": "A dashboard scan is already running"}, status_code=409)
     fields = Fields(payload)
     target_url = fields.url(
@@ -281,17 +281,9 @@ async def api_start_scan(payload: dict[str, Any]) -> Any:
         return validation_error_response({"analysis_mode": str(error)})
 
     scan_id = str(uuid.uuid4())
-    state.report = None
+    # Keep the previous report visible until this scan produces a new terminal report.
     state.scan_recorder = None
-    state.scan_status = {
-        "status": "running",
-        "scan_id": scan_id,
-        "target": target_url,
-        "modes": [m.value for m in modes],
-        "findings_count": 0,
-        "progress": 5,
-        "current_module": "Initializing scan orchestrator...",
-    }
+    state.begin_scan(scan_id, target_url, [m.value for m in modes])
 
     async def _run_in_background() -> None:
         try:
@@ -303,26 +295,27 @@ async def api_start_scan(payload: dict[str, Any]) -> Any:
             context = active_context.get()
             state.scan_recorder = context.recorder if context else None
             report.scan_id = scan_id
+            if str(state.scan_status.get("status", "")) != SCAN_RUNNING:
+                # Cancellation won the race; keep the previous report instead of a cancelled run.
+                return
             state.report = report
             result_status = {
                 "COMPLETE": "completed",
                 "INCONCLUSIVE": "inconclusive",
                 "ERROR": "failed",
             }.get(report.status, "inconclusive")
-            state.scan_status = {
-                "status": result_status,
-                "scan_id": scan_id,
-                "target": target_url,
-                "findings_count": len(report.findings),
-                "score": report.score,
-                "tests_run": report.tests_run,
-                "tests_selected": report.tests_selected,
-                "module_errors": report.module_errors,
-                "module_outcomes": report.module_outcomes,
-                "assessment_scope": report.assessment_scope,
-                "progress": 100,
-                "current_module": "Done",
-            }
+            state.finish_scan(
+                result_status,
+                scan_id=scan_id,
+                target=target_url,
+                findings_count=len(report.findings),
+                score=report.score,
+                tests_run=report.tests_run,
+                tests_selected=report.tests_selected,
+                module_errors=report.module_errors,
+                module_outcomes=report.module_outcomes,
+                assessment_scope=report.assessment_scope,
+            )
             await event_bus.publish(
                 {
                     "type": "scan:complete"
@@ -344,19 +337,17 @@ async def api_start_scan(payload: dict[str, Any]) -> Any:
                 }
             )
         except asyncio.CancelledError:
-            state.scan_status["status"] = "cancelled"
+            state.finish_scan("cancelled")
             raise
         except Exception as ex:
             failure = _operation_failure(ex, "background scan")
-            state.scan_status = {
-                "status": "failed",
-                "scan_id": scan_id,
-                "target": target_url,
+            state.finish_scan(
+                "failed",
+                scan_id=scan_id,
+                target=target_url,
                 **failure,
-                "score": None,
-                "progress": 0,
-                "current_module": "Error",
-            }
+                score=None,
+            )
             await event_bus.publish(
                 {
                     "type": "scan:error",
@@ -365,29 +356,24 @@ async def api_start_scan(payload: dict[str, Any]) -> Any:
             )
 
     state.active_scan = asyncio.create_task(_run_in_background())
-    await event_bus.publish({"type": "scan:start", "data": state.scan_status})
-    return JSONResponse(
-        {
-            "status": "started",
-            "scan_id": scan_id,
-            "target": target_url,
-            "modes": [m.value for m in modes],
-        }
-    )
+    snapshot = state.scan_snapshot()
+    await event_bus.publish({"type": "scan:start", "data": snapshot})
+    return JSONResponse({**snapshot, "started": True})
 
 
 @router.get("/api/scan/status")
 async def api_scan_status() -> Any:
-    return JSONResponse(state.scan_status)
+    return JSONResponse(state.scan_snapshot())
 
 
 @router.post("/api/scan/cancel")
 async def api_scan_cancel() -> Any:
-    if state.active_scan and not state.active_scan.done():
-        state.active_scan.cancel()
-    state.scan_status["status"] = "cancelled"
-    await event_bus.publish({"type": "scan:cancel", "data": {"status": "cancelled"}})
-    return JSONResponse({"status": "cancelled"})
+    snapshot, cancelled = state.cancel_scan()
+    if cancelled:
+        if state.active_scan is not None and not state.active_scan.done():
+            state.active_scan.cancel()
+        await event_bus.publish({"type": "scan:cancel", "data": snapshot})
+    return JSONResponse({**snapshot, "cancelled": cancelled})
 
 
 @router.post("/api/discovery")
