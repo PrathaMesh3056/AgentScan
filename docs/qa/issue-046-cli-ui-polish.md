@@ -65,8 +65,9 @@ port alias are unchanged; the documented examples already use `--host`).
 
 `agentscan/ui/static/dashboard-app-core.js` builds the readiness reason separately:
 
-- when a reason is present, render it;
-- when readiness is ready and no reason is present, render no reason fragment;
+- when readiness is `ready`, render no reason fragment, even if a stale
+  `unknown_reason` was supplied;
+- when readiness is not ready and a reason is present, render it;
 - when readiness is not ready and no reason is present, keep the bounded
   `unknown_reason` fallback.
 
