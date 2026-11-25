@@ -156,7 +156,7 @@ def create_app(
         def secured(response: Any) -> Any:
             return apply_security_headers(response, secure=secure_transport)
 
-        def deny(payload: dict[str, str], status_code: int) -> Any:
+        def deny(payload: dict[str, Any], status_code: int) -> Any:
             # Denials leave the middleware early, so they carry the same headers
             # as a routed response.
             return secured(_JR(payload, status_code=status_code))
