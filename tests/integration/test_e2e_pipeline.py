@@ -67,15 +67,14 @@ def test_full_e2e_pipeline_scan_find_fix_rescan(target_repo: Path, respx_mock) -
     advisory_id = "OSV-TEST-E2E-001"
 
     def advisory_batch(request):
-        assert json.loads(request.content) == {
-            "queries": [
-                {
-                    "package": {"name": "agentscan-e2e-demo", "ecosystem": "PyPI"},
-                    "version": "0.1.0",
-                }
-            ]
-        }
-        return httpx.Response(200, json={"results": [{"vulns": [{"id": advisory_id}]}]})
+        # The initial scan and the CLI query the vulnerable 0.1.0 pin. After the
+        # operator-preserving bump the rescan queries the fixed exact pin, for
+        # which OSV reports no advisory.
+        (query,) = json.loads(request.content)["queries"]
+        assert query["package"] == {"name": "agentscan-e2e-demo", "ecosystem": "PyPI"}
+        assert query["version"] in {"0.1.0", "0.1.1"}
+        vulns = [{"id": advisory_id}] if query["version"] == "0.1.0" else []
+        return httpx.Response(200, json={"results": [{"vulns": vulns}]})
 
     batch_route = respx_mock.post("https://api.osv.dev/v1/querybatch").mock(
         side_effect=advisory_batch
@@ -138,7 +137,8 @@ def test_full_e2e_pipeline_scan_find_fix_rescan(target_repo: Path, respx_mock) -
 
     # Verify file content modified
     reqs_after = (target_repo / "requirements.txt").read_text(encoding="utf-8")
-    assert reqs_after.strip() == "agentscan-e2e-demo>=0.1.1"
+    # QA-037: pins keep the operator chosen by the manifest author.
+    assert reqs_after.strip() == "agentscan-e2e-demo==0.1.1"
 
     # Step 3: Rescan to confirm vulnerability is eliminated
     rescan_findings, _ = scan_dependencies(str(target_repo))
@@ -146,6 +146,6 @@ def test_full_e2e_pipeline_scan_find_fix_rescan(target_repo: Path, respx_mock) -
     assert len(sc001_after) == 0, (
         f"Expected zero SC-001 findings after remediation, but found: {sc001_after}"
     )
-    # Initial assessment and the CLI each queried the exact vulnerable pin.
-    # The resulting range is assessed against the bundled database on rescan.
-    assert batch_route.call_count == 2
+    # Initial assessment and the CLI queried the vulnerable pin; the rescan
+    # queried the operator-preserved exact fix pin.
+    assert batch_route.call_count == 3
