@@ -14,6 +14,14 @@ import typer
 from pydantic import ValidationError
 from rich.table import Table
 
+from agentscan._cli._errors import (
+    integer_field,
+    path_field,
+    read_text_file,
+    text_field,
+    validation_field_error,
+    yaml_error_detail,
+)
 from agentscan._cli._shared import (
     _SEVERITY_COLOURS,
     _confirm_exploit_mode,
@@ -248,51 +256,71 @@ def scan(  # noqa: PLR0913
             yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, unique_mapping
         )
         try:
-            decoded = yaml.load(config.read_text(encoding="utf-8"), Loader=ProfileLoader)
+            decoded = yaml.load(read_text_file(config, role="Target profile"), Loader=ProfileLoader)
             if decoded is not None and not isinstance(decoded, dict):
-                raise ValueError
+                raise typer.BadParameter(f"Target profile must be a YAML mapping: {config}")
             cfg = decoded or {}
-        except (OSError, UnicodeError, yaml.YAMLError, ValueError, TypeError, RecursionError):
+        except typer.BadParameter:
+            raise
+        except yaml.YAMLError as exc:
             raise typer.BadParameter(
-                "Target profile must be readable YAML with a unique-key mapping; review its fields."
+                f"Target profile is not valid YAML: {config} ({yaml_error_detail(exc)})"
             ) from None
+        except (ValueError, TypeError) as exc:
+            detail = str(exc) or "duplicate keys or invalid mapping"
+            raise typer.BadParameter(
+                f"Target profile must have a unique-key mapping: {config} ({detail})"
+            ) from None
+        except RecursionError:
+            raise typer.BadParameter(f"Target profile is nested too deeply: {config}") from None
 
+    source_label = f"target profile '{config}'" if config is not None else "the command line"
     exploit = exploit or bool(cfg.get("exploit"))
     deep = deep or bool(cfg.get("deep"))
     mutate = mutate or bool(cfg.get("mutate"))
     verbose = verbose or bool(cfg.get("verbose"))
     if output is None and cfg.get("output"):
-        output = Path(cfg["output"])
+        output = path_field(cfg["output"], field="output", source=source_label)
     if transcript is None and cfg.get("transcript"):
-        transcript = Path(cfg["transcript"])
+        transcript = path_field(cfg["transcript"], field="transcript", source=source_label)
     if trajectory_log is None and cfg.get("trajectory_log"):
-        trajectory_log = Path(cfg["trajectory_log"])
+        trajectory_log = path_field(
+            cfg["trajectory_log"], field="trajectory_log", source=source_label
+        )
     if fail_on is None and cfg.get("fail_on"):
-        fail_on = cfg["fail_on"]
+        fail_on = text_field(cfg["fail_on"], field="fail_on", source=source_label)
     if system_prompt is None and cfg.get("system_prompt"):
-        system_prompt = cfg["system_prompt"]
+        system_prompt = text_field(cfg["system_prompt"], field="system_prompt", source=source_label)
     if auth_header is None and cfg.get("auth_header"):
-        auth_header = cfg["auth_header"]
+        auth_header = text_field(cfg["auth_header"], field="auth_header", source=source_label)
     if framework == "auto" and cfg.get("framework"):
-        framework = cfg["framework"]
+        framework = text_field(cfg["framework"], field="framework", source=source_label)
     if attacker_model is None and cfg.get("attacker_model"):
-        attacker_model = cfg["attacker_model"]
+        attacker_model = text_field(
+            cfg["attacker_model"], field="attacker_model", source=source_label
+        )
     if judge_model is None and cfg.get("judge_model"):
-        judge_model = cfg["judge_model"]
+        judge_model = text_field(cfg["judge_model"], field="judge_model", source=source_label)
     if judge_model is None and attacker_model:
         judge_model = attacker_model
-    if attacker_turns is None and cfg.get("attacker_turns"):
-        attacker_turns = int(cfg["attacker_turns"])
+    if attacker_turns is None and cfg.get("attacker_turns") is not None:
+        attacker_turns = integer_field(
+            cfg["attacker_turns"], field="attacker_turns", source=source_label
+        )
     if attacker_goal is None and cfg.get("attacker_goal"):
-        attacker_goal = cfg["attacker_goal"]
+        attacker_goal = text_field(cfg["attacker_goal"], field="attacker_goal", source=source_label)
     calibrate = calibrate or bool(cfg.get("calibrate"))
     calibrate_required = calibrate_required or bool(cfg.get("calibrate_required"))
     if escalation_model is None and cfg.get("escalation_model"):
-        escalation_model = cfg["escalation_model"]
-    if escalation_turns is None and cfg.get("escalation_turns"):
-        escalation_turns = int(cfg["escalation_turns"])
+        escalation_model = text_field(
+            cfg["escalation_model"], field="escalation_model", source=source_label
+        )
+    if escalation_turns is None and cfg.get("escalation_turns") is not None:
+        escalation_turns = integer_field(
+            cfg["escalation_turns"], field="escalation_turns", source=source_label
+        )
     if llm_log is None and cfg.get("llm_log"):
-        llm_log = Path(cfg["llm_log"])
+        llm_log = path_field(cfg["llm_log"], field="llm_log", source=source_label)
     # The AI attacker is an EXPLOIT-mode module, so enabling it implies --exploit.
     if attacker_model:
         exploit = True
@@ -310,13 +338,31 @@ def scan(  # noqa: PLR0913
     if curl is not None:
         if message_path is None:
             raise typer.BadParameter("--message-path is required when using --curl.")
-        request_template = RequestTemplate.from_curl(
-            curl.read_text(encoding="utf-8"),
-            message_path=message_path,
-            response_path=response_path,
-        )
+        try:
+            request_template = RequestTemplate.from_curl(
+                read_text_file(curl, role="cURL capture file"),
+                message_path=message_path,
+                response_path=response_path,
+            )
+        except (ValueError, IndexError, TypeError) as exc:
+            detail = str(exc) or type(exc).__name__
+            raise typer.BadParameter(
+                f"cURL capture file could not be parsed: {curl} ({detail}). "
+                "Check --message-path and the request JSON body."
+            ) from None
     elif cfg.get("request_template"):
-        request_template = RequestTemplate(**cfg["request_template"])
+        template_data = cfg["request_template"]
+        if not isinstance(template_data, dict):
+            raise typer.BadParameter(
+                f"Field 'request_template' in {source_label} must be a mapping."
+            )
+        try:
+            request_template = RequestTemplate(**template_data)
+        except ValidationError as exc:
+            field, detail = validation_field_error(exc, prefix="request_template")
+            raise typer.BadParameter(
+                f"Invalid field '{field}' in {source_label}: {detail}"
+            ) from None
 
     browser_cfg = None
     if browser_url is not None:
@@ -335,9 +381,18 @@ def scan(  # noqa: PLR0913
             headless=not headed,
         )
     elif cfg.get("browser"):
-        browser_data = dict(cfg["browser"])
+        browser_data = cfg["browser"]
+        if not isinstance(browser_data, dict):
+            raise typer.BadParameter(f"Field 'browser' in {source_label} must be a mapping.")
+        browser_data = dict(browser_data)
         browser_data.setdefault("url", target or cfg.get("url"))
-        browser_cfg = BrowserConfig(**browser_data)
+        try:
+            browser_cfg = BrowserConfig(**browser_data)
+        except ValidationError as exc:
+            field, detail = validation_field_error(exc, prefix="browser")
+            raise typer.BadParameter(
+                f"Invalid field '{field}' in {source_label}: {detail}"
+            ) from None
 
     # Resolve the URL: positional target, else profile url, else connector url.
     url = (
@@ -356,7 +411,11 @@ def scan(  # noqa: PLR0913
     from agentscan.core.external_analysis import validate_analysis_selection
 
     explicit_analysis = analysis_mode is not None or "analysis_mode" in cfg
-    analysis_mode = analysis_mode or cfg.get("analysis_mode") or "deterministic"
+    analysis_mode = text_field(
+        analysis_mode or cfg.get("analysis_mode") or "deterministic",
+        field="analysis_mode",
+        source=source_label,
+    )
     mcp_baseline = cfg.get("mcp_inventory_baseline")
     factuality_baseline = cfg.get("factuality_baseline")
     if factuality_baseline is not None and (
@@ -389,8 +448,16 @@ def scan(  # noqa: PLR0913
             "mcp_inventory_baseline selects catalog-only SCAN: use deterministic analysis "
             "without exploit/deep, mutations, calibration or role models."
         )
-    external_model = external_model or cfg.get("external_model") or ""
-    data_classification = data_classification or cfg.get("data_classification") or "sensitive"
+    external_model = text_field(
+        external_model or cfg.get("external_model") or "",
+        field="external_model",
+        source=source_label,
+    )
+    data_classification = text_field(
+        data_classification or cfg.get("data_classification") or "sensitive",
+        field="data_classification",
+        source=source_label,
+    )
     if data_classification not in {"sensitive", "non_sensitive"}:
         raise typer.BadParameter("--data-classification must be sensitive or non_sensitive.")
     if external_model and analysis_mode != "external":
@@ -428,6 +495,13 @@ def scan(  # noqa: PLR0913
             "indirect_adapter must be document_v1 or omitted from the profile."
         )
     try:
+        framework_value = Framework(framework)
+    except ValueError:
+        choices = ", ".join(item.value for item in Framework)
+        raise typer.BadParameter(
+            f"Field 'framework' in {source_label} must be one of: {choices}."
+        ) from None
+    try:
         target_obj = Target(
             analysis_mode=analysis_mode,
             local_model=local_model,
@@ -436,7 +510,7 @@ def scan(  # noqa: PLR0913
             canary_token=cfg.get("canary_token"),
             indirect_adapter=cfg.get("indirect_adapter"),
             url=url,
-            framework=Framework(framework),
+            framework=framework_value,
             system_prompt=system_prompt,
             auth_header=auth_header,
             request_template=request_template,
@@ -451,18 +525,23 @@ def scan(  # noqa: PLR0913
             mcp_inventory_baseline=mcp_baseline,
             factuality_baseline=factuality_baseline,
         )
-    except ValidationError:
-        raise typer.BadParameter(
-            "Invalid factuality_baseline: provide a matching HTTP(S) target_url and 1–16 "
-            "unique approved cases with question, expected_answer and a different false_answer; "
-            "use deterministic SCAN without connector overrides."
-            if factuality_baseline is not None
-            else "Invalid mcp_inventory_baseline: use the exact MCP target endpoint, supported "
-            "algorithm and an independently approved map of tool names to SHA256 hashes; "
-            "browser and captured-request overrides are unsupported."
-            if mcp_baseline is not None
-            else "Invalid target configuration; review the profile fields."
-        ) from None
+    except ValidationError as exc:
+        if factuality_baseline is not None:
+            message = (
+                "Invalid factuality_baseline: provide a matching HTTP(S) target_url and 1–16 "
+                "unique approved cases with question, expected_answer and a different false_answer; "
+                "use deterministic SCAN without connector overrides."
+            )
+        elif mcp_baseline is not None:
+            message = (
+                "Invalid mcp_inventory_baseline: use the exact MCP target endpoint, supported "
+                "algorithm and an independently approved map of tool names to SHA256 hashes; "
+                "browser and captured-request overrides are unsupported."
+            )
+        else:
+            field, detail = validation_field_error(exc)
+            message = f"Invalid field '{field}' in {source_label}: {detail}"
+        raise typer.BadParameter(message) from None
 
     # Determine modes
     modes = (
