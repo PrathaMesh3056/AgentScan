@@ -89,7 +89,7 @@ async def test_overlapping_dashboard_scan_rejected_and_cancellation_sticks(monke
     state.report = old_report
     response = await api_start_scan({"target_url": "http://owned.example"})
     assert response.status_code == 200
-    assert state.report is None
+    assert state.report is old_report
     await started.wait()
     duplicate = await api_start_scan({"target_url": "http://other.example"})
     assert duplicate.status_code == 409
@@ -98,7 +98,7 @@ async def test_overlapping_dashboard_scan_rejected_and_cancellation_sticks(monke
     with pytest.raises(asyncio.CancelledError):
         await task
     assert state.scan_status["status"] == "cancelled"
-    assert state.report is None
+    assert state.report is old_report
 
 
 @pytest.mark.parametrize(

@@ -6,6 +6,8 @@
 
     function closeScanModal() {
       document.getElementById('scan-external-consent').checked = false;
+      const auth = document.getElementById('scan-auth-header');
+      if (auth) auth.value = '';
       const m = document.getElementById('modal-scan');
       if (m) m.classList.add('hidden');
     }
@@ -52,6 +54,68 @@
       return true;
     }
 
+    function scanErrorStatus(statusData) {
+      return {
+        ...statusData,
+        status: ({ completed: 'COMPLETE', failed: 'ERROR', inconclusive: 'INCONCLUSIVE', running: 'RUNNING', cancelled: 'CANCELLED' })[statusData.status] || String(statusData.status || '').toUpperCase(),
+        module_errors: [...(Array.isArray(statusData.module_errors) ? statusData.module_errors : []), ...(statusData.error ? [{ error: statusData.error, error_id: statusData.error_id }] : [])]
+      };
+    }
+
+    function applyScanStatus(statusData, options = {}) {
+      const data = statusData && typeof statusData === 'object' ? statusData : {};
+      const view = DashboardSemantics.scanStatusView(data.status);
+      const badge = document.getElementById('scan-status-badge');
+      const bar = document.getElementById('scan-progress-bar');
+      const logBox = document.getElementById('scan-log-box');
+      const btn = document.getElementById('btn-trigger-scan');
+      const cancelBtn = document.getElementById('btn-cancel-scan');
+      const evaluated = Number(data.tests_run) || 0;
+      const selected = Number(data.tests_selected) || 0;
+      if (badge) { badge.innerText = view.label; badge.className = `assessment-badge status-${view.tone}`; }
+      if (bar) bar.style.width = `${DashboardSemantics.scanProgressPercent(data)}%`;
+      if (btn) { btn.classList.toggle('opacity-50', view.active); btn.classList.toggle('pointer-events-none', view.active); }
+      if (cancelBtn) { cancelBtn.classList.toggle('opacity-50', !view.active); cancelBtn.classList.toggle('pointer-events-none', !view.active); }
+      const modalErrors = document.getElementById('scan-assessment-errors');
+      if (modalErrors) modalErrors.innerHTML = DashboardSemantics.assessmentErrorMarkup(scanErrorStatus(data));
+      if (logBox && view.status !== 'idle') {
+        const line = `[SCAN] Status: ${view.label} • Evaluated checks: ${evaluated}/${selected}${data.current_module ? ` • ${data.current_module}` : ''}`;
+        logBox.innerText = options.appendLog && logBox.innerText ? `${logBox.innerText}\n${line}` : line;
+      }
+      return view;
+    }
+
+    function startScanPolling() {
+      if (scanPollTimer) clearInterval(scanPollTimer);
+      scanPollTimer = setInterval(async () => {
+        try {
+          const statusData = await DashboardSemantics.requestJSON('/api/scan/status');
+          DashboardSemantics.showLaunchError('scan-launch-error', null);
+          const view = applyScanStatus(statusData, { appendLog: true });
+          if (view.terminal) {
+            clearInterval(scanPollTimer);
+            scanPollTimer = null;
+            const logBox = document.getElementById('scan-log-box');
+            if (logBox) logBox.innerText += '\n[SCAN] Execution ended. Review assessment coverage and module errors.';
+            showToast(`Scan ${view.status}`);
+            loadAllTelemetry();
+          }
+        } catch (err) {
+          DashboardSemantics.showLaunchError('scan-launch-error', 'Scan status could not refresh. The scan may still be running. ' + err.message);
+        }
+      }, 1500);
+    }
+
+    async function rehydrateScanState() {
+      try {
+        const statusData = await DashboardSemantics.requestJSON('/api/scan/status');
+        const view = applyScanStatus(statusData);
+        if (view.active) startScanPolling();
+      } catch (err) {
+        DashboardSemantics.showLaunchError('scan-launch-error', 'Scan status could not be restored after reload. ' + err.message);
+      }
+    }
+
     async function triggerScanAction() {
       if (!validateSubmission('scan', 'scan-launch-error')) return;
       const formValues = AgentScanForms.getValues('scan');
@@ -92,39 +156,7 @@
         }, 'scan');
         if (badge) { badge.innerText = 'RUNNING'; badge.className = 'assessment-badge status-neutral'; }
         if (logBox) logBox.innerText += `\n[SCAN-CONTROLLER] Scan dispatched. Task ID: ${data.scan_id || 'Not provided'}\n[SCAN-CONTROLLER] Polling status...`;
-
-        if (scanPollTimer) clearInterval(scanPollTimer);
-        scanPollTimer = setInterval(async () => {
-          try {
-            const statusData = await DashboardSemantics.requestJSON('/api/scan/status');
-            DashboardSemantics.showLaunchError('scan-launch-error', null);
-            const evaluated = Number(statusData.tests_run) || 0;
-            const selected = Number(statusData.tests_selected) || 0;
-            const modalErrors = document.getElementById('scan-assessment-errors');
-            if (modalErrors) modalErrors.innerHTML = DashboardSemantics.assessmentErrorMarkup({
-              ...statusData,
-              status: ({ completed: 'COMPLETE', failed: 'ERROR', inconclusive: 'INCONCLUSIVE', running: 'RUNNING' })[statusData.status] || statusData.status,
-              module_errors: [...(Array.isArray(statusData.module_errors) ? statusData.module_errors : []), ...(statusData.error ? [{ error: statusData.error, error_id: statusData.error_id }] : [])]
-            });
-            if (bar) bar.style.width = `${selected ? Math.min(100, evaluated / selected * 100) : 0}%`;
-            if (logBox) logBox.innerText += `\n[SCAN] Status: ${statusData.status} • Evaluated checks: ${evaluated}/${selected}`;
-
-            if (['completed', 'inconclusive', 'failed', 'cancelled', 'idle'].includes(statusData.status)) {
-              clearInterval(scanPollTimer);
-              scanPollTimer = null;
-              const tone = statusData.status === 'completed' ? 'complete' : statusData.status === 'failed' ? 'error' : 'warning';
-              if (badge) { badge.innerText = String(statusData.status).toUpperCase(); badge.className = `assessment-badge status-${tone}`; }
-              if (btn) btn.classList.remove('opacity-50', 'pointer-events-none');
-              if (cancelBtn) cancelBtn.classList.add('opacity-50', 'pointer-events-none');
-              if (logBox) logBox.innerText += `\n[SCAN] Execution ended: ${statusData.status}. Review assessment coverage and module errors.`;
-              showToast(`Scan ${statusData.status}`);
-              loadAllTelemetry();
-            }
-          } catch (err) {
-            DashboardSemantics.showLaunchError('scan-launch-error', 'Scan status could not refresh. The scan may still be running. ' + err.message);
-          }
-        }, 1500);
-
+        startScanPolling();
       } catch (err) {
         DashboardSemantics.showLaunchError('scan-launch-error', err.message);
         if (badge) { badge.innerText = 'LAUNCH ERROR'; badge.className = 'assessment-badge status-error'; }
@@ -136,17 +168,16 @@
 
     async function cancelScanAction() {
       try {
-        await DashboardSemantics.requestJSON('/api/scan/cancel', { method: 'POST' });
-        if (scanPollTimer) clearInterval(scanPollTimer);
-        const badge = document.getElementById('scan-status-badge');
-        if (badge) { badge.innerText = 'CANCELLED'; badge.className = 'px-2.5 py-0.5 rounded-full font-bold bg-slate-100 text-slate-700'; }
-        const logBox = document.getElementById('scan-log-box');
-        if (logBox) logBox.innerText += '\n[SCAN-CONTROLLER] Scan cancelled by operator.';
-        const btn = document.getElementById('btn-trigger-scan');
-        const cancelBtn = document.getElementById('btn-cancel-scan');
-        if (btn) btn.classList.remove('opacity-50', 'pointer-events-none');
-        if (cancelBtn) cancelBtn.classList.add('opacity-50', 'pointer-events-none');
-        showToast("Scan cancelled");
+        const data = await DashboardSemantics.requestJSON('/api/scan/cancel', { method: 'POST' });
+        if (scanPollTimer) { clearInterval(scanPollTimer); scanPollTimer = null; }
+        applyScanStatus(data);
+        if (data.cancelled) {
+          const logBox = document.getElementById('scan-log-box');
+          if (logBox) logBox.innerText += '\n[SCAN-CONTROLLER] Scan cancelled by operator.';
+          showToast('Scan cancelled');
+        } else {
+          showToast('No running scan to cancel');
+        }
       } catch (err) {
         DashboardSemantics.showLaunchError('scan-launch-error', err.message);
         showToast('Cancel error: ' + err.message);
@@ -838,10 +869,11 @@
           });
         });
 
-        es.addEventListener('scan:start', () => {
-          globalTelemetry.report = null;
-          globalTelemetry.findings = [];
-          renderOverview();
+        es.addEventListener('scan:start', (e) => {
+          try {
+            applyScanStatus(JSON.parse(e.data));
+          } catch {}
+          startScanPolling();
           showToast('Scan execution started');
         });
 
@@ -986,6 +1018,7 @@
       loadAllTelemetry();
       loadGatewayStatus();
       initEventStream();
+      rehydrateScanState();
 
       const searchInput = document.getElementById('top-search-input');
       if (searchInput) {

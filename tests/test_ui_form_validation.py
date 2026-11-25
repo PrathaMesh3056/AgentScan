@@ -400,7 +400,7 @@ def test_every_authored_control_has_validation_and_invalid_value_case():
     const assert = require('node:assert/strict');
     const forms = require('./agentscan/ui/static/form-validation.js');
     const inventory = forms.inventory();
-    const good = {url:'http://agent.example/chat',path:'example.py',integer:'5',choice:null,boolean:false,consent:true,localModel:'ollama/example',externalModel:'example-1',tool:'agentscan_scan',jsonObject:'{}',signingKey:'x'.repeat(32),text:'example',canary:'SYNTHETIC_PRIVATE_REFERENCE_001'};
+    const good = {url:'http://agent.example/chat',path:'example.py',integer:'5',choice:null,boolean:false,consent:true,localModel:'ollama/example',externalModel:'example-1',tool:'agentscan_scan',jsonObject:'{}',signingKey:'x'.repeat(32),text:'example',canary:'SYNTHETIC_PRIVATE_REFERENCE_001',header:'Authorization: Bearer synthetic-token'};
     for (const spec of inventory) {
       const valid = spec.type === 'choice' ? spec.choices[0] : good[spec.type];
       assert.ok(!forms.checkField(spec, valid).error, spec.id + ' valid');
@@ -413,6 +413,7 @@ def test_every_authored_control_has_validation_and_invalid_value_case():
       if (spec.type === 'localModel') assert.ok(forms.checkField(spec,'ollama/example-cloud').error,spec.id + ' local cloud model');
       if (spec.type === 'canary') for (const value of ['short', 'x'.repeat(129), 'bad reference value', 'abc!'.repeat(5), 'abcdefghijklmnoé']) assert.ok(forms.checkField(spec,value).error,spec.id + ' synthetic reference');
       if (spec.type === 'text' || spec.type === 'path') assert.ok(forms.checkField(spec,'bad\0value').error,spec.id + ' null');
+      if (spec.type === 'header') for (const value of ['bad\0value','Header Name: value','Authorization:','Authorization: Béarer']) assert.ok(forms.checkField(spec,value).error,spec.id + ' header');
       if (spec.type === 'jsonObject') for (const value of ['[]','null','1','{"x":}', '"scalar"']) assert.ok(forms.checkField(spec,value).error,spec.id + ' JSON');
     }
     console.log(JSON.stringify(inventory));

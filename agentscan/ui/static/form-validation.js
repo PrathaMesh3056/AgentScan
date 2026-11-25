@@ -12,7 +12,7 @@
     descriptor(`${prefix}-external-consent`, 'data_classification', 'consent', { when: 'external' })
   ];
   const definitions = {
-    scan: [descriptor('scan-target-url', 'target_url', 'url', { protocols: scanRemote }), descriptor('scan-mode', 'mode', 'choice', { choices: ['FAST', 'ACTIVE', 'DEEP'] }), descriptor('scan-concurrency', 'concurrency', 'integer', { min: 1, max: 10 }), descriptor('scan-canary-token', 'canary_token', 'canary', { optional: true }), descriptor('scan-indirect-adapter', 'indirect_adapter', 'choice', { choices: ['none', 'document_v1'] }), descriptor('scan-mcp-inventory-baseline', 'mcp_inventory_baseline', 'mcpBaseline', { optional: true }), descriptor('scan-factuality-baseline', 'factuality_baseline', 'factualityBaseline', { optional: true }), ...analysis('scan')],
+    scan: [descriptor('scan-target-url', 'target_url', 'url', { protocols: scanRemote }), descriptor('scan-auth-header', 'auth_header', 'header', { optional: true }), descriptor('scan-mode', 'mode', 'choice', { choices: ['FAST', 'ACTIVE', 'DEEP'] }), descriptor('scan-concurrency', 'concurrency', 'integer', { min: 1, max: 10 }), descriptor('scan-canary-token', 'canary_token', 'canary', { optional: true }), descriptor('scan-indirect-adapter', 'indirect_adapter', 'choice', { choices: ['none', 'document_v1'] }), descriptor('scan-mcp-inventory-baseline', 'mcp_inventory_baseline', 'mcpBaseline', { optional: true }), descriptor('scan-factuality-baseline', 'factuality_baseline', 'factualityBaseline', { optional: true }), ...analysis('scan')],
     discovery: [descriptor('discovery-target', 'url', 'url', { protocols: remote }), descriptor('discovery-mode', 'mode', 'choice', { choices: ['auto', 'http', 'browser'] }), descriptor('discovery-auto-probe', 'allow_probe', 'boolean')],
     audit: [descriptor('audit-codebase-path', 'path', 'path'), descriptor('audit-ruleset', 'ruleset', 'choice', { choices: ['default'] }),
       descriptor('audit-offline', 'offline', 'boolean'), descriptor('audit-show-transitive', 'show_transitive', 'boolean'),
@@ -89,6 +89,15 @@
     if (spec.type === 'boolean') return typeof raw === 'boolean' ? { value: raw } : { error: 'Choose a checked or unchecked value.' };
     if (spec.type === 'consent') return raw === true ? { value: 'non_sensitive' } : { error: 'Designate this scan as non-sensitive and authorize external analysis, or choose deterministic/local analysis.' };
     if (!value) return { error: 'This field is required.' };
+    if (spec.type === 'header') {
+      if (!/^[\x20-\x7e]{1,4096}$/.test(value)) return { error: 'Use a target authentication header without control characters or non-ASCII text.' };
+      if (value.includes(':')) {
+        const index = value.indexOf(':');
+        const name = value.slice(0, index).trim();
+        if (!/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(name) || !value.slice(index + 1).trim()) return { error: 'Use a valid header name followed by a nonempty value, for example Authorization: Bearer token.' };
+      }
+      return { value };
+    }
     if (spec.type === 'integer') {
       if (!/^\d+$/.test(value) || !Number.isSafeInteger(Number(value)) || Number(value) < spec.min || Number(value) > spec.max) return { error: `Enter a whole number between ${spec.min} and ${spec.max}.` };
       return { value: Number(value) };

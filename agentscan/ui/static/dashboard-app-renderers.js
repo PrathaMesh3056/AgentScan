@@ -22,7 +22,7 @@
         if (button) button.textContent = `${label} (${count})`;
       });
       const query = (document.getElementById('findings-search')?.value || '').trim().toLowerCase();
-      const list = findings.filter(f => (!filterSev || filterSev === 'ALL' || f.severity === filterSev) &&
+      const list = DashboardSemantics.sortFindings(findings).filter(f => (!filterSev || filterSev === 'ALL' || f.severity === filterSev) &&
         (!query || [f.attack_id, f.title, f.description, f.agent, f.evidence, f.category].some(value => String(value || '').toLowerCase().includes(query))));
       const summary = document.getElementById('findings-summary');
       const assessment = DashboardSemantics.summarize(globalTelemetry.report);

@@ -105,3 +105,17 @@ the fix. Fixtures are synthetic (monkeypatched runners, loopback URLs, fake toke
 * This plan committed first and pushed; draft PR opened.
 * Implementation with failing-before/passing-after regression tests, targeted suite, Ruff check/format,
   `node --check`, and a conventional commit referencing #39.
+
+## Verification
+
+Local environment: Python 3.12.7 (`D:\prathamesh\AgentScan-gw-impl\.venv`), Node v25.4.0. Fixtures are
+synthetic; the scan runner is monkeypatched and targets are loopback URLs.
+
+* Failing-before: `tests/test_ui_scan_workflow.py` on the pre-fix tree -> `8 failed, 1 passed` (the passing
+  case is the API guard that already forwarded `auth_header`).
+* Passing-after, one run over `tests/test_ui_scan_workflow.py`, `tests/test_ui_lifecycle.py`,
+  `tests/test_ui.py`, `tests/test_ui_form_validation.py`, `tests/test_containment_security.py`,
+  `tests/test_ui_structure.py`, `tests/test_ui_scan_diagnostics.py` and
+  `tests/test_ui_target_selection.py` -> `436 passed, 1 skipped`.
+* `ruff check` and `ruff format --check` pass on the changed Python files; `node --check` passes on every
+  changed JavaScript file.
