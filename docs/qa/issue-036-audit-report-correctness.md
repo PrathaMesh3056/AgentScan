@@ -155,6 +155,12 @@ Results:
 - Broad related slice (`tests/test_reporting`, `tests/test_supply_chain/test_audit_coverage.py`,
   `tests/test_cli.py`, `tests/test_mcp`, `tests/test_identity`, `tests/test_ui.py`):
   `190 passed, 3 skipped in 13.39s`.
+- Full suite under the session sandbox: `3372 passed, 38 skipped, 5 failed in 279.31s`. The five failures are
+  process/permission tests unrelated to this change (`tests/test_connectors.py::test_mcp_stdio_echo_...`,
+  three `tests/test_mcp_catalog_process.py` cases, and
+  `tests/test_remediation/test_recovery.py::test_process_exit_keeps_recoverable_preimages_and_preserves_later_edits`);
+  they need child-process pipes or recovery-file permissions that the sandbox blocks. Re-run with full access:
+  `5 passed in 1.18s`.
 - Failing-before check: a detached worktree at base `7c17743` with only the new reporting modules and new
   tests copied in produced `7 failed, 7 passed`; failures were the JSON round-trip, parity, all three
   module-exception tests, the qualified-HTML test, and the mixed-scope label. The seven passing tests are
