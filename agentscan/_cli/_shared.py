@@ -5,24 +5,70 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
+import os
+import shutil
+import sys
 from pathlib import Path
 from typing import Any
 
 import typer
+import typer.rich_utils as rich_utils
+from loguru import logger
 from rich.console import Console
 
 from agentscan.core.models import Finding, SspClass
 
+# ── Help Width ────────────────────────────────────────────────────────────────
+# Typer defaults to the terminal width (often 80 in non-TTY runs), which
+# ellipsizes long option names such as --allow-unverified-completion. Keep a
+# 100-column floor while still honoring a wider terminal or TERMINAL_WIDTH.
+_configured_width = rich_utils.MAX_WIDTH
+if _configured_width is None:
+    _configured_width = shutil.get_terminal_size((100, 24)).columns
+rich_utils.MAX_WIDTH = max(_configured_width, 100)
+
+# ── Logging ───────────────────────────────────────────────────────────────────
+# Loguru defaults to DEBUG, so importing the attack registry floods the CLI with
+# module-registration lines. Configure the default sink once, before command
+# modules are imported, and allow an explicit opt-in for troubleshooting.
+_LOG_LEVELS = frozenset({"TRACE", "DEBUG", "INFO", "SUCCESS", "WARNING", "ERROR", "CRITICAL"})
+_log_handler_id: int | None = None
+
+
+def _configure_logging() -> str:
+    global _log_handler_id
+
+    requested = os.environ.get("AGENTSCAN_LOG_LEVEL", "INFO").strip().upper()
+    level = requested if requested in _LOG_LEVELS else "INFO"
+
+    with contextlib.suppress(ValueError):
+        logger.remove(0 if _log_handler_id is None else _log_handler_id)
+
+    _log_handler_id = logger.add(sys.stderr, level=level)
+    return level
+
+
+_configure_logging()
+
 # ── Application Instance ──────────────────────────────────────────────────────
+
+_HELP_OPTION_NAMES = ["-h", "--help"]
 
 app = typer.Typer(
     name="agentscan",
     help="Open-source security scanner for AI agents.",
     add_completion=False,
+    suggest_commands=False,
+    context_settings={"help_option_names": _HELP_OPTION_NAMES},
 )
 
-api_app = typer.Typer(help="AgentScan REST API server commands.")
+api_app = typer.Typer(
+    help="AgentScan REST API server commands.",
+    suggest_commands=False,
+    context_settings={"help_option_names": _HELP_OPTION_NAMES},
+)
 app.add_typer(api_app, name="api")
 
 console = Console()
