@@ -1,6 +1,6 @@
 {% extends "base.html.j2" %}
 
-{% block title %}AgentScan Identity &amp; RBAC Audit Report{% endblock %}
+{% block title %}AgentScan {{ report.assessment_label }} Report{% endblock %}
 
 {% block content %}
 <!-- ==========================================
@@ -20,10 +20,10 @@
                 AgentScan
             </div>
             <div style="font-size: 17pt; font-weight: 800; color: #0f172a; line-height: 1.2;">
-                AI Agent Identity &amp; RBAC Entitlement Audit Report
+                {{ report.assessment_label }} Report
             </div>
             <div style="font-size: 8.5pt; color: #64748b; font-weight: 500; margin-top: 3px;">
-                STATIC MANIFEST VERIFICATION · LEAST-PRIVILEGE ENFORCEMENT · PRIVILEGE ESCALATION ANALYSIS
+                STATIC AUDIT · COVERAGE-QUALIFIED FINDINGS · RUNTIME BEHAVIOUR NOT ASSESSED
             </div>
         </div>
         <div style="display: table-cell; vertical-align: top; text-align: right; width: 180px;">
@@ -38,20 +38,80 @@
 
     <!-- Metadata Grid -->
     <div style="display: table; width: 100%; margin-top: 20px; padding-top: 14px; border-top: 1px solid #e2e8f0; font-size: 8.5pt;">
-        <div style="display: table-cell; width: 33.3%;">
+        <div style="display: table-cell; width: 40%;">
             <strong style="color: #64748b; text-transform: uppercase; font-size: 7pt; letter-spacing: 0.5px; display: block;">Scope</strong>
-            <span style="font-family: monospace; font-weight: 600; color: #0f172a;">Static Agent Manifests Directory</span>
+            <span style="font-weight: 600; color: #0f172a;">{{ report.assessment_label }}</span>
         </div>
-        <div style="display: table-cell; width: 33.3%;">
-            <strong style="color: #64748b; text-transform: uppercase; font-size: 7pt; letter-spacing: 0.5px; display: block;">Agents Discovered</strong>
-            <span style="font-weight: 600; color: #0f172a;">{{ report.agents_found | length }} Agent Entities</span>
+        <div style="display: table-cell; width: 35%;">
+            <strong style="color: #64748b; text-transform: uppercase; font-size: 7pt; letter-spacing: 0.5px; display: block;">Assessment</strong>
+            <span style="font-weight: 600; color: #0f172a;">{{ report.status }} · {{ report.coverage_summary }}</span>
         </div>
-        <div style="display: table-cell; width: 33.3%; text-align: right;">
+        <div style="display: table-cell; width: 25%; text-align: right;">
             <strong style="color: #64748b; text-transform: uppercase; font-size: 7pt; letter-spacing: 0.5px; display: block;">Audit Timestamp</strong>
             <span style="font-weight: 600; color: #0f172a;">{{ generated_at }}</span>
         </div>
     </div>
 </div>
+
+{% if report.audit_coverage %}
+<!-- ==========================================
+     EXPLICIT MODULE COVERAGE
+     ========================================== -->
+<div class="card" style="margin-bottom: 20px; padding: 18px 20px;">
+    <div style="display: table; width: 100%; margin-bottom: 8px;">
+        <div style="display: table-cell; vertical-align: middle; font-size: 10pt; font-weight: 800; color: #0f172a;">
+            Audit Coverage ({{ report.coverage_summary }})
+        </div>
+        <div style="display: table-cell; vertical-align: middle; text-align: right;">
+            <span class="badge {% if report.status == 'COMPLETE' %}badge-low{% elif report.status == 'NOT_ASSESSED' %}badge-neutral{% else %}badge-medium{% endif %}" style="font-size: 8pt; padding: 4px 10px;">
+                {{ report.status }}
+            </span>
+        </div>
+    </div>
+    <div style="font-size: 8.5pt; color: #64748b; margin-bottom: 12px;">
+        {{ report.coverage_scope_note }}
+        Modules marked SKIPPED were not selected for this run and are not part of the result.
+    </div>
+    <table class="data-table" style="margin-top: 0;">
+        <thead>
+            <tr>
+                <th style="width: 26%;">Module</th>
+                <th style="width: 13%;">Status</th>
+                <th style="width: 9%;">Checks</th>
+                <th style="width: 52%;">Source / limitation</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for item in report.audit_coverage %}
+            <tr>
+                <td>
+                    <code>{{ item.module }}</code>
+                    {% if item.label %}<span style="color: #94a3b8; font-size: 8pt;">({{ item.label }})</span>{% endif %}
+                </td>
+                <td>
+                    <span class="badge {% if item.status == 'COMPLETE' %}badge-low{% elif item.status == 'SKIPPED' %}badge-neutral{% elif item.status == 'ERROR' %}badge-critical{% else %}badge-medium{% endif %}" style="font-size: 7.5pt;">
+                        {{ item.status }}
+                    </span>
+                </td>
+                <td>{{ item.checks_run | default(0) }}</td>
+                <td style="font-size: 8pt; color: #475569;">
+                    {{ item.source | default("") }}
+                    {% if item.limitations %} — {{ item.limitations | join("; ") }}{% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% if report.module_errors %}
+    <div style="margin-top: 12px; padding: 10px 12px; background-color: #fef2f2; border: 1px solid #fecaca; border-radius: 6px;">
+        <div style="font-size: 7.5pt; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: #b91c1c; margin-bottom: 4px;">Modules that errored (not assessed)</div>
+        {% for error in report.module_errors %}
+        <div style="font-size: 8.5pt; color: #7f1d1d;"><strong>{{ error.module_name }}</strong>: {{ error.error }}</div>
+        {% endfor %}
+    </div>
+    {% endif %}
+</div>
+{% endif %}
 
 <!-- ==========================================
      EXECUTIVE SCORE & OVERVIEW
@@ -60,7 +120,7 @@
     <div style="display: table-cell; width: 36%; vertical-align: top; padding-right: 12px;">
         <div class="card" style="height: 100%; margin-bottom: 0; text-align: center; padding: 22px 16px; border-left: 5px solid {% if report.identity_score is none %}#64748b{% elif report.identity_score >= 80 %}#16a34a{% elif report.identity_score >= 50 %}#d97706{% else %}#dc2626{% endif %};">
             <div style="font-size: 8.5pt; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; color: #64748b;">
-                Identity Score
+                {{ report.score_label }}
             </div>
             <div style="font-size: 42pt; font-weight: 900; line-height: 1; margin: 10px 0; color: {% if report.identity_score is none %}#64748b{% elif report.identity_score >= 80 %}#16a34a{% elif report.identity_score >= 50 %}#d97706{% else %}#dc2626{% endif %};">
                 {{ report.identity_score if report.identity_score is not none else "N/A" }}{% if report.identity_score is not none %}<span style="font-size: 16pt; font-weight: 600; color: #94a3b8;">/100</span>{% endif %}
@@ -71,7 +131,10 @@
                 </span>
             </div>
             <div style="margin-top: 14px; font-size: 8pt; color: #64748b; line-height: 1.4;">
-                Evaluation of declared agent permissions, wildcard role assignments, and excessive capability boundaries against least-privilege standards.
+                {{ report.coverage_scope_note }}
+            </div>
+            <div style="margin-top: 8px; font-size: 7.5pt; color: #94a3b8; line-height: 1.4;">
+                Scores and findings cover only the assessed modules above; runtime behaviour is not assessed.
             </div>
         </div>
     </div>
@@ -112,7 +175,7 @@
      ========================================== -->
 <div style="margin-bottom: 16px;">
     <div style="font-size: 13pt; font-weight: 800; color: #0f172a; border-bottom: 2px solid #0f172a; padding-bottom: 6px; margin-bottom: 16px;">
-        Identity &amp; Entitlement Findings Dossier ({{ report.findings | length }})
+        Audit Findings Dossier ({{ report.findings | length }})
     </div>
 
     {% if report.findings %}
@@ -153,12 +216,28 @@
             {% endif %}
         </div>
         {% endfor %}
-    {% else %}
+    {% elif report.scope_complete and report.status == 'COMPLETE' %}
     <div class="card" style="text-align: center; padding: 36px 20px;">
         <div style="font-size: 28pt; color: #16a34a; margin-bottom: 8px;">✓</div>
-        <div style="font-size: 12pt; font-weight: 700; color: #0f172a;">Zero Identity Vulnerabilities Detected</div>
+        <div style="font-size: 12pt; font-weight: 700; color: #0f172a;">No Findings in the Full Audited Scope</div>
         <div style="font-size: 9pt; color: #64748b; margin-top: 4px;">
-            All audited agent manifests adhere to least-privilege role boundaries with no wildcard or dangerous permissions detected.
+            Every selected static-audit module completed without findings. This does not establish runtime safety.
+        </div>
+    </div>
+    {% elif report.status == 'COMPLETE' %}
+    <div class="card" style="text-align: center; padding: 36px 20px;">
+        <div style="font-size: 28pt; color: #16a34a; margin-bottom: 8px;">✓</div>
+        <div style="font-size: 12pt; font-weight: 700; color: #0f172a;">No Findings in the Assessed Modules</div>
+        <div style="font-size: 9pt; color: #64748b; margin-top: 4px;">
+            Only {{ report.modules_ran | length }} of {{ report.audit_coverage | length }} coverage entries were assessed{% if report.modules_skipped %}; {{ report.modules_skipped | length }} module(s) were not selected{% endif %}. This is a partial result, not a clean bill of health.
+        </div>
+    </div>
+    {% else %}
+    <div class="card" style="text-align: center; padding: 36px 20px;">
+        <div style="font-size: 22pt; color: #d97706; margin-bottom: 8px;">!</div>
+        <div style="font-size: 12pt; font-weight: 700; color: #0f172a;">Assessment Inconclusive</div>
+        <div style="font-size: 9pt; color: #64748b; margin-top: 4px;">
+            No findings were recorded in the modules that ran, but the assessment is {{ report.status }}: {{ report.modules_skipped | length }} module(s) were not selected and {{ report.modules_errored | length }} errored. Review the coverage table before treating this as a clean result.
         </div>
     </div>
     {% endif %}

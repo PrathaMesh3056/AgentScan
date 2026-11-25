@@ -12,7 +12,6 @@ from typing import Any
 from fastapi import APIRouter, Query, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
-from agentscan.core.models import Finding
 from agentscan.ui.state import event_bus, state
 from agentscan.ui.validation import Fields, directory_field
 
@@ -21,8 +20,6 @@ router = APIRouter(tags=["audit"])
 
 @router.post("/api/audit")
 async def api_audit(request: Request, payload: dict[str, Any]) -> Any:
-    from agentscan.core.scorer import calculate_score, score_band
-
     fields = Fields(payload)
     path_value = fields.text("path", default=".", required=True, max_length=4096)
     fields.choice("ruleset", ("default",), default="default")
@@ -49,101 +46,31 @@ async def api_audit(request: Request, payload: dict[str, Any]) -> Any:
     if isinstance(resolved, JSONResponse):
         return resolved
     path_str = resolved
-    (
-        scan_deps,
-        scan_config,
-        scan_secrets,
-        scan_typo,
-        scan_mcp,
-        scan_identity,
-        scan_frameworks,
-        scan_semgrep,
-    ) = checks.values()
 
-    all_findings: list[Finding] = []
-    total_checks = 0
-    coverage: list[dict] = []
+    # One shared orchestration path with the CLI and MCP server.
+    from agentscan.reporting.audit_runner import run_static_audit
 
-    if scan_deps:
-        from agentscan.supply_chain.dep_scanner import scan_dependencies
-
-        f, c = await asyncio.to_thread(
-            scan_dependencies,
-            path_str,
-            offline=offline,
-            show_transitive=show_transitive,
-            coverage=coverage,
-        )
-        all_findings.extend(f)
-        total_checks += c
-
-    if scan_config:
-        from agentscan.supply_chain.config_auditor import scan_config as _scan_cfg
-
-        f, c = _scan_cfg(path_str, coverage=coverage)
-        all_findings.extend(f)
-        total_checks += c
-
-    if scan_secrets:
-        from agentscan.supply_chain.secret_scanner import scan_secrets as _scan_sec
-
-        f, c = _scan_sec(path_str, coverage=coverage)
-        all_findings.extend(f)
-        total_checks += c
-
-    if scan_typo:
-        from agentscan.supply_chain.typosquat_detector import scan_typosquats
-
-        f, c = scan_typosquats(path_str, coverage=coverage)
-        all_findings.extend(f)
-        total_checks += c
-
-    if scan_mcp:
-        from agentscan.supply_chain.mcp_auditor import scan_mcp_configs
-
-        f, c = scan_mcp_configs(path_str, coverage=coverage)
-        all_findings.extend(f)
-        total_checks += c
-
-    if scan_identity:
-        from agentscan.identity.orchestrator import run_identity_audit
-
-        rep = run_identity_audit(path_str)
-        coverage.extend(rep.audit_coverage)
-        all_findings.extend(rep.findings)
-        total_checks += len(rep.agents_found)
-
-    if scan_frameworks:
-        from agentscan.supply_chain.framework_auditor import scan_frameworks as _scan_fw
-
-        f, c = _scan_fw(path_str, coverage=coverage)
-        all_findings.extend(f)
-        total_checks += c
-
-    if scan_semgrep:
-        from agentscan.supply_chain.semgrep_auditor import scan_semgrep as _scan_sg
-
-        f, c = _scan_sg(path_str, fallback_to_native=True, coverage=coverage)
-        all_findings.extend(f)
-        total_checks += c
-
-    incomplete = any(item["status"] != "COMPLETE" for item in coverage)
-    score = None if incomplete else calculate_score(all_findings, total_checks)
-    band = score_band(score)
-
-    state.audit_report = {
-        "path": path_str,
-        "findings": [f.model_dump(mode="json") for f in all_findings],
-        "score": score,
-        "band": band,
-        "status": "COMPLETE" if total_checks > 0 and not incomplete else "INCONCLUSIVE",
-        "coverage": coverage,
-        "total_checks": total_checks,
-    }
+    selected = [key for key, enabled in checks.items() if enabled]
+    run = await asyncio.to_thread(
+        run_static_audit,
+        path_str,
+        selected,
+        offline=offline,
+        show_transitive=show_transitive,
+    )
+    report_data = run.payload()
+    report_data["band"] = run.risk_band
+    report_data["findings"] = [f.model_dump(mode="json") for f in run.findings]
+    state.audit_report = report_data
     await event_bus.publish(
         {
             "type": "audit:complete",
-            "data": {"findings_count": len(all_findings), "score": score, "band": band},
+            "data": {
+                "findings_count": len(run.findings),
+                "score": run.score,
+                "band": run.risk_band,
+                "status": run.status,
+            },
         }
     )
     return JSONResponse(state.audit_report)

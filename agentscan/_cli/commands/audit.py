@@ -4,7 +4,6 @@
 
 from __future__ import annotations
 
-import uuid
 from pathlib import Path
 
 import typer
@@ -17,8 +16,6 @@ from agentscan._cli._shared import (
     console,
     write_report,
 )
-from agentscan.core.models import Finding
-from agentscan.core.scorer import calculate_score, score_band
 
 
 @app.command()
@@ -88,69 +85,48 @@ def audit(  # noqa: PLR0912, PLR0913
         ]
     )
 
-    all_findings: list[Finding] = []
-    total_checks = 0
-    coverage: list[dict] = []
+    selected = None
+    if not run_all:
+        selected = [
+            key
+            for key, enabled in zip(
+                (
+                    "scan_deps",
+                    "scan_config",
+                    "scan_secrets",
+                    "scan_typo",
+                    "scan_mcp",
+                    "scan_identity",
+                    "scan_frameworks",
+                    "scan_semgrep",
+                ),
+                (
+                    scan_deps,
+                    scan_config,
+                    scan_secrets,
+                    scan_typo,
+                    scan_mcp,
+                    scan_identity,
+                    scan_frameworks,
+                    scan_semgrep,
+                ),
+                strict=True,
+            )
+            if enabled
+        ]
 
-    # ── Lazy imports (keep startup fast when only `scan` is used) ─────────────
-    if run_all or scan_deps:
-        from agentscan.supply_chain.dep_scanner import scan_dependencies
+    # One shared orchestration path with the MCP server and dashboard.
+    from agentscan.reporting.audit_runner import run_static_audit
 
-        f, c = scan_dependencies(
-            path, offline=offline, show_transitive=show_transitive, coverage=coverage
-        )
-        all_findings.extend(f)
-        total_checks += c
-
-    if run_all or scan_config:
-        from agentscan.supply_chain.config_auditor import scan_config as _scan_cfg
-
-        f, c = _scan_cfg(path, coverage=coverage)
-        all_findings.extend(f)
-        total_checks += c
-
-    if run_all or scan_secrets:
-        from agentscan.supply_chain.secret_scanner import scan_secrets as _scan_sec
-
-        f, c = _scan_sec(path, coverage=coverage)
-        all_findings.extend(f)
-        total_checks += c
-
-    if run_all or scan_typo:
-        from agentscan.supply_chain.typosquat_detector import scan_typosquats
-
-        f, c = scan_typosquats(path, coverage=coverage)
-        all_findings.extend(f)
-        total_checks += c
-
-    if run_all or scan_mcp:
-        from agentscan.supply_chain.mcp_auditor import scan_mcp_configs
-
-        f, c = scan_mcp_configs(path, coverage=coverage)
-        all_findings.extend(f)
-        total_checks += c
-
-    if run_all or scan_identity:
-        from agentscan.identity.orchestrator import run_identity_audit
-
-        report = run_identity_audit(path)
-        coverage.extend(report.audit_coverage)
-        all_findings.extend(report.findings)
-        total_checks += len(report.agents_found)
-
-    if run_all or scan_frameworks:
-        from agentscan.supply_chain.framework_auditor import scan_frameworks as _scan_fw
-
-        f, c = _scan_fw(path, coverage=coverage)
-        all_findings.extend(f)
-        total_checks += c
-
-    if scan_semgrep:
-        from agentscan.supply_chain.semgrep_auditor import scan_semgrep as _scan_sg
-
-        f, c = _scan_sg(path, rules_path=rules, fallback_to_native=True, coverage=coverage)
-        all_findings.extend(f)
-        total_checks += c
+    run = run_static_audit(
+        path,
+        selected,
+        offline=offline,
+        show_transitive=show_transitive,
+        rules_path=rules if scan_semgrep else None,
+    )
+    all_findings = list(run.findings)
+    coverage = run.coverage
 
     aibom_path: Path | None = None
     if aibom:
@@ -203,29 +179,21 @@ def audit(  # noqa: PLR0912, PLR0913
     else:
         console.print("No findings recorded. Review the selected checks and their coverage.")
 
-    # ── Score ──────────────────────────────────────────────────────────────────
-    incomplete = any(item["status"] != "COMPLETE" for item in coverage)
-    score = None if incomplete else calculate_score(all_findings, total_checks)
-    band = score_band(score)
+    # ── Score and explicit coverage ────────────────────────────────────────────
+    score = run.score
+    band = run.risk_band
     score_text = f"{score}/100" if score is not None else "N/A"
-    console.print(f"\nAgentScan Audit Score: {score_text}  [{band}]")
+    console.print(f"\nAgentScan Audit Score: {score_text}  [{band}]  ({run.assessment_label})")
+    console.print(f"Assessment status: {run.status} - {run.coverage_scope_note}")
     for item in coverage:
-        console.print(f"{item['module']}: {item['status']} ({item.get('source', 'no input')})")
+        module_key = item.get("module_key", item.get("module", "unknown"))
+        console.print(f"{module_key}: {item['status']} ({item.get('source', 'no input')})")
+    for error in run.module_errors:
+        console.print(f"[red]{error['module_name']}: ERROR (not assessed) - {error['error']}[/red]")
 
     # ── JSON output ────────────────────────────────────────────────────────────
     if output is not None and output != aibom_path:
-        from agentscan.identity.models import IdentityReport
-
-        report = IdentityReport(
-            audit_id=str(uuid.uuid4()),
-            path_audited=path,
-            agents_found=[],
-            findings=all_findings,
-            identity_score=score,
-            audit_coverage=coverage,
-            status="INCONCLUSIVE" if incomplete or total_checks == 0 else "COMPLETE",
-        )
-        write_report(report, output)
+        write_report(run.to_identity_report(), output)
         console.print(f"Findings written to {output}")
 
     if fail_on is not None and _fail_on_should_exit(all_findings, fail_on):
