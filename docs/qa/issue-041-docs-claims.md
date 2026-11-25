@@ -1,6 +1,6 @@
 # Issue #41 — Documentation and claims (QA-086, QA-108, QA-120/121/122, QA-175)
 
-Status: draft plan, committed before the documentation changes it describes.
+Status: implemented on `fix/qa-041-docs-claims` (draft PR #58); see Results.
 
 ## Problem
 
@@ -97,7 +97,7 @@ Out of scope:
 
 `tests/test_docs_qa041.py` runs offline with synthetic fixtures and loopback only:
 
-- extract fenced `bash`/`python` blocks by marker and assert the documented
+- extract the quickstart section's fenced `bash`/`python` blocks and assert the documented
   commands, flags, endpoints, environment variables and relative links exist in
   the shipped code;
 - run the documented fixture-target snippet on an ephemeral loopback port and
@@ -109,8 +109,8 @@ Commands used for verification:
 
 ```powershell
 $env:PYTHONDONTWRITEBYTECODE='1'
-& 'D:\prathamesh\AgentScan-gw-impl\.venv\Scripts\python.exe' -m pytest tests/test_docs_qa041.py -q -p no:cacheprovider
-& 'D:\prathamesh\AgentScan-gw-impl\.venv\Scripts\python.exe' -m ruff check docs tests/test_docs_qa041.py
+& 'D:\prathamesh\AgentScan-gw-impl\.venv\Scripts\python.exe' -m pytest tests/test_docs_qa041.py -q -p no:cacheprovider --basetemp C:\Users\prath\.deepai-code\scratch\2026-11-24-so-dont-touch-this-issue-c82a4f9a\qa41-bt
+& 'D:\prathamesh\AgentScan-gw-impl\.venv\Scripts\python.exe' -m ruff check tests/test_docs_qa041.py
 & 'D:\prathamesh\AgentScan-gw-impl\.venv\Scripts\python.exe' -m ruff format --check tests/test_docs_qa041.py
 ```
 
@@ -140,3 +140,19 @@ not imply otherwise.
    (and §19 implementation-decision wording if it still says otherwise).
 2. The frozen spec's `verify` subcommand description must be reconciled with the
    shipped CLI once the spec owner unfreezes it.
+
+## Results
+
+- Before the documentation changes, `tests/test_docs_qa041.py` failed 9 of 10
+  tests (the plan-document test passed).
+- After the changes: `10 passed in 0.49s`.
+- `tests/test_docs_qa041.py tests/test_ui_structure.py tests/test_ui_gateway_status.py`
+  together: `44 passed`.
+- Ruff: `All checks passed!` for the check, and `1 file already formatted` for the
+  format check (the file was formatted once with `ruff format`).
+
+Not executed: the full PostgreSQL/Redis walkthrough in `docs/api.md` §1-§6. It
+needs container services, so the tests validate the documented commands, flags,
+environment variables, endpoints and fixture against the shipped code, and run the
+fixture snippet, but they do not claim an end-to-end stack run.
+

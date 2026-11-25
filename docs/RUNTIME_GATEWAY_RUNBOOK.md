@@ -795,4 +795,5 @@ agentscan-gateway policy verify --bundle BUNDLE --public-key PUBLIC_KEY
 ```
 
 `verify` remains listed for forward compatibility but is not implemented; it
-exits with a usage error. Use `policy verify` for bundles.
+exits 1 with `agentscan-gateway: error: verify is not available yet`. Use
+`policy verify` for bundles.
