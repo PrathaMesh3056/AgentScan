@@ -2,9 +2,144 @@
 
 The optional service uses FastAPI for authentication and scan submission, Redis Streams for delivery, and PostgreSQL for durable scan state and report JSON. Install the `ui` and `api` extras for the service; a DEEP worker also needs the `deep` extras and a suitable model cache.
 
+## Local quickstart (copy-paste)
+
+This walkthrough runs the API on loopback against a synthetic fixture target. Every
+key, password and credential below is disposable and local; never reuse them for a
+deployed service. PostgreSQL 16 and Redis 6.2+ must be reachable before the API
+starts.
+
+### 1. Start PostgreSQL and Redis
+
+```bash
+export AGENTSCAN_POSTGRES_PASSWORD='local-fixture-password'
+docker compose -f docker-compose.api.yml up -d redis postgres
+```
+
+The Compose file maps PostgreSQL to `127.0.0.1:5432` and Redis to
+`127.0.0.1:6379`.
+
+### 2. Create local keys, credentials and tenant policy
+
+```bash
+mkdir -p .agentscan-local
+openssl genpkey -algorithm ED25519 -out .agentscan-local/agentscan-jwt.pem
+python -c "from pathlib import Path; from cryptography.fernet import Fernet; Path('.agentscan-local/agentscan-data.key').write_bytes(Fernet.generate_key())"
+```
+
+```bash
+cat > .agentscan-local/tenant-credentials.json <<'JSON'
+{"tenant-a": "local-tenant-a-secret-0123456789abcdef"}
+JSON
+cat > .agentscan-local/tenant-policies.json <<'JSON'
+{"tenant-a": {"origins": ["http://127.0.0.1:8010"], "networks": ["127.0.0.1/32"], "max_active_scans": 2, "submissions_per_hour": 10, "max_scan_seconds": 120, "max_target_requests": 50, "allow_local_model_analysis": false, "allow_external_model_analysis": false}}
+JSON
+```
+
+The tenant secret must be at least 32 characters. The policy enrolls the
+fixture origin and its loopback network; every target must also appear in
+`AGENTSCAN_ALLOWED_TARGET_HOSTS`.
+
+### 3. Export the configuration
+
+```bash
+export AGENTSCAN_DATABASE_URL='postgresql://agentscan:local-fixture-password@127.0.0.1:5432/agentscan'
+export AGENTSCAN_REDIS_URL='redis://127.0.0.1:6379/0'
+export AGENTSCAN_JWT_PRIVATE_KEY_FILE="$PWD/.agentscan-local/agentscan-jwt.pem"
+export AGENTSCAN_DATA_KEY_FILE="$PWD/.agentscan-local/agentscan-data.key"
+export AGENTSCAN_TENANT_CREDENTIALS_JSON="$(cat .agentscan-local/tenant-credentials.json)"
+export AGENTSCAN_ALLOWED_TARGET_HOSTS='127.0.0.1'
+export AGENTSCAN_TENANT_POLICIES_JSON="$(cat .agentscan-local/tenant-policies.json)"
+```
+
+Run these exports in every terminal that starts an API or worker process.
+
+### 4. Start the synthetic fixture target
+
+Save this file as `.agentscan-local/fixture_target.py`. It is a JSON echo
+fixture, not an agent; scans against it verify transport and persistence only.
+
+```python
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import json
+import sys
+
+
+class Handler(BaseHTTPRequestHandler):
+    def do_POST(self):
+        length = int(self.headers.get("Content-Length", "0"))
+        _ = self.rfile.read(length)
+        body = json.dumps({"reply": "synthetic fixture acknowledgement"}).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, format, *args):
+        return
+
+
+port = int(sys.argv[1]) if len(sys.argv) > 1 else 8010
+ThreadingHTTPServer(("127.0.0.1", port), Handler).serve_forever()
+```
+
+```bash
+python .agentscan-local/fixture_target.py 8010
+```
+
+### 5. Start the API and one worker
+
+In the first terminal:
+
+```bash
+agentscan api serve --host 127.0.0.1 --port 8081
+```
+
+In a second terminal, with the same exports:
+
+```bash
+agentscan api worker
+```
+
+`DEEP` scans additionally need `agentscan api worker --deep` and a configured
+offline model; this walkthrough uses deterministic `SCAN` only.
+
+### 6. Enroll, submit and inspect a scan
+
+```bash
+curl -s http://127.0.0.1:8081/health/ready
+```
+
+```bash
+export TOKEN="$(curl -s -X POST http://127.0.0.1:8081/token \
+  -H 'content-type: application/json' \
+  -d '{"tenant_id": "tenant-a", "secret": "local-tenant-a-secret-0123456789abcdef"}' \
+  | python -c 'import json, sys; print(json.load(sys.stdin)["access_token"])')"
+```
+
+```bash
+export SCAN_ID="$(curl -s -X POST http://127.0.0.1:8081/scans \
+  -H "authorization: Bearer $TOKEN" \
+  -H 'content-type: application/json' \
+  -H 'idempotency-key: quickstart-001' \
+  -d '{"target_url": "http://127.0.0.1:8010/chat", "scan_mode": "SCAN", "analysis_mode": "deterministic", "data_classification": "sensitive", "timeout": 30, "concurrency": 5}' \
+  | python -c 'import json, sys; print(json.load(sys.stdin)["scan_id"])')"
+```
+
+```bash
+curl -s "http://127.0.0.1:8081/scans/$SCAN_ID" -H "authorization: Bearer $TOKEN"
+curl -N "http://127.0.0.1:8081/scans/$SCAN_ID/stream" -H "authorization: Bearer $TOKEN"
+```
+
+The fixture answers every probe with a synthetic JSON body, so the result is
+`inconclusive` rather than a security assessment. The walkthrough verifies
+authentication, admission, queue delivery, persistence and streaming. Stop the
+API and worker with `Ctrl+C` when finished.
+
 ## Service boundaries
 
-See the [deployment and trust-boundary diagram](../internal_docs/diagrams/07_deployment_trust_boundaries.md) and the [component architecture](../internal_docs/diagrams/03_components.md). Diagram sources and previews are maintained in `internal_docs/diagrams/`.
+See [ARCHITECTURE.md](ARCHITECTURE.md) for component structure and [SECURITY.md](SECURITY.md) for deployment trust boundaries. The original diagram sources are not shipped in this repository.
 
 Enrollment is an operator action. The same credential cannot request another tenant's token. The service-wide host list is an outer admission boundary. Each tenant also needs exact permitted origins (scheme, hostname and port), private-network CIDRs and scan quotas. HTTP initial URLs and every redirect are checked. Service connections resolve once per connection and connect to an approved literal IP while retaining the original TLS/Host identity. Mixed public/private DNS answers are rejected unless every address is permitted. Link-local metadata destinations, multicast and reserved destinations remain blocked. Infrastructure egress enforcement and identity-provider federation remain deployment responsibilities.
 
@@ -118,7 +253,7 @@ SSE data frames contain JSON, for example `data: {"status":"completed","progress
 
 ## Delivery and failure behavior
 
-See the [API submission and worker sequence](../internal_docs/diagrams/05_api_job_sequence.md) and [job/scan state machine](../internal_docs/diagrams/06_job_state_machine.md).
+See [ARCHITECTURE.md](ARCHITECTURE.md) for the submission and worker flow; the persisted states are the `ScanState` values in `agentscan/api/contracts.py`.
 
 The worker leaves an entry pending when it cannot persist a terminal result, loses its lease or shuts down. A replacement consumer uses `XAUTOCLAIM` after the idle threshold. A database lease token fences stale owners from committing results. A terminal redelivery is acknowledged without rerunning the scan. Retry counters live in PostgreSQL; exhausted expired attempts become a durable failed result before ACK. Malformed deliveries without a valid persisted scan identity are quarantined with a bounded Redis receipt.
 
@@ -169,6 +304,6 @@ Private targets require an explicit narrow CIDR as well as their origin. Quotas 
 
 Analysis defaults to `analysis_mode: "deterministic"` and `data_classification: "sensitive"`. `"local"` requires tenant permission and an administrator-operated offline loopback model. `"external"` requires explicit client designation `data_classification: "non_sensitive"`, tenant permission and the administrator's provider/model/key configuration. Both submission and worker execution reject sensitive external analysis. Neither a configured key nor a permitted tenant changes these defaults, and availability failures never trigger an external fallback.
 
-External analysis can send relevant objectives and target responses to the selected provider; classification is the client's decision. Keys and arbitrary provider URLs are never accepted in scan requests. Service keys are administrator-configured rather than per-tenant BYOK; a client can use its own key through a locally owned CLI/dashboard process. See [data policy](DATA_POLICY.md) for external setup, offline setup, encryption, redaction and retention, and [data-flow diagram](../internal_docs/diagrams/17_sensitive_data_flow.md) for the three paths.
+External analysis can send relevant objectives and target responses to the selected provider; classification is the client's decision. Keys and arbitrary provider URLs are never accepted in scan requests. Service keys are administrator-configured rather than per-tenant BYOK; a client can use its own key through a locally owned CLI/dashboard process. See [data policy](DATA_POLICY.md) for external setup, offline setup, encryption, redaction, retention and the three analysis paths.
 
 Database encryption key and tenant policy settings are required in the Compose and Kubernetes templates. Existing rolling deployments need a coordinated schema/config rollout; these local checks do not establish deployed cluster isolation.

@@ -28,7 +28,7 @@ unavailable. Local reference observations are separate from target findings.
 | AI bill of materials and dependency graph | Feature guide actions and audit views | Existing `/api/aibom`, `/api/aibom/download` and `/api/dependencies/graph`. Declared and unresolved inventory must not be shown as observed model/runtime versions. |
 | Identity and RBAC | Identity and authorization views | Existing manifest inspection and permission graphs. Manifest declarations alone do not prove actual runtime permission enforcement. |
 | Guardrail configuration | Guardrails | Existing LiteLLM, Cloudflare and Bedrock export representations. This generates configuration; it does not deploy or verify a gateway. |
-| Runtime gateway health and readiness | Runtime Gateway tab | New read-only `GET /api/gateway/status` added by this work probes the configured loopback gateway `/healthz` and `/readyz` only and reports bounded probe state. The panel does not evaluate policy, receipts or tool decisions, does not expose or call `/metrics`. The gateway `serve` command is wired as of Phase 5, and `/readyz` reports its real runtime readiness. |
+| Runtime gateway health and readiness | Runtime Gateway tab | New read-only `GET /api/gateway/status` added by this work probes the configured loopback gateway `/healthz` and `/readyz` only and reports bounded probe state. The panel does not evaluate policy, receipts or tool decisions, does not expose or call `/metrics`. Start the gateway with `agentscan-gateway serve --config gateway.toml` (or `python -m agentscan.gateway serve`); `/readyz` reports its real runtime readiness. |
 | Compliance mapping and signed report verification | Compliance and verification controls | Findings-to-framework mappings do not certify compliance. Signing requires a private configured key; integrity verification is separate from assessment completeness. |
 | Remediation preview and explicit apply | Healing | Existing local remediation endpoints use the configured project root. Review plans before applying. Unsupported or ambiguous rewrites remain manual. |
 | Multi-agent evaluation | Team / swarm controls | Existing `/api/swarms/run`; fresh scan observations and the same analysis classification policy apply. |
@@ -82,7 +82,7 @@ The response reports `status` of `ready`, `not_ready`, `unreachable`, `unhealthy
 
 The response uses `Cache-Control: no-store`.
 
-The dashboard Runtime Gateway tab renders this probe state only. It does not evaluate policy, receipts or tool decisions and does not use `/metrics`. The gateway `serve` command is wired as of Phase 5; `/readyz` fails closed whenever its runtime checks fail.
+The dashboard Runtime Gateway tab renders this probe state only. It does not evaluate policy, receipts or tool decisions and does not use `/metrics`. Start the gateway with `agentscan-gateway serve --config gateway.toml` (or `python -m agentscan.gateway serve`); `/readyz` fails closed whenever its runtime checks fail.
 
 ## Failure interpretation
 

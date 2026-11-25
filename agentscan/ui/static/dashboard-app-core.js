@@ -565,8 +565,8 @@
       const lastChecked = gw.checked_at || null;
       const badgeText = meta.label.toUpperCase();
 
-      const honest = 'Health and readiness only. This panel does not evaluate policy, receipts, or tool decisions. /readyz fails closed until Phase 5 wires the runtime.';
-      const notConfiguredCopy = 'AGENTSCAN_GATEWAY_URL=http://127.0.0.1:8765 is the expected loopback gateway value. The gateway serve command arrives in Phase 5.';
+      const honest = 'Health and readiness only. This panel does not evaluate policy, receipts, or tool decisions. /readyz is fail-closed and reports the running gateway process.';
+      const notConfiguredCopy = 'AGENTSCAN_GATEWAY_URL=http://127.0.0.1:8765 is the expected loopback gateway value. Start the gateway with `agentscan-gateway serve --config gateway.toml` before checking readiness.';
       const misconfiguredCopy = 'The configured AGENTSCAN_GATEWAY_URL is not a valid loopback gateway endpoint. Fix the environment value before retrying.';
       const requestFailedCopy = 'The dashboard could not reach its own status API. This says nothing about gateway health.';
       const unrecognizedCopy = `Unrecognized gateway status value: ${meta.value}. No probe conclusions were drawn.`;

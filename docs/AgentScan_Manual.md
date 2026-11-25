@@ -492,11 +492,24 @@ agentscan fix ./my-agent-repo --report scan_report.json --apply
 
 #### Self-Healing Webhook Receiver (`heal-server`)
 
-Run the dedicated FastAPI webhook server to ingest real-time alerts from **Sentinel**, external SIEMs, or AI Gateways (LiteLLM, Cloudflare, AWS Bedrock):
+Run the dedicated FastAPI webhook server to ingest real-time alerts from **Sentinel**, external SIEMs, or AI Gateways (LiteLLM, Cloudflare, AWS Bedrock). Configure the receiver entirely through the environment before starting it:
 
 ```bash
+export AGENTSCAN_HEAL_TOKEN="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
+export AGENTSCAN_HEAL_ROOT="$PWD"
+# Optional: allow webhook requests to write fixes. Planning and patch export work without it.
+export AGENTSCAN_HEAL_ALLOW_APPLY=1
+
 agentscan heal-server --host 127.0.0.1 --port 8766
 ```
+
+| Variable | Required | Behavior |
+| :--- | :--- | :--- |
+| `AGENTSCAN_HEAL_TOKEN` | Yes | Bearer token every webhook request must present. If it is missing, `POST /webhook/*` returns **503**; a missing or mismatched `Authorization: Bearer ...` header returns **401**. Keep the value in a deployment secret store. |
+| `AGENTSCAN_HEAL_ROOT` | Yes | Absolute path to the repository the receiver may plan or apply in. It must be an existing directory; a missing value returns **503**, and an alert that requests a different root returns **403**. Alerts cannot select another repository. |
+| `AGENTSCAN_HEAL_ALLOW_APPLY` | No | Set to `1` to permit `apply: true` webhook requests. Any other value keeps remote application disabled and returns **403**; planning, patch generation and the PR payload are unaffected. |
+
+`GET /health` does not require the token. The receiver returns the generated patch and a GitHub PR payload in the response; it never creates the branch or pull request itself.
 
 - **Endpoints**:
   - `GET /health`: Health and telemetry verification.
@@ -504,9 +517,9 @@ agentscan heal-server --host 127.0.0.1 --port 8766
 
 ---
 
-### 3.12. Enterprise Compliance Packs & Cryptographic Verification (`compliance`, `verify`)
+### 3.12. Compliance Mapping Packs & Report Integrity Verification (`compliance`, `verify`)
 
-Transform technical scan telemetry into formal regulatory compliance reports and verify report authenticity against tampering:
+Map scan telemetry to framework references and sign report JSON so that later modification of scores, findings or timestamps is detectable:
 
 ```bash
 # 1. Evaluate against the EU AI Act (Article 15 Cybersecurity, Article 50 Transparency)
@@ -521,11 +534,12 @@ agentscan compliance report.json --framework mitre-atlas --output mitre_atlas_re
 # 4. Evaluate against ISO/IEC 42001 (Artificial Intelligence Management System)
 agentscan compliance report.json --framework iso-42001 --output iso_42001_report.md
 
-# 5. Cryptographically sign an audit report with HMAC-SHA256
-agentscan verify report.json --sign --key "enterprise-audit-secret-key"
+# 5. Sign the report with an HMAC-SHA256 key supplied from your secret store
+read -r -s AGENTSCAN_AUDIT_HMAC_KEY
+agentscan verify report.json --sign --key "$AGENTSCAN_AUDIT_HMAC_KEY"
 
-# 6. Verify the cryptographic integrity of a certified audit report
-agentscan verify report.json --key "enterprise-audit-secret-key"
+# 6. Re-check the signed report for modification
+agentscan verify report.json --key "$AGENTSCAN_AUDIT_HMAC_KEY"
 ```
 
 - **EU AI Act Evaluation**:
@@ -549,22 +563,25 @@ agentscan verify report.json --key "enterprise-audit-secret-key"
     - `A.9.3`: Robustness & Adversarial Testing
 - **Cryptographic Tamper-Evidence**:
   - Canonical JSON serialization with deterministic byte hashing.
-  - Generates HMAC-SHA256 digital signatures that detect any post-audit modification of scores, findings, or timestamps.
+  - Generates HMAC-SHA256 signatures that detect post-audit modification of scores, findings, or timestamps.
+- **Scope of these reports**: the packs map findings to framework references and the HMAC signature detects report modification. The mapping does not certify compliance with EU AI Act, NIST AI RMF, MITRE ATLAS or ISO/IEC 42001, the signature is not an external attestation or certificate, and a signed report does not establish assessment completeness. Control coverage depends on which modules ran and what evidence they recorded.
 
 ---
 
 ### 3.13. Multi-Tenant REST API & Distributed Background Workers (`api`)
 
-AgentScan provides a production-grade asynchronous REST API and worker fleet capable of managing thousands of concurrent scans across multiple isolated tenants:
+The optional REST API and worker process scans asynchronously with tenant-scoped state. This is an optional service, not a production deployment: the repository verifies it with host-Python tests against disposable PostgreSQL and Redis (see [release readiness](RELEASE_READINESS.md)), not as an image-level, capacity or deployed-service guarantee.
+
+The service needs a signing key, a data key, tenant credentials, an enrolled host list and a tenant policy before it can serve requests. Follow the copy-paste [API quickstart](api.md#local-quickstart-copy-paste); it creates every required value and submits a scan against a synthetic loopback target.
 
 ```bash
-# 1. Start the multi-tenant REST API server
-agentscan api serve --host 0.0.0.0 --port 8080
+# Both processes read the environment exported in the API quickstart.
+agentscan api serve --host 127.0.0.1 --port 8081
 
-# 2. Start a background scan worker (claims jobs from Redis Streams)
+# In a second terminal, with the same environment:
 agentscan api worker
 
-# 3. Start a dedicated GPU worker for neural DEEP evaluations
+# DEEP (GPU) evaluations use a separate worker and an installed offline model:
 agentscan api worker --deep
 ```
 
@@ -572,7 +589,7 @@ agentscan api worker --deep
 
 | Method | Endpoint | Description | Auth Required |
 | :--- | :--- | :--- | :--- |
-| `POST` | `/token` | Issues a tenant JWT token using pre-shared key (`AGENTSCAN_TOKEN_PSK`). | No |
+| `POST` | `/token` | Issues a tenant JWT using the enrollment secret from `AGENTSCAN_TENANT_CREDENTIALS_JSON`. | No |
 | `POST` | `/scans` | Submits a scan job. Returns HTTP 202 with `scan_id` and stream URL immediately. | ✅ Bearer JWT |
 | `GET` | `/scans` | Lists paginated scan history for the authenticated tenant. | ✅ Bearer JWT |
 | `GET` | `/scans/{id}` | Returns real-time status, metadata, score, and full `ScanReport` JSON. | ✅ Bearer JWT |
@@ -584,24 +601,22 @@ agentscan api worker --deep
 #### Asynchronous REST API Workflow
 
 ```bash
-# 1. Obtain a tenant JWT
-TOKEN=$(curl -s -X POST http://localhost:8080/token \
+# 1. Obtain a tenant JWT (secret from AGENTSCAN_TENANT_CREDENTIALS_JSON)
+TOKEN=$(curl -s -X POST http://localhost:8081/token \
   -H "Content-Type: application/json" \
-  -d '{"tenant_id": "security-team", "secret": "dev-psk"}' | jq -r .access_token)
+  -d '{"tenant_id": "tenant-a", "secret": "local-tenant-a-secret-0123456789abcdef"}' \
+  | python -c 'import json,sys; print(json.load(sys.stdin)["access_token"])')
 
-# 2. Submit an asynchronous scan
-SCAN_ID=$(curl -s -X POST http://localhost:8080/scans \
+# 2. Submit an asynchronous scan of the synthetic loopback fixture
+SCAN_ID=$(curl -s -X POST http://localhost:8081/scans \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"target_url": "http://localhost:8000/chat", "scan_mode": "SCAN"}' | jq -r .scan_id)
+  -d '{"target_url": "http://127.0.0.1:8010/chat", "scan_mode": "SCAN"}' \
+  | python -c 'import json,sys; print(json.load(sys.stdin)["scan_id"])')
 
-# 3. Stream real-time scan progress
-curl -N http://localhost:8080/scans/$SCAN_ID/stream \
-  -H "Authorization: Bearer $TOKEN"
-
-# 4. Fetch final report and score
-curl -s http://localhost:8080/scans/$SCAN_ID \
-  -H "Authorization: Bearer $TOKEN" | jq .
+# 3. Stream progress, then fetch the final report
+curl -N "http://localhost:8081/scans/$SCAN_ID/stream" -H "Authorization: Bearer $TOKEN"
+curl -s "http://localhost:8081/scans/$SCAN_ID" -H "Authorization: Bearer $TOKEN"
 ```
 
 ---
