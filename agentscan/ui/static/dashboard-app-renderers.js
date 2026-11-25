@@ -630,10 +630,7 @@
         const secretInput = document.getElementById('cert-secret-key');
         const secret = secretInput ? secretInput.value.trim() : '';
         const payload = { certificate: cert };
-        if (secret) {
-          payload.secret_key = secret;
-          payload.secret = secret;
-        }
+        if (secret) payload.secret_key = secret;
 
         const data = await DashboardSemantics.requestJSON('/api/verify-certificate', {
           method: 'POST',
@@ -661,6 +658,8 @@
       } catch (err) {
         DashboardSemantics.showLaunchError('certificate-launch-error', err.message);
         showToast("Verification error: " + err.message);
+      } finally {
+        AgentScanForms.clearSecretFields('certificate');
       }
     }
 

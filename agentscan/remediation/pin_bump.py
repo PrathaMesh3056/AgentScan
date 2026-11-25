@@ -30,32 +30,44 @@ def _extract_pkg_and_fix(finding: Finding) -> tuple[str, str] | None:
     return None
 
 
+def _preserved_operator(op: str) -> str:
+    """Keep the operator the manifest author chose where it can express the fix."""
+    # `<`, `<=` and `!=` cannot state "install at least the fixed version", so the
+    # bound is deliberately widened to `>=`. That conversion is documented in the
+    # PR body and covered by tests.
+    return ">=" if op in {"<", "<=", "!="} else op
+
+
 def _bump_requirements_txt(content: str, pkg: str, fix: str) -> str:
-    """Replace pinned package version in a requirements.txt file."""
+    """Replace a pinned package version in requirements.txt, preserving the operator."""
     pattern = re.compile(
-        rf"^(?P<prefix>\s*){re.escape(pkg)}(?P<op>==|>=|<=|~=)\s*(?P<ver>[^\s#]+)(?P<suffix>.*)$",
+        rf"^(?P<prefix>\s*)(?P<name>{re.escape(pkg)})(?P<gap1>\s*)"
+        rf"(?P<op>==|>=|<=|~=|!=|<|>)(?P<gap2>\s*)(?P<ver>[^\s#;]+)",
         re.IGNORECASE | re.MULTILINE,
     )
 
     def _repl(m: re.Match[str]) -> str:
-        prefix = m.group("prefix")
-        suffix = m.group("suffix")
-        # Update pin to >= or == with the fixed version
-        return f"{prefix}{pkg}>={fix}{suffix}"
+        return (
+            f"{m.group('prefix')}{m.group('name')}{m.group('gap1')}"
+            f"{_preserved_operator(m.group('op'))}{m.group('gap2')}{fix}"
+        )
 
     return pattern.sub(_repl, content)
 
 
 def _bump_pyproject_toml(content: str, pkg: str, fix: str) -> str:
-    """Replace pinned package version in a pyproject.toml dependency list."""
+    """Replace a pinned version in pyproject.toml, preserving the operator and markers."""
     pattern = re.compile(
-        rf"(?P<quote>['\"]){re.escape(pkg)}(?P<op>==|>=|<=|~=)\s*(?P<ver>[^'\"\s]+)(?P<end>['\"])",
+        rf"(?P<quote>['\"])(?P<name>{re.escape(pkg)})(?P<gap1>\s*)"
+        rf"(?P<op>==|>=|<=|~=|!=|<|>)(?P<gap2>\s*)(?P<ver>[^'\"\s;,]+)",
         re.IGNORECASE,
     )
 
     def _repl(m: re.Match[str]) -> str:
-        q = m.group("quote")
-        return f"{q}{pkg}>={fix}{q}"
+        return (
+            f"{m.group('quote')}{m.group('name')}{m.group('gap1')}"
+            f"{_preserved_operator(m.group('op'))}{m.group('gap2')}{fix}"
+        )
 
     return pattern.sub(_repl, content)
 

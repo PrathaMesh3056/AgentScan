@@ -7,9 +7,11 @@ import os
 import stat
 import tempfile
 from pathlib import Path
+from typing import TypedDict
 
 from pydantic import BaseModel, Field, PrivateAttr
 
+from agentscan.remediation.patch_text import repo_relative_path
 from agentscan.remediation.paths import contained_path
 
 
@@ -33,6 +35,15 @@ class FixAction(BaseModel):
     after: str = Field(default="", description="File contents after the change.")
     applied: bool = Field(default=False, description="True only after a successful --apply write.")
     owasp_id: str = Field(default="", description="Source finding OWASP category.")
+
+
+class ProvenanceEntry(TypedDict):
+    """One finding and the remediation actions planned from it."""
+
+    finding_id: str
+    actions: list[int]
+    kinds: list[str]
+    paths: list[str]
 
 
 class FixPlan(BaseModel):
@@ -75,6 +86,35 @@ class FixPlan(BaseModel):
                 seen.add(a.path)
                 paths.append(a.path)
         return paths
+
+    @property
+    def root_path(self) -> Path | None:
+        """The trusted project root this plan is bound to, if any."""
+        return self._root_path
+
+    def provenance_map(self) -> dict[str, ProvenanceEntry]:
+        """Map each finding to the action positions, kinds and files it produced."""
+        provenance: dict[str, ProvenanceEntry] = {}
+        for index, action in enumerate(self.actions, start=1):
+            entry = provenance.setdefault(
+                action.finding_id,
+                {
+                    "finding_id": action.finding_id,
+                    "actions": [],
+                    "kinds": [],
+                    "paths": [],
+                },
+            )
+            entry["actions"].append(index)
+            if action.kind not in entry["kinds"]:
+                entry["kinds"].append(action.kind)
+            relative = repo_relative_path(action.path, self._root_path)
+            if relative not in entry["paths"]:
+                entry["paths"].append(relative)
+        for entry in provenance.values():
+            entry["paths"].sort()
+            entry["kinds"].sort()
+        return dict(sorted(provenance.items()))
 
     def apply(self) -> int:
         """Preflight all changes, then atomically replace each file with rollback on failure."""

@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import difflib
 import json
 from pathlib import Path
 
@@ -349,6 +348,7 @@ def fix(
     from rich.syntax import Syntax
 
     from agentscan.remediation.engine import RemediationEngine
+    from agentscan.remediation.patch_text import repo_relative_path, unified_diff
 
     findings: list[Finding] = []
     root_path = target
@@ -394,16 +394,12 @@ def fix(
         console.print(
             f"[bold]{i}. [{action.kind.upper()}][/bold] Finding [cyan]{action.finding_id}[/cyan] -> [dim]{action.path}[/dim]"
         )
-        diff_lines = list(
-            difflib.unified_diff(
-                action.before.splitlines(keepends=True),
-                action.after.splitlines(keepends=True),
-                fromfile=f"a/{Path(action.path).name}",
-                tofile=f"b/{Path(action.path).name}",
-            )
+        diff_text = unified_diff(
+            action.before,
+            action.after,
+            repo_relative_path(action.path, plan.root_path),
         )
-        if diff_lines:
-            diff_text = "".join(diff_lines)
+        if diff_text:
             console.print(Syntax(diff_text, "diff", theme="monokai", line_numbers=False))
         else:
             console.print("  [dim](New file to be created)[/dim]")
@@ -457,7 +453,9 @@ def fix(
             )
 
     if output:
-        output.write_text(plan.model_dump_json(indent=2), encoding="utf-8")
+        artifact = plan.model_dump(mode="json")
+        artifact["provenance"] = plan.provenance_map()
+        output.write_text(json.dumps(artifact, indent=2) + "\n", encoding="utf-8")
         console.print(f"FixPlan written to [cyan]{output}[/cyan]")
 
 
