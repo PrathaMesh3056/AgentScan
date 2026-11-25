@@ -632,13 +632,19 @@
               </div>
               <p class="text-xs text-[#666666]">Status: ${escapeHtml(healthStatus || 'unknown')} · Latency: ${escapeHtml(String(healthLatency ?? '—'))} ms</p>
             </div>` : '';
+      let readinessReasonSuffix = '';
+      if (readinessStatus !== 'ready') {
+        readinessReasonSuffix = readinessReason
+          ? ` · Reason: ${escapeHtml(readinessReason)}`
+          : ' · Reason: unknown_reason';
+      }
       const readinessCard = readiness !== null ? `
             <div class="dl-card p-6 bg-white space-y-3" style="border-color: var(--border)">
               <div class="flex items-center justify-between">
                 <span class="text-[10px] font-extrabold uppercase tracking-wider text-[#666666]">Readiness /readyz</span>
                 <span class="text-2xl font-extrabold text-[#1A1A1A]">${escapeHtml(readinessHttpStatus ?? '—')}</span>
               </div>
-              <p class="text-xs text-[#666666]">Status: ${escapeHtml(readinessStatus || 'unknown')} · Latency: ${escapeHtml(String(readinessLatency ?? '—'))} ms · Reason: ${escapeHtml(readinessReason || 'unknown_reason')}</p>
+              <p class="text-xs text-[#666666]">Status: ${escapeHtml(readinessStatus || 'unknown')} · Latency: ${escapeHtml(String(readinessLatency ?? '—'))} ms${readinessReasonSuffix}</p>
             </div>` : '';
       const probeCards = showProbeCards ? `
           <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">

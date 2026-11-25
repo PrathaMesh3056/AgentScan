@@ -130,7 +130,7 @@ def heal_command(
 @app.command(name="heal-server")
 def heal_server_command(
     host: str = typer.Option(  # noqa: B008
-        "127.0.0.1", "--host", "-h", help="Host interface to bind on."
+        "127.0.0.1", "--host", help="Host interface to bind on."
     ),
     port: int = typer.Option(  # noqa: B008
         8766, "--port", "-p", help="Port to bind on."

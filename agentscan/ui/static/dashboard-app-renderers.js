@@ -1185,7 +1185,7 @@
           </div>
 
           <div class="flex items-center gap-2">
-            <button onclick="openMcpTestModal('scan_target')" class="btn-pill-teal text-xs py-1.5 px-4 cursor-pointer">
+            <button onclick="openMcpTestModal('agentscan_scan')" class="btn-pill-teal text-xs py-1.5 px-4 cursor-pointer">
               &rarr; Invoke Tool Test Harness
             </button>
           </div>

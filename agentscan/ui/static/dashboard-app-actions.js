@@ -493,24 +493,36 @@
     }
 
     /* 9. Native MCP Tool Harness */
+    function mcpToolName(toolName) {
+      return toolName === 'scan_target' ? 'agentscan_scan' : toolName;
+    }
+
+    function selectRealMcpTool(sel, requested) {
+      const options = Array.from(sel.options || []);
+      const preferred = requested || sel.value;
+      if (preferred && options.some(o => o.value === preferred)) {
+        sel.value = preferred;
+      } else if (!options.some(o => o.value === sel.value)) {
+        sel.value = options.length > 0 ? options[0].value : '';
+      }
+    }
+
     function openMcpTestModal(toolName) {
       const m = document.getElementById('modal-mcp');
       if (m) m.classList.remove('hidden');
 
       const sel = document.getElementById('mcp-tool-select');
       if (sel) {
+        const requested = mcpToolName(toolName);
         if (globalTelemetry.mcp && Array.isArray(globalTelemetry.mcp.tools) && globalTelemetry.mcp.tools.length > 0) {
-          const currentVal = toolName || sel.value;
+          const currentVal = requested || sel.value;
           sel.innerHTML = globalTelemetry.mcp.tools.map(t => {
             const desc = t.description ? (t.description.length > 60 ? t.description.slice(0, 60) + '...' : t.description) : '';
             return `<option value="${escapeHtml(t.name)}">${escapeHtml(t.name)} (${escapeHtml(desc)})</option>`;
           }).join('');
-          if (currentVal && Array.from(sel.options).some(o => o.value === currentVal)) {
-            sel.value = currentVal;
-          }
-        }
-        if (toolName) {
-          sel.value = toolName;
+          selectRealMcpTool(sel, currentVal);
+        } else {
+          selectRealMcpTool(sel, requested);
         }
         updateMcpSampleArgs(sel.value);
       }
@@ -540,7 +552,7 @@
     async function invokeMcpToolAction() {
       if (!validateSubmission('mcp', 'mcp-launch-error')) return;
       const formValues = AgentScanForms.getValues('mcp');
-      const tool = (document.getElementById('mcp-tool-select') || {}).value || 'scan_target';
+      const tool = (document.getElementById('mcp-tool-select') || {}).value || 'agentscan_scan';
       const argsRaw = (document.getElementById('mcp-tool-args') || {}).value || '{}';
       const out = document.getElementById('mcp-tool-response');
 
