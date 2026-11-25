@@ -34,9 +34,7 @@ def _report() -> ScanReport:
     "suffix",
     [".json", ".JSON", ".html", ".HTML", ".pdf", ".sarif", ".SARIF"],
 )
-def test_validate_report_output_accepts_supported_suffixes(
-    tmp_path: Path, suffix: str
-) -> None:
+def test_validate_report_output_accepts_supported_suffixes(tmp_path: Path, suffix: str) -> None:
     validate_report_output(tmp_path / f"report{suffix}")
 
 
@@ -62,9 +60,7 @@ def test_validate_report_output_rejects_existing_directory(tmp_path: Path) -> No
 
 
 @pytest.mark.parametrize("name", ["report.txt", "report", "report.csv"])
-def test_validate_report_output_rejects_unsupported_suffix(
-    tmp_path: Path, name: str
-) -> None:
+def test_validate_report_output_rejects_unsupported_suffix(tmp_path: Path, name: str) -> None:
     with pytest.raises(typer.BadParameter) as excinfo:
         validate_report_output(tmp_path / name)
 
@@ -76,9 +72,7 @@ def test_validate_report_output_rejects_unsupported_suffix(
 def test_scan_rejects_missing_output_parent_before_scanning(tmp_path: Path) -> None:
     output = tmp_path / "missing-dir" / "report.json"
     with patch("agentscan.cli.run_scan_multi", new_callable=AsyncMock) as scanner:
-        result = runner.invoke(
-            app, ["scan", "http://127.0.0.1:9/chat", "--output", str(output)]
-        )
+        result = runner.invoke(app, ["scan", "http://127.0.0.1:9/chat", "--output", str(output)])
 
     assert result.exit_code == 2
     assert "Output directory does not exist" in result.output
@@ -90,9 +84,7 @@ def test_scan_rejects_existing_directory_output_before_scanning(tmp_path: Path) 
     output = tmp_path / "report.json"
     output.mkdir()
     with patch("agentscan.cli.run_scan_multi", new_callable=AsyncMock) as scanner:
-        result = runner.invoke(
-            app, ["scan", "http://127.0.0.1:9/chat", "--output", str(output)]
-        )
+        result = runner.invoke(app, ["scan", "http://127.0.0.1:9/chat", "--output", str(output)])
 
     assert result.exit_code == 2
     assert "existing directory" in result.output
@@ -102,9 +94,7 @@ def test_scan_rejects_existing_directory_output_before_scanning(tmp_path: Path) 
 def test_scan_rejects_unsupported_output_suffix_before_scanning(tmp_path: Path) -> None:
     output = tmp_path / "report.txt"
     with patch("agentscan.cli.run_scan_multi", new_callable=AsyncMock) as scanner:
-        result = runner.invoke(
-            app, ["scan", "http://127.0.0.1:9/chat", "--output", str(output)]
-        )
+        result = runner.invoke(app, ["scan", "http://127.0.0.1:9/chat", "--output", str(output)])
 
     assert result.exit_code == 2
     assert "Unsupported output format" in result.output
@@ -121,9 +111,7 @@ def test_audit_rejects_missing_output_parent_before_work(
     monkeypatch.setattr("agentscan.supply_chain.config_auditor.scan_config", _unexpected_scan)
     output = tmp_path / "missing-dir" / "report.json"
 
-    result = runner.invoke(
-        app, ["audit", str(tmp_path), "--scan-config", "--output", str(output)]
-    )
+    result = runner.invoke(app, ["audit", str(tmp_path), "--scan-config", "--output", str(output)])
 
     assert result.exit_code == 2
     assert "Output directory does not exist" in result.output
@@ -149,9 +137,7 @@ def test_scan_writes_uppercase_json_output(tmp_path: Path) -> None:
     with patch(
         "agentscan.cli.run_scan_multi", new_callable=AsyncMock, return_value=_report()
     ) as scanner:
-        result = runner.invoke(
-            app, ["scan", "http://127.0.0.1:9/chat", "--output", str(output)]
-        )
+        result = runner.invoke(app, ["scan", "http://127.0.0.1:9/chat", "--output", str(output)])
 
     assert result.exit_code == 0, result.output
     scanner.assert_awaited_once()
