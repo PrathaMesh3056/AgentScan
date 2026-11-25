@@ -1,18 +1,41 @@
-# Extend the default rules. The allowlist covers credential-shaped strings that
-# exist only to exercise the secret scanners; they are not real credentials.
+# Extend the default rules. Allowlists are exact synthetic values or a narrow
+# line-scoped match; broad test directories and whole files stay scannable.
 [extend]
 useDefault = true
 
-[allowlist]
-description = "Intentional secret-scanner test fixtures"
-paths = [
-  '''(^|/)tests/fixtures/''',
-  '''(^|/)tests/test_attacks/''',
-  '''(^|/)tests/test_e2e\.py$''',
-]
-# Fake EdDSA canary used only as a bearer value in
-# tests/test_gateway/test_gateway_phase5_upstream.py. Matching the literal
-# signature marker keeps the rest of that test file scannable.
+[[allowlists]]
+description = "Synthetic credential-shaped values used only by secret-scanner tests"
 regexes = [
+  '''sk-proj-aB3xK9SECRETKEY123456''',
+  '''sk-abcdef12345678901234567890''',
+  '''sk-1234567890abcdef1234567890''',
+  '''SYNTHETIC_PRIVATE_20261016''',
+  '''SYNTHETIC_PRIVATE_ATK003_20261016''',
+  '''SYNTHETIC_PRIVATE_92KmT7aZ31''',
+  '''ui-tests-independent-signing-key-32-bytes''',
+  '''independent-ui-certificate-test-key-32-bytes''',
+  '''correct-key-test-key-padding-32-bytes''',
+  '''wrong-key-test-key-padding-32-bytes''',
+  '''wrong_key_123''',
+  '''f8a9e2d1c0b3a4f5''',
+  '''synthetic-private-1234''',
+  # Historical synthetic token in the deleted font specimen page.
+  '''sk-live-9921-prod''',
+  # Fake EdDSA canary used only as a bearer value in the gateway upstream test.
   '''gw-canary-signature''',
+  # Frozen tokenizer digests, not credentials.
+  '''c0382117ea329cdf097041132f6d735924b697924d6f6fc3945713e96ce87539''',
+  '''5b5d4f65d0acd3b2d56a35b56d374a36cbc1c8fa5cf3b3febbbfabf22f359583''',
+  # Type expression, not a private key value.
+  '''ed25519\.Ed25519PrivateKey''',
+]
+
+[[allowlists]]
+description = "Empty provider-key placeholders in the tracked environment example"
+paths = [
+  '''(^|/)\.env\.example$''',
+]
+regexTarget = "line"
+regexes = [
+  '''^\s*(?:OPENAI|ANTHROPIC|GEMINI)_API_KEY=\s*$''',
 ]

@@ -63,6 +63,9 @@ def test_required_runtime_and_package_assets_pass(tmp_path, source):
         "agentscan/core/.agentscan-fix-transaction-0",
         "agentscan/core/.agentscan-recover-staged",
         "agentscan/core/.agentscan-rollback-staged",
+        "tests/.env",
+        "tests/fixtures/signing.pem",
+        "docs/internal_docs/receipt.json",
     ],
 )
 def test_private_files_are_rejected_without_reading_contents(tmp_path, source, private_name):
@@ -82,6 +85,12 @@ def test_sdist_rejects_unapproved_top_level_files(tmp_path):
     artifact = write_archive(tmp_path, source=True, extra=["unexpected.txt"])
     with pytest.raises(ValueError, match="outside the distribution allowlist"):
         CHECKER["check_archive"](artifact)
+
+
+@pytest.mark.parametrize("source_input", ["tests/test_sample.py", "docs/index.md", "uv.lock"])
+def test_sdist_accepts_reviewed_source_inputs(tmp_path, source_input):
+    artifact = write_archive(tmp_path, source=True, extra=[source_input])
+    assert CHECKER["check_archive"](artifact)["kind"] == "sdist"
 
 
 def test_hatch_required_root_gitignore_is_allowed_only_in_source_archive(tmp_path):
@@ -113,6 +122,13 @@ def test_archive_path_escape_is_rejected(tmp_path, source):
 def test_ci_validates_archive_contents_before_installing():
     source = (ROOT / ".github/scripts/smoke-artifacts.sh").read_text(encoding="utf-8")
     assert source.index("check_artifact_contents.py") < source.index("uv pip install")
+
+
+def test_sdist_include_lists_tests_docs_and_lockfile():
+    build = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["tool"]["hatch"][
+        "build"
+    ]["targets"]["sdist"]
+    assert {"/tests/**", "/docs/**", "/uv.lock"} <= set(build["include"])
 
 
 @pytest.mark.parametrize("target", ["wheel", "sdist"])

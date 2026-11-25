@@ -6,6 +6,7 @@ import os
 import re
 import shutil
 import subprocess
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -177,11 +178,38 @@ def test_audit_is_a_required_lock_export_gate():
     assert "--frozen" in source and "--no-emit-project" in source
     assert "pip-audit==2.10.1" in source
     assert "--strict" in source and "--require-hashes" in source
+    # Hashes make the export fully resolved, so --disable-pip can audit it
+    # without pip re-resolving conflicting markers. --no-deps is redundant.
+    assert "--disable-pip" in source
+    assert "--no-deps" not in source
+    assert "--desc" not in source
     assert "||" not in source and "continue-on-error" not in audit
     assert "continue-on-error" not in job
     assert any(
         step.get("name") == "Verify clean artifact installation profiles" for step in job["steps"]
     )
+
+
+def test_gitleaks_scans_full_history_without_broad_allowlists():
+    job = WORKFLOWS["validate"]["jobs"]["secrets"]
+    checkout = next(
+        step for step in job["steps"] if step.get("uses", "").startswith("actions/checkout@")
+    )
+    assert checkout["with"]["fetch-depth"] == "0"
+    scan = next(step for step in job["steps"] if step.get("name") == "Scan for committed secrets")
+    assert scan["uses"].startswith("gitleaks/gitleaks-action@")
+
+    config = tomllib.loads((ROOT / ".gitleaks.toml").read_text(encoding="utf-8"))
+    allowlists = config["allowlists"]
+    assert allowlists
+    for allowlist in allowlists:
+        for path in allowlist.get("paths", []):
+            assert path == r"(^|/)\.env\.example$"
+        assert not any(
+            directory in pattern
+            for pattern in allowlist.get("paths", [])
+            for directory in ("tests/fixtures", "tests/test_attacks", "tests/test_e2e")
+        )
 
 
 @pytest.mark.parametrize("exit_code", [1, 7])
