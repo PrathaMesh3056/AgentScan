@@ -125,13 +125,15 @@ async def api_rbac(
         e.model_dump(mode="json") if hasattr(e, "model_dump") else e for e in escalations
     ]
     agents_by_id = {agent.agent_id: agent for agent in agents}
-    for node in view["nodes"]:
-        if node.get("node_type") != "agent":
-            continue
-        # Manifest declarations are evidence of intent, not runtime enforcement.
-        node["enforcement"] = assess_manifest_enforcement(
-            agents_by_id.get(str(node.get("agent_id"))), role_policies
-        )
+    nodes = view.get("nodes")
+    if isinstance(nodes, list):
+        for node in nodes:
+            if node.get("node_type") != "agent":
+                continue
+            # Manifest declarations are evidence of intent, not runtime enforcement.
+            node["enforcement"] = assess_manifest_enforcement(
+                agents_by_id.get(str(node.get("agent_id"))), role_policies
+            )
     return JSONResponse(view)
 
 
