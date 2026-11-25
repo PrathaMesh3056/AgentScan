@@ -15,7 +15,11 @@ from urllib.parse import urlsplit
 from loguru import logger
 
 from agentscan.ui.routers import register_all_routers
-from agentscan.ui.security import dashboard_target_error
+from agentscan.ui.security import (
+    apply_security_headers,
+    dashboard_target_error,
+    public_error_detail,
+)
 from agentscan.ui.state import (  # noqa: F401
     STATIC_DIR,
     EventBus,
@@ -100,7 +104,7 @@ def create_app(
     async def _http_error(request: Any, error: Any) -> Any:
         detail = error.detail
         message = (
-            detail[:512]
+            public_error_detail(detail)
             if isinstance(detail, str)
             else "The dashboard request could not be accepted."
         )
@@ -147,6 +151,16 @@ def create_app(
     async def _auth_and_host_guard(request: Any, call_next: Any) -> Any:
         from fastapi.responses import JSONResponse as _JR
 
+        secure_transport = request.url.scheme == "https"
+
+        def secured(response: Any) -> Any:
+            return apply_security_headers(response, secure=secure_transport)
+
+        def deny(payload: dict[str, Any], status_code: int) -> Any:
+            # Denials leave the middleware early, so they carry the same headers
+            # as a routed response.
+            return secured(_JR(payload, status_code=status_code))
+
         client_host = request.client.host if request.client else ""
         host_header = request.headers.get("host", "")
         try:
@@ -154,7 +168,7 @@ def create_app(
             hostname = authority.hostname or ""
             _ = authority.port  # Validate port syntax before relying on this authority.
         except ValueError:
-            return _JR({"error": "Invalid dashboard Host"}, status_code=403)
+            return deny({"error": "Invalid dashboard Host"}, 403)
         test_host = client_host == "testclient" and hostname == "testserver"
         if (
             authority.username
@@ -164,14 +178,14 @@ def create_app(
             or authority.fragment
             or (hostname not in trusted_hosts and not test_host)
         ):
-            return _JR({"error": "Untrusted dashboard Host"}, status_code=403)
+            return deny({"error": "Untrusted dashboard Host"}, 403)
         if client_host not in ("127.0.0.1", "::1", "localhost", "testclient") and not active_token:
-            return _JR({"error": "AgentScan dashboard is localhost-only"}, status_code=403)
+            return deny({"error": "AgentScan dashboard is localhost-only"}, 403)
         # CORS alone cannot stop simple cross-site POST requests from changing state.
         origin = request.headers.get("origin")
         expected_origin = f"{request.url.scheme}://{host_header}"
         if origin is not None and origin != expected_origin:
-            return _JR({"error": "Cross-origin dashboard requests are denied"}, status_code=403)
+            return deny({"error": "Cross-origin dashboard requests are denied"}, 403)
         # Following a link opens a top-level document with cross-/same-site
         # metadata. That navigation is legitimate; fetches, frames and writes
         # still cannot cross the dashboard's origin boundary.
@@ -185,7 +199,7 @@ def create_app(
             request.headers.get("sec-fetch-site") in ("cross-site", "same-site")
             and not page_navigation
         ):
-            return _JR({"error": "Cross-site dashboard requests are denied"}, status_code=403)
+            return deny({"error": "Cross-site dashboard requests are denied"}, 403)
         auth_header = request.headers.get("authorization", "")
         bearer = auth_header[7:] if auth_header.startswith("Bearer ") else ""
         bearer_ok = bool(active_token and secrets.compare_digest(bearer, active_token))
@@ -202,11 +216,9 @@ def create_app(
             )
         else:
             if active_token and not (bearer_ok or session_ok):
-                return _JR({"error": "Unauthorized: invalid or missing token"}, status_code=401)
+                return deny({"error": "Unauthorized: invalid or missing token"}, 401)
             if request.method not in ("GET", "HEAD", "OPTIONS") and not (bearer_ok or session_ok):
-                return _JR(
-                    {"error": "Open the dashboard to establish a local session"}, status_code=401
-                )
+                return deny({"error": "Open the dashboard to establish a local session"}, 401)
             if request.method == "POST" and request.url.path in {
                 "/api/scan",
                 "/api/discovery",
@@ -234,16 +246,16 @@ def create_app(
                                 )
                                 if request.url.path == "/api/mcp/invoke":
                                     field = "arguments.target_url"
-                                return _JR(
+                                return deny(
                                     {"error": error, "field_errors": {field: error}},
-                                    status_code=400,
+                                    400,
                                 )
             try:
                 response = await call_next(request)
             except Exception as error:
                 # Handle before the server's outer exception middleware prints an
                 # exception's arbitrary message, which may contain target data.
-                response = unexpected_error_response(request, error)
+                response = secured(unexpected_error_response(request, error))
         if bootstrap_ok or (not active_token and request.method == "GET"):
             response.set_cookie(
                 "agentscan_ui_session",
@@ -255,14 +267,7 @@ def create_app(
                 samesite="lax",
                 secure=request.url.scheme == "https",
             )
-        response.headers["Referrer-Policy"] = "no-referrer"
-        response.headers["Cache-Control"] = "no-store"
-        existing_csp = response.headers.get("Content-Security-Policy")
-        response.headers["Content-Security-Policy"] = (
-            f"{existing_csp}; frame-ancestors 'none'" if existing_csp else "frame-ancestors 'none'"
-        )
-        response.headers["X-Frame-Options"] = "DENY"
-        return response
+        return secured(response)
 
     state.identity_path = identity_path
     state.load_report(report_path)

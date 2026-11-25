@@ -259,7 +259,46 @@
     </div>`).join('');
   }
 
-  const api = { summarize, severityClass, inlineArgument, coverageMarkup, renderOverview, targetEndpoint, errorText, errorGuidance, assessmentErrorMarkup, showLaunchError, responseError, requestJSON, escape };
+  /* Secret hygiene: a signing key or private reference must not survive its
+     submission in the DOM or in dashboard-owned browser storage. */
+  const SECRET_FIELD_SELECTOR = 'input[type="password"], input[data-secret-field], textarea[data-secret-field]';
+  const PERSISTED_UI_KEYS = new Set(['agentscan_theme', 'agentscan_font']);
+  const SECRET_STORAGE_KEY = /(?:secret|token|key|password|credential|canary|certificate)/i;
+
+  function scrubStoredSecrets(scope = root) {
+    const removed = [];
+    for (const name of ['localStorage', 'sessionStorage']) {
+      let storage;
+      try { storage = scope && scope[name]; } catch { storage = null; }
+      if (!storage || typeof storage.key !== 'function' || typeof storage.removeItem !== 'function') continue;
+      const total = Number(storage.length) || 0;
+      const doomed = [];
+      for (let index = 0; index < total; index += 1) {
+        const key = storage.key(index);
+        if (typeof key !== 'string' || !key || PERSISTED_UI_KEYS.has(key)) continue;
+        if (SECRET_STORAGE_KEY.test(key)) doomed.push(key);
+      }
+      doomed.forEach(key => storage.removeItem(key));
+      removed.push(...doomed);
+    }
+    return removed;
+  }
+
+  function clearSecretFields(scope = root.document) {
+    const cleared = [];
+    if (scope && typeof scope.querySelectorAll === 'function') {
+      scope.querySelectorAll(SECRET_FIELD_SELECTOR).forEach(element => {
+        if (!element) return;
+        if (typeof element.value === 'string' && element.value !== '') cleared.push(element.id || 'secret field');
+        element.value = '';
+        if (typeof element.removeAttribute === 'function') element.removeAttribute('value');
+      });
+    }
+    scrubStoredSecrets();
+    return cleared;
+  }
+
+  const api = { summarize, severityClass, inlineArgument, coverageMarkup, renderOverview, targetEndpoint, errorText, errorGuidance, assessmentErrorMarkup, showLaunchError, responseError, requestJSON, escape, clearSecretFields, scrubStoredSecrets };
   root.DashboardSemantics = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })(typeof window === 'undefined' ? globalThis : window);

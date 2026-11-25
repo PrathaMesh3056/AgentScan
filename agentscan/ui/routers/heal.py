@@ -34,7 +34,10 @@ async def api_heal(request: Request) -> Any:
     try:
         plan = engine.plan(findings)
     except PathSecurityError as error:
-        raise HTTPException(status_code=403, detail=str(error)) from error
+        raise HTTPException(
+            status_code=403,
+            detail="The healing plan must stay inside the dashboard's configured project.",
+        ) from error
     patch = generate_unified_patch(plan, base_dir=root)
     pr_payload = generate_github_pr_payload(plan)
     return JSONResponse(
@@ -72,9 +75,18 @@ async def api_heal_apply(request: Request, payload: dict[str, Any] | None = None
         plan = engine.plan(findings, kinds=kinds)
         engine.apply(plan)
     except PathSecurityError as error:
-        raise HTTPException(status_code=403, detail=str(error)) from error
+        raise HTTPException(
+            status_code=403,
+            detail="The healing plan must stay inside the dashboard's configured project.",
+        ) from error
     except FixConflictError as error:
-        raise HTTPException(status_code=409, detail=str(error)) from error
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "A remediation target changed on disk or is no longer a regular file. "
+                "Reload the healing plan before applying it."
+            ),
+        ) from error
 
     applied_actions = [
         {
@@ -220,7 +232,10 @@ async def api_heal_server_simulate(request: Request, payload: dict[str, Any]) ->
     try:
         plan = engine.plan(findings)
     except PathSecurityError as error:
-        raise HTTPException(status_code=403, detail=str(error)) from error
+        raise HTTPException(
+            status_code=403,
+            detail="The healing plan must stay inside the dashboard's configured project.",
+        ) from error
     patch = generate_unified_patch(plan, base_dir=root)
     pr_payload = generate_github_pr_payload(plan, branch_name=alert.branch_name)
 

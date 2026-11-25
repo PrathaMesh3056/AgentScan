@@ -661,6 +661,10 @@
       } catch (err) {
         DashboardSemantics.showLaunchError('certificate-launch-error', err.message);
         showToast("Verification error: " + err.message);
+      } finally {
+        // The signing key has been read into the request payload; drop it here so
+        // it cannot be re-read from the DOM or autofilled later.
+        DashboardSemantics.clearSecretFields();
       }
     }
 
@@ -714,7 +718,7 @@
               </div>
               <div id="certificate-launch-error" class="launch-error" role="alert" hidden></div>
               <div id="cert-verify-result" class="flex items-center gap-2 flex-wrap"><span id="cert-verify-status"></span>
-                <input type="password" id="cert-secret-key" aria-label="Custom Secret Key (optional)" placeholder="Custom Secret Key (optional)" class="px-3 py-1.5 text-xs border border-[#1A1A1A]/15 rounded-full font-mono focus:outline-none focus:border-[#1A1A1A] w-52" />
+                <input type="password" id="cert-secret-key" data-secret-field="true" autocomplete="off" aria-label="Custom Secret Key (optional)" placeholder="Custom Secret Key (optional)" class="px-3 py-1.5 text-xs border border-[#1A1A1A]/15 rounded-full font-mono focus:outline-none focus:border-[#1A1A1A] w-52" />
                 <button onclick="verifyCertAction()" class="btn-pill-dark text-xs py-1.5 px-4 cursor-pointer whitespace-nowrap">
                   &rarr; Verify Authenticity
                 </button>

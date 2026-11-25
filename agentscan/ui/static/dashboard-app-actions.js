@@ -6,6 +6,8 @@
 
     function closeScanModal() {
       document.getElementById('scan-external-consent').checked = false;
+      // The private reference is only needed for the submission at hand.
+      DashboardSemantics.clearSecretFields();
       const m = document.getElementById('modal-scan');
       if (m) m.classList.add('hidden');
     }
@@ -131,6 +133,9 @@
         if (logBox) logBox.innerText += `\n[SCAN ERROR] ${err.message}`;
         if (btn) btn.classList.remove('opacity-50', 'pointer-events-none');
         if (cancelBtn) cancelBtn.classList.add('opacity-50', 'pointer-events-none');
+      } finally {
+        // The private reference has been read into the dispatched payload.
+        DashboardSemantics.clearSecretFields();
       }
     }
 

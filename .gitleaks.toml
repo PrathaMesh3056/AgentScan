@@ -15,4 +15,7 @@ paths = [
 # signature marker keeps the rest of that test file scannable.
 regexes = [
   '''gw-canary-signature''',
+  # Synthetic HMAC key used only by tests/test_ui_security_hardening.py to prove
+  # GET /api/certificate rejects a key in the URL.
+  '''synthetic-qa045-signing-key''',
 ]
