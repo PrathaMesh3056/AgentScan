@@ -21,6 +21,7 @@ from agentscan._cli._shared import (
     _format_ssp_class,
     app,
     console,
+    validate_report_output,
     write_report,
 )
 from agentscan.core.context import ScanContext, active_context, begin_scan_context
@@ -296,6 +297,10 @@ def scan(  # noqa: PLR0913
     # The AI attacker is an EXPLOIT-mode module, so enabling it implies --exploit.
     if attacker_model:
         exploit = True
+
+    # Reject unusable report destinations before any scanner work starts.
+    if output is not None:
+        validate_report_output(output)
 
     # Enable recording if the user wants to see or save the full exchange (target
     # traffic and/or LLM attacker/judge calls).
