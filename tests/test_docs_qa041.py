@@ -84,7 +84,7 @@ def test_quickstart_does_not_use_retired_enrollment_variables() -> None:
 
 
 def test_quickstart_commands_and_flags_are_shipped() -> None:
-    from typer.testing import CliRunner
+    from typer.main import get_command
 
     from agentscan.cli import app
 
@@ -93,15 +93,18 @@ def test_quickstart_commands_and_flags_are_shipped() -> None:
     assert invocations, "quickstart does not document any agentscan api command"
     assert {command for command, _ in invocations} >= {"serve", "worker"}
 
-    runner = CliRunner()
-    help_by_command: dict[str, str] = {}
+    api_group = get_command(app).commands["api"]
+    accepted: dict[str, set[str]] = {}
     for command, arguments in invocations:
-        if command not in help_by_command:
-            result = runner.invoke(app, ["api", command, "--help"])
-            assert result.exit_code == 0, result.output
-            help_by_command[command] = result.output
+        if command not in accepted:
+            click_command = api_group.commands[command]
+            accepted[command] = {
+                option
+                for parameter in click_command.params
+                for option in getattr(parameter, "opts", ())
+            }
         for flag in re.findall(r"--[a-z0-9-]+", arguments):
-            assert flag in help_by_command[command], (
+            assert flag in accepted[command], (
                 f"documented flag {flag} is not accepted by agentscan api {command}"
             )
 
