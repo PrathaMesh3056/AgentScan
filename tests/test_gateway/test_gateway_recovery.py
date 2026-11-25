@@ -489,6 +489,40 @@ def test_applied_or_unknown_confirmation_never_records_no_effect(tmp_path) -> No
         store.close()
 
 
+def test_reconcile_summary_reflects_confirmation_status(tmp_path) -> None:
+    applied_store = make_store(tmp_path / "applied-summary")
+    add_decision(applied_store)
+    applied = reconcile(
+        applied_store,
+        idempotency_key=RAW_KEY,
+        confirmation=confirmation(status="applied"),
+        max_key_bytes=128,
+        now=NOW,
+    )
+    assert applied.status == ReconciliationStatus.APPLIED
+    assert applied.appended is not None
+    assert applied.appended.result.summary == (
+        "reconciled: upstream confirmed the effect was applied"
+    )
+    applied_store.close()
+
+    unknown_store = make_store(tmp_path / "unknown-summary")
+    add_decision(unknown_store)
+    unknown = reconcile(
+        unknown_store,
+        idempotency_key=RAW_KEY,
+        confirmation=confirmation(status="unknown"),
+        max_key_bytes=128,
+        now=NOW,
+    )
+    assert unknown.status == ReconciliationStatus.UNKNOWN
+    assert unknown.appended is not None
+    assert unknown.appended.result.summary == (
+        "reconciled: upstream could not confirm the effect status"
+    )
+    unknown_store.close()
+
+
 def test_applied_unknown_confirmation_on_existing_unknown_does_not_append(tmp_path) -> None:
     for status, expected in (
         ("applied", ReconciliationStatus.APPLIED),
