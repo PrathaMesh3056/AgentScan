@@ -327,8 +327,10 @@ _BIND_FAILURE_REASONS = {
 
 
 def _bind_failure_reason(error: OSError) -> str:
-    code = getattr(error, "winerror", None) or error.errno
-    reason = _BIND_FAILURE_REASONS.get(code)
+    # Windows reports socket failures in winerror; POSIX reports the same codes in errno.
+    winerror = getattr(error, "winerror", None)
+    code = winerror or error.errno
+    reason = _BIND_FAILURE_REASONS.get(code) if isinstance(code, int) else None
     if reason is not None:
         return reason
     if isinstance(error, socket.gaierror):
