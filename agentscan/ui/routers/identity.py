@@ -11,8 +11,10 @@ from fastapi.responses import JSONResponse
 from loguru import logger
 
 from agentscan.identity.manifest_loader import load_manifests
+from agentscan.identity.permission_mapper import load_role_policies
 from agentscan.ui.security import project_path
 from agentscan.ui.state import state
+from agentscan.ui.status_labels import assess_manifest_enforcement
 from agentscan.ui.validation import Fields, validation_error_response
 
 router = APIRouter(tags=["identity"])
@@ -31,15 +33,15 @@ async def api_identity(
     if not root:
         return JSONResponse({"agents": [], "path": None, "count": 0})
     agents = load_manifests(root)
-    return JSONResponse(
-        {
-            "path": root,
-            "count": len(agents),
-            "agents": [
-                a.model_dump(mode="json") if hasattr(a, "model_dump") else a for a in agents
-            ],
-        }
-    )
+    role_policies = load_role_policies()
+    payload = []
+    for agent in agents:
+        data = agent.model_dump(mode="json") if hasattr(agent, "model_dump") else agent
+        if isinstance(data, dict):
+            # Declared manifests are not proof of runtime RBAC enforcement.
+            data["enforcement"] = assess_manifest_enforcement(agent, role_policies)
+        payload.append(data)
+    return JSONResponse({"path": root, "count": len(agents), "agents": payload})
 
 
 @router.post("/api/certificate")

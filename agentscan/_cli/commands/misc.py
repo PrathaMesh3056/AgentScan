@@ -536,7 +536,8 @@ def watch(
             )
         else:
             console.print(
-                f"Cycle {num}: [bold green]PASS[/bold green] - Canary secure, 0 findings."
+                f"Cycle {num}: [bold green]PASS[/bold green] - "
+                "No canary leak detected in this cycle."
             )
 
     findings = asyncio.run(watcher.run_loop(connector, callback=_on_iter))
@@ -545,7 +546,7 @@ def watch(
             f"\n[bold red]Sentinel detected {len(findings)} vulnerability/leakage event(s).[/bold red]"
         )
     else:
-        console.print("\n[bold green]Sentinel completed cleanly with 0 regressions.[/bold green]")
+        console.print("\n[bold green]Sentinel completed with no findings recorded.[/bold green]")
 
 
 # ── export-guardrails ─────────────────────────────────────────────────────────

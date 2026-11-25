@@ -10,6 +10,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from agentscan.ui.security import project_path
+from agentscan.ui.status_labels import assess_mcp_tool_registration
 from agentscan.ui.validation import Fields, directory_field, validation_error_response
 
 router = APIRouter(tags=["mcp"])
@@ -25,6 +26,8 @@ async def api_mcp() -> Any:
             "protocol_version": "2024-11-05",
             "transport": "stdio / JSON-RPC 2.0",
             "tools_count": len(TOOLS_METADATA),
+            # Registered metadata is not proof that a tool invocation succeeds.
+            "tool_status": assess_mcp_tool_registration({"tools": TOOLS_METADATA}),
             "tools": TOOLS_METADATA,
         }
     )

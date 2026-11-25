@@ -15,15 +15,26 @@ from loguru import logger
 
 from agentscan.core.models import Finding, Target
 from agentscan.ui.state import event_bus, state
+from agentscan.ui.status_labels import assess_canary_leaks, assess_canary_monitoring
 from agentscan.ui.validation import Fields
 
 router = APIRouter(tags=["sentinel"])
 
 
+def _sentinel_status_payload() -> dict[str, Any]:
+    payload = dict(state.sentinel_status)
+    leaks = assess_canary_leaks(payload)
+    payload["canary_monitoring"] = assess_canary_monitoring(payload)
+    payload["canary_leaks"] = leaks
+    payload["probes_run"] = leaks["evidence"]["probes_run"]
+    payload["leaks_detected"] = leaks["evidence"]["leaks_detected"]
+    return payload
+
+
 @router.get("/api/sentinel/status")
 @router.get("/api/sentinel")
 async def api_sentinel_status() -> Any:
-    return JSONResponse(state.sentinel_status)
+    return JSONResponse(_sentinel_status_payload())
 
 
 @router.post("/api/sentinel/probe")
