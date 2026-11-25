@@ -178,10 +178,10 @@ def test_audit_is_a_required_lock_export_gate():
     assert "--frozen" in source and "--no-emit-project" in source
     assert "pip-audit==2.10.1" in source
     assert "--strict" in source and "--require-hashes" in source
-    assert "--disable-pip" not in source
-    # The export already contains every transitive pin; --no-deps keeps pip's
-    # resolver from re-resolving that lock and rejecting marker conflicts.
-    assert "--no-deps" in source
+    # Hashes make the export fully resolved, so --disable-pip can audit it
+    # without pip re-resolving conflicting markers. --no-deps is redundant.
+    assert "--disable-pip" in source
+    assert "--no-deps" not in source
     assert "--desc" not in source
     assert "||" not in source and "continue-on-error" not in audit
     assert "continue-on-error" not in job

@@ -62,7 +62,7 @@ jobs:
         run: |
           set -euo pipefail
           uv export --frozen --extra semgrep --extra ui --extra api --extra gateway --dev --no-emit-project --format requirements-txt --output-file "$RUNNER_TEMP/agentscan-audit-requirements.txt"
-          uvx --from pip-audit==2.10.1 pip-audit --strict --require-hashes --no-deps --requirement "$RUNNER_TEMP/agentscan-audit-requirements.txt"
+          uvx --from pip-audit==2.10.1 pip-audit --strict --require-hashes --disable-pip --requirement "$RUNNER_TEMP/agentscan-audit-requirements.txt"
 
       - name: Build wheel and sdist
         run: uv build --no-sources

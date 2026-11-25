@@ -62,7 +62,7 @@ The current gate exports a fully hashed, frozen requirements file and then passe
 --require-hashes --disable-pip --no-deps --desc on
 ```
 
-`--disable-pip` skips the pinned, hash-checked install that makes the audit meaningful, and `--desc on` only restates the default text description. `--no-deps` is not redundant: the frozen export already contains every transitive pin, and dropping it makes pip re-resolve the export into conflicting dependency markers (observed in CI run 45660457601). The cleaned contract is therefore `--strict --require-hashes --no-deps` plus the frozen export.
+`--require-hashes` proves the export is fully resolved and lets pip-audit read it directly with `--disable-pip`, without creating a resolver environment. `--no-deps` is then redundant, and removing `--disable-pip` instead makes pip re-resolve the export into conflicting markers (observed in CI runs 45660457601 and 45661983593). `--desc on` only restates the default text description. The cleaned contract is `--strict --require-hashes --disable-pip` plus the frozen export.
 
 ### QA-023 — gitleaks allowlists
 
@@ -134,10 +134,10 @@ The current sdist includes only `agentscan/`, `rules/ai_rules.yaml`, `pyproject.
 Replace the audit line with:
 
 ```bash
-uvx --from pip-audit==2.10.1 pip-audit --strict --require-hashes --no-deps --requirement "$RUNNER_TEMP/agentscan-audit-requirements.txt"
+uvx --from pip-audit==2.10.1 pip-audit --strict --require-hashes --disable-pip --requirement "$RUNNER_TEMP/agentscan-audit-requirements.txt"
 ```
 
-Keep the frozen export, `set -euo pipefail`, the pinned tool version, `--no-deps` for the already-complete export, and the absence of `||`/`continue-on-error`.
+Keep the frozen export, `set -euo pipefail`, the pinned tool version, `--disable-pip` for the already-complete hashed export, and the absence of `||`/`continue-on-error`.
 
 ### 3.3 Gitleaks (QA-023)
 
