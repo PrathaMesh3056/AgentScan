@@ -168,6 +168,32 @@ python -c "… pytest.main([…])"   # wrapper from the issue workflow
   `field_errors` keys are unchanged.
 - Rollback is a revert of the implementation commit; the docs commit is inert.
 
+## Result
+
+Implemented on `fix/qa-045-dashboard-security` (base `origin/main` @ `7c17743`):
+
+- `ed3d8e5` — this plan (docs-first commit).
+- `a037930` — security helpers, secured-response path, path-free healing/identity
+  details, GET `secret_key` rejection, DOM/storage scrubbers and the new
+  regression suite. `tests/test_ui.py` also moved its custom-key signature check
+  from GET to POST, because a key in the URL is now rejected by design.
+
+Verification (venv Python from the issue workflow, `--basetemp` under the session
+workspace, `-p no:cacheprovider`):
+
+| Check | Result |
+| --- | --- |
+| `tests/test_ui_security_hardening.py` on the fixed tree | 40 passed |
+| Same file on a `7c17743` worktree (before the fix) | 36 failed, 4 passed |
+| Related suites (`test_ui*`, `guard/test_path.py`, identity, identity-shrink) | 647 passed, 1 skipped |
+| `ruff check` on changed Python | all checks passed |
+| `ruff format --check` on changed Python | 5 files already formatted |
+| `mypy` on changed modules | blocked by the host Application Control policy: `ImportError: DLL load failed while importing subtypes` |
+
+The before/after run is the regression proof: every new test that exercises a
+header path, a redacted 4xx body, the GET rejection or the DOM scrubber fails on
+the base commit and passes here.
+
 ## Out of scope
 
 `agentscan/core/`, `agentscan/action/`, `agentscan/reporting/audit_verifier.py`,
