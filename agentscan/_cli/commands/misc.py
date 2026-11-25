@@ -17,6 +17,7 @@ from rich import print as rprint
 from rich.panel import Panel
 from rich.table import Table
 
+from agentscan._cli._errors import load_json_file
 from agentscan._cli._shared import (
     api_app,
     app,
@@ -215,8 +216,6 @@ def verify_claims(
     ),
 ) -> None:
     """Deterministically verify benchmark claims against committed run receipts (no network required)."""
-    import json as _json
-
     from agentscan.core.benchmark import BenchmarkRow, discriminates
 
     if not receipt.exists():
@@ -226,7 +225,7 @@ def verify_claims(
         )
         raise typer.Exit(code=1)
 
-    data = _json.loads(receipt.read_text(encoding="utf-8"))
+    data = load_json_file(receipt, role="Benchmark receipt", expected=dict)
     console.print(f"\n[bold cyan]AgentScan Verify-Claims[/bold cyan] — Receipt: {receipt}\n")
 
     all_passed = True
@@ -350,20 +349,18 @@ def fix(
 
     from agentscan.remediation.engine import RemediationEngine
 
+    if not target.exists():
+        raise typer.BadParameter(f"Fix target does not exist: {target}")
+
     findings: list[Finding] = []
     root_path = target
     if target.is_file() and target.suffix == ".json":
-        try:
-            data = json.loads(target.read_text(encoding="utf-8"))
-            if isinstance(data, dict):
-                raw_findings = data.get("findings", [])
-                for rf in raw_findings:
-                    with contextlib.suppress(Exception):
-                        findings.append(Finding.model_validate(rf))
-            root_path = target.parent
-        except Exception as e:
-            console.print(f"[red]Failed to load report from {target}: {e}[/red]")
-            raise typer.Exit(1) from None
+        data = load_json_file(target, role="Report file", expected=dict)
+        raw_findings = data.get("findings", [])
+        for rf in raw_findings:
+            with contextlib.suppress(Exception):
+                findings.append(Finding.model_validate(rf))
+        root_path = target.parent
     else:
         from agentscan.identity.orchestrator import run_identity_audit
         from agentscan.supply_chain.config_auditor import scan_config as _scan_cfg
@@ -623,15 +620,7 @@ def compliance_command(
         evaluate_nist_ai_rmf,
     )
 
-    if not report_file.exists():
-        console.print(f"[bold red]Error: Report file not found:[/bold red] {report_file}")
-        raise typer.Exit(code=1)
-
-    try:
-        data = json.loads(report_file.read_text(encoding="utf-8"))
-    except Exception as e:
-        console.print(f"[bold red]Failed to parse report file:[/bold red] {e}")
-        raise typer.Exit(code=1) from None
+    data = load_json_file(report_file, role="Report file")
 
     raw_findings = (
         data.get("findings", [])
@@ -740,19 +729,7 @@ def verify_command(
     """Verify cryptographic audit integrity and tamper-evidence of AgentScan reports."""
     from agentscan.reporting.audit_verifier import sign_audit_report, verify_audit_certificate
 
-    if not report_file.exists():
-        console.print(f"[bold red]Error: Report file not found:[/bold red] {report_file}")
-        raise typer.Exit(code=1)
-
-    try:
-        report_data = json.loads(report_file.read_text(encoding="utf-8"))
-    except Exception as e:
-        console.print(f"[bold red]Failed to parse report file:[/bold red] {e}")
-        raise typer.Exit(code=1) from None
-
-    if not isinstance(report_data, dict):
-        console.print("[bold red]Error: Report must be a valid JSON object dictionary.[/bold red]")
-        raise typer.Exit(code=1)
+    report_data = load_json_file(report_file, role="Report file", expected=dict)
 
     if sign:
         try:
@@ -789,14 +766,7 @@ def verify_command(
     # Verification Mode
     cert_to_verify = None
     if certificate_file is not None:
-        if not certificate_file.exists():
-            console.print(f"[bold red]Certificate file not found:[/bold red] {certificate_file}")
-            raise typer.Exit(code=1)
-        try:
-            cert_to_verify = json.loads(certificate_file.read_text(encoding="utf-8"))
-        except Exception as e:
-            console.print(f"[bold red]Failed to parse certificate file:[/bold red] {e}")
-            raise typer.Exit(code=1) from None
+        cert_to_verify = load_json_file(certificate_file, role="Certificate file", expected=dict)
     else:
         cert_to_verify = report_data.get("certificate")
 

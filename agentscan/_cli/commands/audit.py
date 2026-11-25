@@ -73,6 +73,14 @@ def audit(  # noqa: PLR0912, PLR0913
     ),
 ) -> None:
     """Audit a project directory for AI supply-chain and identity risks."""
+    audit_path = Path(path)
+    if not audit_path.exists():
+        raise typer.BadParameter(f"Audit path does not exist: {path}")
+    if not audit_path.is_dir():
+        raise typer.BadParameter(f"Audit path must be a directory: {path}")
+    if rules is not None and not rules.is_file():
+        raise typer.BadParameter(f"Semgrep rules file not found: {rules}")
+
     # If no flag is given, run the built-in categories (Semgrep stays opt-in).
     run_all = not any(
         [

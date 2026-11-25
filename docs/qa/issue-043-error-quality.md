@@ -89,16 +89,24 @@ $env:PYTHONDONTWRITEBYTECODE='1'
 Also run the existing CLI/test slices that exercise the touched commands, plus
 the related remediation tests. Report any environment-only failure exactly.
 
+## Result
+
+Implemented and covered by `tests/test_cli_error_quality.py` (18 tests). Against
+the base commit `7c17743` all 18 tests fail; after the fix all 18 pass. The
+related existing slice (`test_cli`, `test_analysis_options`, `test_cli_fix`,
+`test_audit_verifier`, `test_pdf_report`, `test_audit_coverage`) reports
+**103 passed, 2 skipped**. Ruff check and format check pass.
+
 ## Acceptance criteria
 
-- [ ] At least five of the 13 IDs are covered by code and tests; this plan
+- [x] At least five of the 13 IDs are covered by code and tests; this plan
       claims seven.
-- [ ] Every expected operator error names the field or path.
-- [ ] No raw traceback for the covered expected errors.
-- [ ] BOM-prefixed valid JSON is accepted.
-- [ ] No frozen files or unrelated refactors.
-- [ ] Targeted, related, Ruff, and format checks pass.
-- [ ] Draft PR opened after the docs commit; marked ready only after checks.
+- [x] Every expected operator error names the field or path.
+- [x] No raw traceback for the covered expected errors.
+- [x] BOM-prefixed valid JSON is accepted.
+- [x] No frozen files or unrelated refactors.
+- [x] Targeted, related, Ruff, and format checks pass.
+- [x] Draft PR opened after the docs commit; marked ready only after checks.
 
 ## Rollback
 

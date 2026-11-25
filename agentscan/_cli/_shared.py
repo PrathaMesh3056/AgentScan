@@ -121,7 +121,12 @@ def write_report(report: Any, output_path: Path) -> None:
     elif ext == ".pdf":
         from agentscan.reporting.pdf_report import render_pdf_report
 
-        render_pdf_report(report, output_path)
+        try:
+            render_pdf_report(report, output_path)
+        except RuntimeError as exc:
+            raise typer.BadParameter(
+                f"PDF report could not be written to '{output_path}': {exc}"
+            ) from None
     elif ext == ".sarif":
         from agentscan.reporting.sarif_report import to_sarif
 

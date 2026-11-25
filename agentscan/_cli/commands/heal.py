@@ -5,13 +5,13 @@
 from __future__ import annotations
 
 import contextlib
-import json
 from pathlib import Path
 
 import typer
 from rich.panel import Panel
 from rich.table import Table
 
+from agentscan._cli._errors import load_json_file
 from agentscan._cli._shared import app, console
 from agentscan.core.models import Finding
 
@@ -43,19 +43,15 @@ def heal_command(
         if not report_file.exists():
             console.print(f"[bold red]Error: Report file not found:[/bold red] {report_file}")
             raise typer.Exit(code=1)
-        try:
-            data = json.loads(report_file.read_text(encoding="utf-8"))
-            raw_findings = (
-                data.get("findings", [])
-                if isinstance(data, dict)
-                else (data if isinstance(data, list) else [])
-            )
-            for item in raw_findings:
-                with contextlib.suppress(Exception):
-                    findings.append(Finding.model_validate(item))
-        except Exception as e:
-            console.print(f"[bold red]Failed to parse report file:[/bold red] {e}")
-            raise typer.Exit(code=1) from None
+        data = load_json_file(report_file, role="Report file")
+        raw_findings = (
+            data.get("findings", [])
+            if isinstance(data, dict)
+            else (data if isinstance(data, list) else [])
+        )
+        for item in raw_findings:
+            with contextlib.suppress(Exception):
+                findings.append(Finding.model_validate(item))
     else:
         # Run static configuration & framework auditors to discover remediable findings
         from agentscan.supply_chain.config_auditor import scan_config
