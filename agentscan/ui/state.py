@@ -37,6 +37,7 @@ class UiState:
             "target": None,
             "interval": 60,
             "canary_token": None,
+            "canary_token_configured": False,
             "webhook_url": None,
             "alerts": [],
         }

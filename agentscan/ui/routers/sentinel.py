@@ -131,7 +131,12 @@ async def api_sentinel_start(payload: dict[str, Any] | None = None) -> Any:
         "webhook_error": None,
         "target": target_url,
         "interval": interval,
-        "canary_token": canary_token,
+        # The status artifact is readable by any dashboard viewer and replayed over
+        # SSE: keep only a configured marker, never the raw synthetic canary token.
+        # The operator-facing start/probe responses still return the token once so
+        # it can be planted on the target.
+        "canary_token": "configured" if canary_token else None,
+        "canary_token_configured": bool(canary_token),
         "webhook_url": webhook_url,
         "alerts": state.sentinel_status.get("alerts", []),
     }

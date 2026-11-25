@@ -25,7 +25,7 @@ def test_pin_bump_requirements_txt(tmp_path: Path) -> None:
     action = actions[0]
     assert action.kind == "pin_bump"
     assert action.finding_id == "SC-001"
-    assert "langchain>=0.0.155" in action.after
+    assert "langchain==0.0.155" in action.after
     assert "requests>=2.28.0" in action.after
 
 
@@ -48,4 +48,4 @@ def test_pin_bump_pyproject_toml(tmp_path: Path) -> None:
 
     actions = plan_pin_bumps([finding], tmp_path)
     assert len(actions) == 1
-    assert '"langchain>=0.0.155"' in actions[0].after
+    assert '"langchain==0.0.155"' in actions[0].after

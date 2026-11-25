@@ -62,5 +62,5 @@ def test_cli_fix_from_json_report(tmp_path: Path) -> None:
     )
     assert res.exit_code == 0
     assert "Successfully applied" in res.output
-    assert "langchain>=0.0.155" in req.read_text(encoding="utf-8")
+    assert "langchain==0.0.155" in req.read_text(encoding="utf-8")
     assert plan_output.exists()

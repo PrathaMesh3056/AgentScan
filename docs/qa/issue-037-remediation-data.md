@@ -42,7 +42,8 @@ All fixtures are synthetic and loopback-only; no real credentials or external pr
    `agentscan/_cli/commands/misc.py`: a shared `patch_text` helper LF-normalizes diff input
    and resolves `a/`/`b/` paths relative to the repository root; the PR body, GitHub payload,
    `--output` artifact, and CLI diff all use those relative paths. `--output` embeds the
-   provenance map.
+   provenance map. The alternate `generate_github_pr_payload` body and metadata carry the
+   same map.
 3. `agentscan/remediation/pin_bump.py`: bumps the version while preserving the original
    operator (`==`, `~=`, `>=`) and any spacing/marker suffix. Upper bounds (`<`, `<=`) and
    `!=` are converted to `>=<fix>` because an upper bound cannot express the fix; that
@@ -87,6 +88,16 @@ Targeted suites (new and existing) with `-p no:cacheprovider` and an explicit ba
 Every new test was run against the pre-fix tree first and observed failing for the stated
 reason, then against the fix.
 
+### Verification results
+
+| Check | Result |
+|---|---|
+| New files on pre-fix `7c17743` | `25 failed, 4 passed` (the 4 are the already-correct `>=`, `<=` and untouched-package cases) |
+| New files after the fix | `29 passed` |
+| `tests/test_remediation` | `64 passed, 1 failed` - `test_recovery.py::test_process_exit_keeps_recoverable_preimages_and_preserves_later_edits` is an environment-only failure: the spawned child process is denied `[Errno 13]` creating its `.agentscan-recovery/*.before` journal. Reproduced unchanged on a pristine `7c17743` worktree, so it is not caused by this change. |
+| UI and sentinel suites (`tests/test_ui*.py`, `tests/test_sentinel`) | `780 passed, 1 skipped` |
+| `ruff check` / `ruff format --check` on every changed Python file | clean |
+
 ## Risks
 
 - Operator preservation changes committed pin output from `>=` to `==`/`~=`; a reviewer who
@@ -106,6 +117,6 @@ reason, then against the fix.
 
 - [x] Pickup comment posted on #37.
 - [x] Written plan committed before implementation.
-- [ ] Regression tests fail before / pass after for items 1-4.
-- [ ] Targeted + related suites pass; Ruff check and format check clean.
-- [ ] Implementation commit pushed; draft PR marked ready for review. No merge.
+- [x] Regression tests fail before / pass after for items 1-4.
+- [x] Targeted + related suites pass; Ruff check and format check clean.
+- [x] Implementation commit pushed; draft PR marked ready for review. No merge.

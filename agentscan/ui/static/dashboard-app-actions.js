@@ -55,6 +55,7 @@
     async function triggerScanAction() {
       if (!validateSubmission('scan', 'scan-launch-error')) return;
       const formValues = AgentScanForms.getValues('scan');
+      AgentScanForms.clearSecretFields('scan');
       const btn = document.getElementById('btn-trigger-scan');
       const cancelBtn = document.getElementById('btn-cancel-scan');
       const logBox = document.getElementById('scan-log-box');

@@ -4,7 +4,6 @@
 
 from __future__ import annotations
 
-import difflib
 import os
 import re
 import shutil
@@ -15,6 +14,7 @@ from pathlib import Path
 from loguru import logger
 
 from agentscan.remediation.models import FixAction, FixPlan
+from agentscan.remediation.patch_text import repo_relative_path, unified_diff
 
 # Mapping of known finding prefix patterns to OWASP Top 10 for LLM categories
 OWASP_CATEGORY_MAP: dict[str, str] = {"SC-001": "LLM03", "SC-011": "LLM03", "SC-021": "LLM06"}
@@ -256,10 +256,12 @@ class GitPRAutomator:
             "",
         ]
 
+        root = plan.root_path or self.repo_path
         for idx, action in enumerate(plan.actions, start=1):
             attack_id = action.finding_id
             owasp_id = resolve_owasp_id(attack_id, action.owasp_id)
             diff_summary = self._compute_diff_summary(action)
+            relative = repo_relative_path(action.path, root)
 
             lines.extend(
                 [
@@ -267,15 +269,29 @@ class GitPRAutomator:
                     f"- **Attack ID**: `{attack_id}`",
                     f"- **OWASP ID**: `{owasp_id}`",
                     f"- **Remediation Kind**: `{action.kind}`",
-                    f"- **File Path**: `{action.path}`",
+                    f"- **File Path**: `{relative}`",
                     f"- **Diff Summary**: {diff_summary}",
                     "",
                     "```diff",
-                    self._generate_unified_diff(action),
+                    self._generate_unified_diff(action, root),
                     "```",
                     "",
                 ]
             )
+
+        lines.extend(
+            [
+                "### 🧭 Finding to Action Provenance",
+                "",
+                "| Finding | Actions | Kinds | Files |",
+                "|---|---|---|---|",
+            ]
+        )
+        for finding_id, entry in plan.provenance_map().items():
+            actions = ", ".join(str(index) for index in entry["actions"])
+            kinds = ", ".join(f"`{kind}`" for kind in entry["kinds"])
+            paths = ", ".join(f"`{path}`" for path in entry["paths"])
+            lines.append(f"| `{finding_id}` | {actions} | {kinds} | {paths} |")
 
         lines.extend(
             [
@@ -325,17 +341,9 @@ class GitPRAutomator:
         removed = max(0, len(before_lines) - len(after_lines))
         return f"+{added} / -{removed} lines modified"
 
-    def _generate_unified_diff(self, action: FixAction) -> str:
-        """Generate unified diff string between before and after contents."""
-        path_name = Path(action.path).name
-        diff_lines = list(
-            difflib.unified_diff(
-                action.before.splitlines(keepends=True),
-                action.after.splitlines(keepends=True),
-                fromfile=f"a/{path_name}",
-                tofile=f"b/{path_name}",
-            )
+    def _generate_unified_diff(self, action: FixAction, root: Path | None = None) -> str:
+        """Generate an LF diff with the file path relative to the repository root."""
+        relative = repo_relative_path(action.path, root or self.repo_path)
+        return unified_diff(action.before, action.after, relative) or (
+            f"# No textual diff recorded for {relative}"
         )
-        if not diff_lines:
-            return f"# No textual diff recorded for {path_name}"
-        return "".join(diff_lines)

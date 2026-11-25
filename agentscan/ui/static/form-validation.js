@@ -178,6 +178,18 @@
     else element.removeAttribute('aria-describedby');
   }
   function clear(workflow) { specs(workflow).forEach(spec => renderField(spec, null)); }
+  function clearSecretFields(workflow) {
+    // A submitted secret must not stay readable in the DOM for screenshots, extensions
+    // or shoulder-surfing. Only authored secret inputs are cleared; everything else
+    // keeps its value for the operator.
+    let cleared = 0;
+    specs(workflow).forEach(spec => {
+      if (!['signingKey', 'canary'].includes(spec.type)) return;
+      const element = root.document?.getElementById(spec.id);
+      if (element && 'value' in element && element.value) { element.value = ''; cleared += 1; }
+    });
+    return cleared;
+  }
   function applyServer(workflow, payload) {
     const errors = payload?.field_errors || {};
     Object.entries(errors).forEach(([key, message]) => { const spec = fieldFor(workflow, key); if (spec) renderField(spec, String(message).slice(0, 500)); });
@@ -264,7 +276,7 @@
       element.addEventListener('input', update); element.addEventListener('change', update);
     }));
   }
-  const api = { validate, clear, applyServer, attach, getValues: workflow => validate(workflow, { render: false }).values, inventory: () => Object.entries(definitions).flatMap(([workflow, fields]) => fields.map(field => ({ workflow, ...field }))), checkField };
+  const api = { validate, clear, clearSecretFields, applyServer, attach, getValues: workflow => validate(workflow, { render: false }).values, inventory: () => Object.entries(definitions).flatMap(([workflow, fields]) => fields.map(field => ({ workflow, ...field }))), checkField };
   root.AgentScanForms = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })(typeof window !== 'undefined' ? window : globalThis);
