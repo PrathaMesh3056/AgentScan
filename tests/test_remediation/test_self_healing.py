@@ -102,6 +102,77 @@ def test_webhook_alert_validation(tmp_path: Path):
     assert resp.status_code == 403
 
 
+def test_webhook_rejects_unknown_severity(tmp_path: Path) -> None:
+    resp = client.post(
+        "/webhook/alert",
+        json={
+            "target_repo": str(tmp_path),
+            "findings": [{"attack_id": "SC-011", "severity": "critical-ish"}],
+        },
+    )
+    assert resp.status_code == 400
+    assert resp.json()["detail"] == "findings[0].severity is not a recognized severity"
+
+
+def test_webhook_rejects_invalid_finding_ids(tmp_path: Path) -> None:
+    for finding_id in ("../../etc/passwd", "SC 011", "DROP TABLE"):
+        resp = client.post(
+            "/webhook/alert",
+            json={"target_repo": str(tmp_path), "finding_ids": [finding_id]},
+        )
+        assert resp.status_code == 400
+        assert "finding_ids[0]" in resp.json()["detail"]
+
+
+def test_webhook_rejects_invalid_finding_attack_id(tmp_path: Path) -> None:
+    resp = client.post(
+        "/webhook/alert",
+        json={
+            "target_repo": str(tmp_path),
+            "findings": [{"attack_id": "not-a-finding", "severity": "HIGH"}],
+        },
+    )
+    assert resp.status_code == 400
+    assert resp.json()["detail"] == "findings[0].attack_id is missing or invalid"
+
+
+def test_webhook_rejects_non_object_metadata(tmp_path: Path) -> None:
+    resp = client.post(
+        "/webhook/alert",
+        json={
+            "target_repo": str(tmp_path),
+            "findings": [{"attack_id": "SC-011", "metadata": ["not", "an", "object"]}],
+        },
+    )
+    assert resp.status_code == 400
+    assert resp.json()["detail"] == "findings[0].metadata must be an object"
+
+
+def test_webhook_rejects_oversized_alert(tmp_path: Path) -> None:
+    findings = [{"attack_id": f"SC-{index:03d}"} for index in range(101)]
+    resp = client.post(
+        "/webhook/alert",
+        json={"target_repo": str(tmp_path), "findings": findings},
+    )
+    assert resp.status_code == 400
+    assert "at most 100" in resp.json()["detail"]
+
+
+def test_webhook_accepts_alert_shaped_finding(tmp_path: Path) -> None:
+    (tmp_path / "agent.py").write_text(
+        "import torch\nweights = torch.load('model.pt')\n", encoding="utf-8"
+    )
+    resp = client.post(
+        "/webhook/alert",
+        json={
+            "target_repo": str(tmp_path),
+            "findings": [{"id": "SC-011", "severity": "high"}],
+        },
+    )
+    assert resp.status_code == 200
+    assert resp.json()["total_actions"] >= 1
+
+
 def test_webhook_alert_planning_and_patch(tmp_path: Path):
     target_py = tmp_path / "agent.py"
     target_py.write_text("import torch\nweights = torch.load('model.pt')\n", encoding="utf-8")

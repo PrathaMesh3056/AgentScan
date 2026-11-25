@@ -7,13 +7,14 @@
 from __future__ import annotations
 
 import os
+import re
 import secrets
 from pathlib import Path
 from typing import Annotated, Any
 
 from fastapi import Depends, FastAPI, Header, HTTPException
 from loguru import logger
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 from agentscan.core.models import Finding, Severity
 from agentscan.guard.path import PathSecurityError
@@ -27,6 +28,14 @@ app = FastAPI(
     description="Ingests live security telemetry and triggers automated AST remediation and patch generation.",
     version="0.1.0",
 )
+
+_MAX_ALERT_FINDINGS = 100
+_ATTACK_ID_RE = re.compile(r"^(ATK|SC|ID)-[A-Z0-9\-]+$")
+_OWASP_ID_RE = re.compile(r"^(LLM\d{2}|UNMAPPED)$")
+
+
+class FindingPayloadError(ValueError):
+    """An alert finding is not a valid Finding or a well-formed alert item."""
 
 
 class AlertPayload(BaseModel):
@@ -49,41 +58,81 @@ class AlertPayload(BaseModel):
     )
 
 
+def _alert_text(item: dict[str, Any], key: str, default: str, index: int) -> str:
+    """Return an optional alert string without coercing arbitrary values."""
+    value = item.get(key)
+    if value is None:
+        return default
+    if not isinstance(value, str):
+        raise FindingPayloadError(f"findings[{index}].{key} must be a string")
+    return value
+
+
+def _alert_finding(item: dict[str, Any], index: int) -> Finding:
+    """Build a validated Finding from an alert-shaped dictionary."""
+    attack_id = item.get("attack_id") or item.get("id")
+    if not isinstance(attack_id, str) or not _ATTACK_ID_RE.fullmatch(attack_id):
+        raise FindingPayloadError(f"findings[{index}].attack_id is missing or invalid")
+
+    raw_severity = item.get("severity", Severity.HIGH.value)
+    if not isinstance(raw_severity, str) or raw_severity.upper() not in Severity.__members__:
+        raise FindingPayloadError(f"findings[{index}].severity is not a recognized severity")
+
+    owasp_id = item.get("owasp_id") or "LLM05"
+    if not isinstance(owasp_id, str) or not _OWASP_ID_RE.fullmatch(owasp_id):
+        raise FindingPayloadError(f"findings[{index}].owasp_id is invalid")
+
+    metadata = item.get("metadata")
+    if metadata is None:
+        metadata = {}
+    if not isinstance(metadata, dict):
+        raise FindingPayloadError(f"findings[{index}].metadata must be an object")
+
+    try:
+        return Finding(
+            attack_id=attack_id,
+            attack_name=_alert_text(item, "attack_name", "Security Alert", index),
+            severity=Severity[raw_severity.upper()],
+            owasp_id=owasp_id,
+            description=_alert_text(item, "description", "Automated alert finding", index),
+            evidence=_alert_text(item, "evidence", "", index),
+            remediation=_alert_text(item, "remediation", "", index),
+            metadata=metadata,
+        )
+    except ValidationError as error:
+        location = ".".join(str(part) for part in error.errors()[0].get("loc", ())) or "finding"
+        raise FindingPayloadError(f"findings[{index}] failed validation at {location}") from error
+
+
 def _parse_findings(payload: AlertPayload) -> list[Finding]:
-    """Extract or synthesize Finding objects from alert payload."""
+    """Extract validated Finding objects from alert payload."""
+    if (
+        len(payload.findings) > _MAX_ALERT_FINDINGS
+        or len(payload.finding_ids) > _MAX_ALERT_FINDINGS
+    ):
+        raise FindingPayloadError(
+            f"alert may contain at most {_MAX_ALERT_FINDINGS} findings or finding_ids"
+        )
+
     parsed: list[Finding] = []
-    for item in payload.findings:
+    for index, item in enumerate(payload.findings):
         try:
-            finding = Finding.model_validate(item)
-            parsed.append(finding)
-        except Exception:
-            # Construct minimal Finding from dictionary
-            attack_id = str(item.get("attack_id") or item.get("id") or "SC-011")
-            sev_str = str(item.get("severity") or "HIGH").upper()
-            sev = getattr(Severity, sev_str, Severity.HIGH)
-            parsed.append(
-                Finding(
-                    attack_id=attack_id,
-                    attack_name=str(item.get("attack_name") or "Security Alert"),
-                    severity=sev,
-                    owasp_id=str(item.get("owasp_id") or "LLM05"),
-                    description=str(item.get("description") or "Automated alert finding"),
-                    evidence=str(item.get("evidence") or ""),
-                    remediation=str(item.get("remediation") or ""),
-                    metadata=item.get("metadata") or {},
-                )
-            )
+            parsed.append(Finding.model_validate(item))
+        except ValidationError:
+            parsed.append(_alert_finding(item, index))
 
     # If only finding_ids were supplied without full finding objects
-    if not parsed and payload.finding_ids:
-        for fid in payload.finding_ids:
+    if not parsed:
+        for index, finding_id in enumerate(payload.finding_ids):
+            if not isinstance(finding_id, str) or not _ATTACK_ID_RE.fullmatch(finding_id):
+                raise FindingPayloadError(f"finding_ids[{index}] is not a valid finding ID")
             parsed.append(
                 Finding(
-                    attack_id=fid,
-                    attack_name=f"Alert for {fid}",
+                    attack_id=finding_id,
+                    attack_name=f"Alert for {finding_id}",
                     severity=Severity.HIGH,
                     owasp_id="LLM05",
-                    description=f"Automated self-healing triggered for {fid}",
+                    description=f"Automated self-healing triggered for {finding_id}",
                     evidence="",
                     remediation="Apply automated fix.",
                     metadata={},
@@ -126,7 +175,10 @@ def receive_alert(
     payload: AlertPayload, repo_path: Annotated[Path, Depends(_authorized_root)]
 ) -> dict[str, Any]:
     """Ingest security alert, plan remediation, and generate unified git patch."""
-    findings = _parse_findings(payload)
+    try:
+        findings = _parse_findings(payload)
+    except FindingPayloadError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
     if not findings:
         raise HTTPException(
             status_code=400, detail="No valid findings or finding_ids provided in alert."
