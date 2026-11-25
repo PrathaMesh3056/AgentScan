@@ -460,8 +460,12 @@ class TestScanCommand:
 
 
 class TestListAttacks:
-    def test_scan_config_profile_builds_browser_target(self, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    def test_scan_config_profile_builds_browser_target(  # type: ignore[no-untyped-def]
+        self, tmp_path, monkeypatch
+    ) -> None:
         """A YAML profile supplies the url, browser selectors, and exploit flag."""
+        # Target construction is under test here; Playwright itself is optional.
+        monkeypatch.setattr("agentscan._cli._preflight.playwright_available", lambda: True)
         profile = tmp_path / "target.yaml"
         profile.write_text(
             "url: http://widget.local/\n"

@@ -171,11 +171,20 @@ def test_ui_custom_secret_key_certificate(sample_report: Path) -> None:
     assert mismatched_resp.json()["valid"] is False
 
 
-def test_ui_live_scan_controller_and_discovery(sample_report: Path, tmp_path: Path) -> None:
+def test_ui_live_scan_controller_and_discovery(
+    sample_report: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import asyncio
+
     from fastapi.testclient import TestClient
 
     from agentscan.ui.app import create_app
 
+    async def wait_for_cancel(*_args, **_kwargs) -> None:
+        await asyncio.Future()
+
+    # Keep the background scan live so the cancel assertion is deterministic.
+    monkeypatch.setattr("agentscan.core.runner.run_scan_multi", wait_for_cancel)
     app = create_app(sample_report, Path("tests/fixtures/demo-agents"))
     client = TestClient(app)
     client.get("/")
