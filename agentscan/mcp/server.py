@@ -29,7 +29,7 @@ TOOLS_METADATA: list[dict[str, Any]] = [
     },
     {
         "name": "agentscan_audit",
-        "description": "Audit a project repository for AI supply-chain vulnerabilities, known CVEs, hardcoded API secrets, insecure framework configurations (CrewAI, LangGraph, AutoGen), and transitive dependency risks.",
+        "description": "Audit a project repository for AI supply-chain and identity risks (known CVEs, hardcoded secrets, insecure configs, typosquats, MCP configs, agent manifests, framework patterns, optional code rules). Returns explicit per-module coverage and assessment status.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -47,6 +47,23 @@ TOOLS_METADATA: list[dict[str, Any]] = [
                     "type": "boolean",
                     "description": "Trace and display root-to-leaf transitive dependency chains",
                     "default": True,
+                },
+                "checks": {
+                    "type": "array",
+                    "description": "Audit modules to run. Defaults to the built-in set (all except scan_semgrep).",
+                    "items": {
+                        "type": "string",
+                        "enum": [
+                            "scan_deps",
+                            "scan_config",
+                            "scan_secrets",
+                            "scan_typo",
+                            "scan_mcp",
+                            "scan_identity",
+                            "scan_frameworks",
+                            "scan_semgrep",
+                        ],
+                    },
                 },
             },
         },
@@ -128,71 +145,48 @@ def handle_list_attacks() -> str:
 
 
 def handle_audit(args: dict[str, Any]) -> str:
-    from agentscan.supply_chain.config_auditor import scan_config
-    from agentscan.supply_chain.dep_scanner import scan_dependencies
-    from agentscan.supply_chain.framework_auditor import scan_frameworks
-    from agentscan.supply_chain.secret_scanner import scan_secrets
+    from agentscan.reporting.audit_runner import run_static_audit
 
     path_str = str(args.get("path", "."))
-    offline = bool(args.get("offline", True))
-    show_transitive = bool(args.get("show_transitive", True))
+    raw_checks = args.get("checks")
+    if raw_checks is None:
+        selected = None
+    elif isinstance(raw_checks, str):
+        selected = [raw_checks]
+    elif isinstance(raw_checks, list):
+        selected = [str(check) for check in raw_checks]
+    else:
+        raise ValueError("checks must be a list of audit module names")
+    if selected is not None and not selected:
+        raise ValueError("checks must select at least one audit module")
 
-    all_findings = []
-    total_checks = 0
-
-    # Dependencies
-    dep_findings, dep_checks = scan_dependencies(
-        path_str, offline=offline, show_transitive=show_transitive
+    # One shared orchestration path with the CLI and dashboard.
+    run = run_static_audit(
+        path_str,
+        selected,
+        offline=bool(args.get("offline", True)),
+        show_transitive=bool(args.get("show_transitive", True)),
     )
-    all_findings.extend(dep_findings)
-    total_checks += dep_checks
-
-    # Configs
-    cfg_findings, cfg_checks = scan_config(path_str)
-    all_findings.extend(cfg_findings)
-    total_checks += cfg_checks
-
-    # Secrets
-    sec_findings, sec_checks = scan_secrets(path_str)
-    all_findings.extend(sec_findings)
-    total_checks += sec_checks
-
-    # Frameworks
-    fw_findings, fw_checks = scan_frameworks(path_str)
-    all_findings.extend(fw_findings)
-    total_checks += fw_checks
-
-    # Native Semgrep AI rules (zero-dependency)
-    from agentscan.supply_chain.native_semgrep import scan_native_rules
-
-    rule_findings, rule_checks = scan_native_rules(path_str)
-    all_findings.extend(rule_findings)
-    total_checks += rule_checks
-
-    from agentscan.core.scorer import calculate_score, score_band
-
-    score = calculate_score(all_findings, total_checks)
-    status = score_band(score)
-
-    result = {
-        "audit_path": str(Path(path_str).resolve()),
-        "score": score,
-        "status": status,
-        "checks_run": total_checks,
-        "findings_count": len(all_findings),
-        "findings": [
-            {
-                "id": f.attack_id,
-                "severity": f.severity.value,
-                "owasp_id": f.owasp_id,
-                "description": f.description,
-                "evidence": f.evidence,
-                "remediation": f.remediation,
-                "metadata": f.metadata,
-            }
-            for f in all_findings
-        ],
-    }
+    result = run.payload()
+    result.update(
+        {
+            "audit_path": str(Path(path_str).resolve()),
+            "checks_run": run.total_checks,
+            "findings_count": len(run.findings),
+            "findings": [
+                {
+                    "id": f.attack_id,
+                    "severity": f.severity.value,
+                    "owasp_id": f.owasp_id,
+                    "description": f.description,
+                    "evidence": f.evidence,
+                    "remediation": f.remediation,
+                    "metadata": f.metadata,
+                }
+                for f in run.findings
+            ],
+        }
+    )
     return json.dumps(result, indent=2)
 
 

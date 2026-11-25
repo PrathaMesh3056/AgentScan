@@ -158,10 +158,76 @@ class IdentityReport(BaseModel):
         default="INCONCLUSIVE",
         description="Assessment completion, separate from findings severity.",
     )
+    assessment_label: str = Field(
+        default="Identity & RBAC Entitlement Audit",
+        description="Human label for the assessed mode (e.g. mixed supply-chain + identity).",
+    )
+    scope_complete: bool = Field(
+        default=False,
+        description="True only when every static-audit module was selected for this run.",
+    )
+    module_errors: list[dict[str, str]] = Field(
+        default_factory=list,
+        description="Modules that raised during this run; kept separate from findings.",
+    )
+    total_checks: int = Field(
+        default=0,
+        ge=0,
+        description="Checks executed across the assessed modules.",
+    )
 
     @property
     def total_agents_audited(self) -> int:
         return len(self.agents_found)
+
+    @property
+    def modules_ran(self) -> list[dict]:
+        """Coverage entries for modules that were actually assessed."""
+        from agentscan.reporting.audit_coverage import RAN_STATUSES
+
+        return [e for e in self.audit_coverage if e.get("status") in RAN_STATUSES]
+
+    @property
+    def modules_skipped(self) -> list[dict]:
+        """Coverage entries for catalog modules not selected for this run."""
+        from agentscan.reporting.audit_coverage import STATUS_SKIPPED
+
+        return [e for e in self.audit_coverage if e.get("status") == STATUS_SKIPPED]
+
+    @property
+    def modules_errored(self) -> list[dict]:
+        """Coverage entries for modules that raised during this run."""
+        from agentscan.reporting.audit_coverage import STATUS_ERROR
+
+        return [e for e in self.audit_coverage if e.get("status") == STATUS_ERROR]
+
+    @property
+    def coverage_summary(self) -> str:
+        if not self.audit_coverage:
+            return "Coverage was not recorded for this report."
+        return (
+            f"{len(self.modules_ran)} ran \u00b7 {len(self.modules_skipped)} not selected "
+            f"\u00b7 {len(self.modules_errored)} errored"
+        )
+
+    @property
+    def score_label(self) -> str:
+        if not self.modules_ran:
+            return "Identity Score"
+        modules = {str(entry.get("module", "")) for entry in self.modules_ran}
+        return "Identity Score" if modules <= {"identity"} else "Audit Score"
+
+    @property
+    def coverage_scope_note(self) -> str:
+        if not self.audit_coverage:
+            return "Coverage was not recorded for this report."
+        ran = len(self.modules_ran)
+        skipped = len(self.modules_skipped)
+        errored = len(self.modules_errored)
+        return (
+            f"{ran} of {len(self.audit_coverage)} coverage entries assessed; "
+            f"{skipped} not selected, {errored} errored."
+        )
 
     @property
     def critical_count(self) -> int:

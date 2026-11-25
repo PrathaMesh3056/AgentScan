@@ -49,7 +49,7 @@
         </div>
         <div style="display: table-cell; width: 33.3%;">
             <strong style="color: #64748b; text-transform: uppercase; font-size: 7pt; letter-spacing: 0.5px; display: block;">Framework &amp; Mode</strong>
-            <span style="font-weight: 600; color: #0f172a;">{{ report.framework.value.title() if report.framework else 'Auto' }} · {{ report.scan_mode.value }} Mode</span>
+            <span style="font-weight: 600; color: #0f172a;">{{ report.framework.value.title() if report.framework else 'Auto' }} · {{ report.scan_mode.value }} Mode{% if report.assessment_scope == 'mixed' %} · Mixed scan scope (module outcomes cover multiple modes){% endif %}</span>
         </div>
         <div style="display: table-cell; width: 33.3%; text-align: right;">
             <strong style="color: #64748b; text-transform: uppercase; font-size: 7pt; letter-spacing: 0.5px; display: block;">Audit Timestamp</strong>
