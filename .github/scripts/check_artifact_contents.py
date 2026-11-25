@@ -19,6 +19,7 @@ _TOP_LEVEL_SOURCE_FILES = {
     "CHANGELOG.md",
     "PKG-INFO",
     ".gitignore",
+    "uv.lock",
 }
 _PRIVATE_PARTS = {
     "codex audit",
@@ -29,7 +30,6 @@ _PRIVATE_PARTS = {
     ".git",
     ".venv",
     "__pycache__",
-    "tests",
 }
 _PRIVATE_SUFFIXES = {".pem", ".key", ".p12", ".pfx", ".pyc"}
 _REQUIRED_RUNTIME = {
@@ -85,7 +85,7 @@ def validate_names(names: list[str], *, source: bool) -> dict[str, int | str]:
                 normalized in _TOP_LEVEL_SOURCE_FILES
                 or normalized == "rules/ai_rules.yaml"
                 or (is_directory and normalized == "rules")
-                or path.parts[0] == "agentscan"
+                or path.parts[0] in {"agentscan", "docs", "tests"}
             )
         else:
             allowed = path.parts[0] == "agentscan" or (

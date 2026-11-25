@@ -245,7 +245,7 @@ def test_ui_static_audit_and_supply_chain(sample_report: Path) -> None:
 
 
 def test_ui_calibration_and_benchmarking(sample_report: Path) -> None:
-    pytest.importorskip("litellm")
+    # Calibration uses the deterministic local judge; no optional provider SDK is required.
     from fastapi.testclient import TestClient
 
     from agentscan.ui.app import create_app
@@ -268,7 +268,8 @@ def test_ui_calibration_and_benchmarking(sample_report: Path) -> None:
     bench_run = client.post("/api/benchmark/run", json={"suite": "AGENT_BENCH_V1", "rounds": 1})
     assert bench_run.status_code == 200
     bench_data = bench_run.json()
-    assert "discrimination_score" in bench_data or "status" in bench_data
+    assert bench_data["suites"] == ["AGENT_BENCH_V1"]
+    assert isinstance(bench_data["discriminates"], bool)
 
 
 def test_ui_sentinel_mcp_and_swarms(sample_report: Path) -> None:

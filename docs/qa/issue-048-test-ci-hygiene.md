@@ -224,3 +224,56 @@ Also run the broader non-slow suite where the environment allows it. Report any 
 - Wheel and sdist build, artifact checks pass, and the sdist contains tests, docs, and `uv.lock`.
 - The plan is committed before implementation, the PR is opened as a draft, and it is marked ready only after checks pass.
 - The PR is left unmerged.
+
+## 7. Verification evidence
+
+Recorded on `fix/qa-048-test-ci-hygiene` after the implementation commit:
+
+```text
+pytest tests/test_ui.py -q
+10 passed
+
+pytest tests/test_ui.py::test_ui_calibration_and_benchmarking \
+  .github/tests/test_lint_config.py .github/tests/test_commit_hooks.py \
+  .github/tests/test_artifact_contents.py -q
+57 passed
+
+pytest \
+  .github/tests/test_workflow_security.py::test_audit_is_a_required_lock_export_gate \
+  .github/tests/test_workflow_security.py::test_gitleaks_scans_full_history_without_broad_allowlists \
+  .github/tests/test_workflow_security.py::test_all_external_actions_and_uv_are_pinned \
+  .github/tests/test_workflow_security.py::test_release_uses_validation_artifact_without_rebuilding \
+  .github/tests/test_workflow_security.py::test_github_expressions_are_not_embedded_in_shell_source \
+  -q
+5 passed
+
+ruff check .
+All checks passed!
+
+ruff format --check .
+456 files already formatted
+
+mypy agentscan
+Success: no issues found in 212 source files
+
+gitleaks dir . --config .gitleaks.toml --redact --exit-code 1
+gitleaks git . --config .gitleaks.toml --redact --exit-code 1
+no leaks found (both scans)
+
+pre-commit validate-config .pre-commit-config.yaml
+exit 0
+
+uv build --no-sources
+built wheel and sdist
+
+check_artifact_contents.py
+wheel: 268 files, 13 required assets
+sdist: 536 files, 16 required assets
+top-level sdist entries include tests, docs, and uv.lock
+```
+
+The full `.github/tests` run on this Windows host also exercises Bash wrapper tests. Those fail here with `couldn't create signal pipe, Win32 error 5` from Git Bash, the same host-level Application Control limitation seen during cloning; the five non-Bash workflow assertions pass. CI remains authoritative for the Bash wrapper tests.
+
+## 8. Local clone note
+
+The requested clone command was attempted twice against the local source path and failed with the same host-level `couldn't create signal pipe, Win32 error 5` while Git started `git-upload-pack` through `sh.exe`. After that single retry, the equivalent repository was cloned directly from GitHub, the origin was set to `https://github.com/PrathaMesh3056/AgentScan.git`, and the branch was checked out from `origin/main` at `7c17743`. No other agent's clone was used or modified.

@@ -6,6 +6,9 @@
 # Install once with: pre-commit install
 # Run manually:      pre-commit run --all-files
 
+minimum_pre_commit_version: "4.0.0"
+default_stages: [pre-commit, manual]
+
 repos:
   # ── Ruff: lint + format (replaces flake8 + black + isort) ──────────────────
   - repo: https://github.com/astral-sh/ruff-pre-commit
@@ -39,7 +42,8 @@ repos:
 
   # ── General file hygiene ────────────────────────────────────────────────────
   - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v4.6.0
+    # v6 uses the current pre-commit/pre-push stage names.
+    rev: v6.0.0
     hooks:
       - id: trailing-whitespace   # remove trailing spaces
         args: [--markdown-linebreak-ext=md]  # preserve Markdown hard line breaks

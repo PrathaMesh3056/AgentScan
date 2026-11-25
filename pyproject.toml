@@ -137,7 +137,10 @@ exclude = [
 include = [
     "/agentscan/**",
     "/rules/ai_rules.yaml",
+    "/tests/**",
+    "/docs/**",
     "/pyproject.toml",
+    "/uv.lock",
     "/README.md",
     "/LICENSE",
     "/CHANGELOG.md",
@@ -186,15 +189,39 @@ line-length = 100
 target-version = "py312"
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "UP", "B", "SIM"]
+select = [
+    "E",
+    "F",
+    "I",
+    "UP",
+    "B",
+    "SIM",
+    # High-signal Bandit rules; the full S set is too noisy for this codebase.
+    "S113",
+    "S301",
+    "S307",
+    "S324",
+    "S501",
+    "S602",
+    "S608",
+    "S701",
+    "S704",
+]
 ignore = ["E501"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["E402"]
+"tests/fixtures/**" = ["S301", "S602", "S608"]
+"tests/api/test_idempotency.py" = ["S608"]
+"benchmarks/evaluation/atk005_retrieval_target.py" = ["S608"]
 
 [tool.mypy]
 python_version = "3.12"
 strict = false
+check_untyped_defs = true
+no_implicit_optional = true
+strict_equality = true
+warn_redundant_casts = true
 ignore_missing_imports = true
 
 # Security floors for transitive dependencies used by the locked CI profile.

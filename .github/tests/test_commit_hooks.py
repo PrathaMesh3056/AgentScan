@@ -54,3 +54,21 @@ def test_mypy_checks_whole_runtime_even_when_no_python_files_are_staged():
     assert hook["args"] == ["agentscan"]
     assert hook["pass_filenames"] is False
     assert hook["always_run"] is True
+
+
+def test_pre_commit_stage_contract_is_explicit_and_current():
+    config = hook_configuration()
+    assert config["minimum_pre_commit_version"] == "4.0.0"
+    assert config["default_stages"] == ["pre-commit", "manual"]
+    assert tuple(map(int, locked_versions()["pre-commit"].split("."))) >= (4, 0, 0)
+
+    hygiene = next(
+        repo
+        for repo in config["repos"]
+        if repo["repo"] == "https://github.com/pre-commit/pre-commit-hooks"
+    )
+    assert hygiene["rev"] == "v6.0.0"
+    legacy_stages = {"commit", "push", "merge-commit"}
+    for repo in config["repos"]:
+        for hook in repo["hooks"]:
+            assert not legacy_stages.intersection(hook.get("stages", []))
