@@ -19,6 +19,7 @@ from agentscan.identity.permission_mapper import load_dangerous_keywords, load_r
 from agentscan.identity.rbac_graph import build_rbac_graph, graph_to_view
 from agentscan.ui.security import project_path
 from agentscan.ui.state import state
+from agentscan.ui.status_labels import assess_guardrail_deployment, assess_manifest_enforcement
 
 router = APIRouter(tags=["reports"])
 
@@ -123,6 +124,14 @@ async def api_rbac(
     view["escalations"] = [
         e.model_dump(mode="json") if hasattr(e, "model_dump") else e for e in escalations
     ]
+    agents_by_id = {agent.agent_id: agent for agent in agents}
+    for node in view["nodes"]:
+        if node.get("node_type") != "agent":
+            continue
+        # Manifest declarations are evidence of intent, not runtime enforcement.
+        node["enforcement"] = assess_manifest_enforcement(
+            agents_by_id.get(str(node.get("agent_id"))), role_policies
+        )
     return JSONResponse(view)
 
 
@@ -182,5 +191,12 @@ async def api_guardrails() -> Any:
             "cloudflare": cloudflare_rules,
             "bedrock": bedrock_rules,
             "findings_count": len(findings),
+            "deployment": {
+                "litellm": assess_guardrail_deployment(litellm_rules),
+                "cloudflare": assess_guardrail_deployment(cloudflare_rules),
+                "bedrock": assess_guardrail_deployment(bedrock_rules),
+            },
+            # AgentScan exports templates; it never observes the gateway deployment.
+            "deployment_verified": False,
         }
     )

@@ -694,3 +694,22 @@ class TestVerifyClaimsCommand:
         result = runner.invoke(app, ["verify-claims", "--receipt", str(receipt_file)])
         assert result.exit_code == 1
         assert "FAILED" in result.output
+
+
+class TestWatchCommand:
+    def test_watch_cycle_does_not_claim_canary_is_secure(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A clean cycle is evidence of no leak, not proof the canary is secure."""
+
+        async def fake_run_loop(self, connector, callback=None):  # type: ignore[no-untyped-def]
+            if callback is not None:
+                callback(1, [])
+            return []
+
+        monkeypatch.setattr("agentscan.sentinel.watcher.ContinuousWatcher.run_loop", fake_run_loop)
+        result = runner.invoke(app, ["watch", "http://127.0.0.1:9/chat", "--iterations", "1"])
+
+        assert result.exit_code == 0, result.output
+        assert "No canary leak detected in this cycle" in result.output
+        assert "Canary secure" not in result.output

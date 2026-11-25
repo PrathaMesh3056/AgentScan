@@ -268,10 +268,16 @@
       }
 
       /* Matrix Table */
+      const agentNodes = nodes.filter(n => n.node_type === 'agent');
       const tableContainer = document.getElementById('rbac-matrix-table-container');
-      if (tableContainer && nodes.length > 0) {
+      if (tableContainer && agentNodes.length > 0) {
         let rows = '';
-        nodes.forEach(n => {
+        agentNodes.forEach(n => {
+          /* Manifest role matching is a declaration, not runtime enforcement. */
+          const enforcement = n.enforcement || { state: 'unknown', label: 'Unknown' };
+          const enforcementClass = enforcement.state === 'declared'
+            ? 'bg-[#EEF6F4] text-[#1E5E54]'
+            : 'bg-[#FAF0EB] text-[#B84E28]';
           rows += `
             <tr class="hover:bg-[#F7F5EE] text-xs">
               <td class="py-3 px-4 font-bold text-[#1A1A1A]">${escapeHtml(n.label || n.id)}</td>
@@ -280,7 +286,7 @@
               <td class="py-3 px-4">${(n.allowed_scopes || []).map(s => `<span class="px-2 py-0.5 rounded-full text-[10px] bg-[#EEF6F4] text-[#1E5E54] font-bold mr-1">${escapeHtml(s)}</span>`).join('') || '<span class="text-[#888888]">None</span>'}</td>
               <td class="py-3 px-4">${(n.denied_scopes || []).map(s => `<span class="px-2 py-0.5 rounded-full text-[10px] bg-[#FAF0EB] text-[#B84E28] font-bold mr-1">${escapeHtml(s)}</span>`).join('') || '<span class="text-[#888888]">None</span>'}</td>
               <td class="py-3 px-4 font-mono text-[#888888]">${escapeHtml(n.credential_ref || 'Ephemeral')}</td>
-              <td class="py-3 px-4"><span class="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-[#EEF6F4] text-[#1E5E54]">ENFORCED</span></td>
+              <td class="py-3 px-4"><span class="px-2.5 py-0.5 rounded-full text-[10px] font-bold ${enforcementClass}">${escapeHtml(enforcement.label)}</span></td>
             </tr>
           `;
         });
@@ -513,6 +519,21 @@
       const cfJson = gw.cloudflare || `{\n  "gateway_name": "agentscan-protected-gateway",\n  "version": "1.0"\n}`;
       const bedrockJson = gw.bedrock || `{\n  "name": "AgentScanDefenseGuardrail",\n  "description": "Exported from AgentScan"\n}`;
 
+      /* Templates are exported, not deployed: never paint ACTIVE/ENFORCED. */
+      const deployment = gw.deployment || {};
+      const deploymentBadge = (key) => {
+        const assessment = deployment[key];
+        if (!assessment || !assessment.label) {
+          return { label: 'Unknown', className: 'bg-[#FAF0EB] text-[#B84E28]' };
+        }
+        const className = assessment.state === 'export_only'
+          ? 'bg-[#F7F5EE] text-[#666666]'
+          : 'bg-[#FAF0EB] text-[#B84E28]';
+        return { label: assessment.label, className };
+      };
+      const litellmDeployment = deploymentBadge('litellm');
+      const cloudflareDeployment = deploymentBadge('cloudflare');
+
       c.innerHTML = `
         <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
           <!-- LiteLLM Proxy -->
@@ -523,7 +544,7 @@
                   <h3 class="text-base font-extrabold text-[#1A1A1A]">LiteLLM Proxy</h3>
                   <span class="text-[9px] font-mono font-bold px-2 py-0.5 rounded-full bg-slate-100 text-slate-700">YAML</span>
                 </div>
-                <span class="text-[10px] font-mono font-bold px-2 py-0.5 rounded-full bg-[#EEF6F4] text-[#1E5E54]">ACTIVE</span>
+                <span class="text-[10px] font-mono font-bold px-2 py-0.5 rounded-full ${litellmDeployment.className}">${escapeHtml(litellmDeployment.label)}</span>
               </div>
               <p class="text-xs text-[#666666] mb-3 font-medium">Banned keywords, regex redactions, and prompt shields for LiteLLM proxies.</p>
               <pre class="p-4 rounded-2xl bg-[#F7F5EE] border border-[#1A1A1A]/10 text-[#1A1A1A] text-[11px] overflow-x-auto leading-relaxed max-h-64 font-mono"><code>${escapeHtml(litellmYaml)}</code></pre>
@@ -542,7 +563,7 @@
                   <h3 class="text-base font-extrabold text-[#1A1A1A]">Cloudflare AI Gateway</h3>
                   <span class="text-[9px] font-mono font-bold px-2 py-0.5 rounded-full bg-slate-100 text-slate-700">JSON</span>
                 </div>
-                <span class="text-[10px] font-mono font-bold px-2 py-0.5 rounded-full bg-[#EEF6F4] text-[#1E5E54]">ENFORCED</span>
+                <span class="text-[10px] font-mono font-bold px-2 py-0.5 rounded-full ${cloudflareDeployment.className}">${escapeHtml(cloudflareDeployment.label)}</span>
               </div>
               <p class="text-xs text-[#666666] mb-3 font-medium">Edge WAF regex match rules blocking jailbreaks and exfiltration.</p>
               <pre class="p-4 rounded-2xl bg-[#F7F5EE] border border-[#1A1A1A]/10 text-[#1A1A1A] text-[11px] overflow-x-auto leading-relaxed max-h-64 font-mono"><code>${escapeHtml(cfJson)}</code></pre>
@@ -912,6 +933,14 @@
       const defCountEl = document.getElementById('team-defensive-count');
       if (defCountEl) defCountEl.innerText = `${agents.length} Target Agents`;
 
+      /* The badge must show the loaded team count, not a hardcoded readiness claim. */
+      const teamsCountEl = document.getElementById('swarm-teams-count');
+      if (teamsCountEl) {
+        teamsCountEl.innerText = swarmsData
+          ? `${Object.keys(teams).length} Teams Configured`
+          : 'Teams unknown';
+      }
+
       const grid = document.getElementById('team-agents-grid');
       if (grid) {
         if (agents.length === 0) {
@@ -927,6 +956,8 @@
             const role = a.declared_role || 'General Assistant';
             const tools = Array.isArray(a.tools) ? a.tools : [];
             const credRef = a.credential_ref ? `Secret Ref (${escapeHtml(a.credential_ref)})` : 'Ephemeral (No Secret)';
+            const enforcement = a.enforcement || { state: 'unknown', label: 'Unknown' };
+            const enforcementClass = enforcement.state === 'declared' ? 'text-[#1A1A1A]' : 'text-[#B84E28]';
 
             html += `
               <div class="dl-card p-6 bg-white flex flex-col justify-between" style="border-color: var(--border)">
@@ -943,7 +974,7 @@
 
                 <div class="pt-4 border-t border-[#1A1A1A]/10 flex items-center justify-between text-xs font-mono text-[#666666]">
                   <span>Tools Bound: ${tools.length}</span>
-                  <span class="text-[#1A1A1A] font-bold">RBAC Enforced</span>
+                  <span class="${enforcementClass} font-bold">${escapeHtml(enforcement.label)}</span>
                 </div>
               </div>
             `;
@@ -1062,6 +1093,17 @@
       const interval = snt.interval || 30;
       const probes = snt.probes_run || 0;
       const leaks = snt.leaks_detected || 0;
+      /* Labels come from recorded state; absent evidence renders Unknown, not a claim. */
+      const monitoring = snt.canary_monitoring || { state: 'unknown', label: 'Unknown' };
+      const leaksAssessment = snt.canary_leaks || { state: 'unknown', label: 'Unknown' };
+      const monitoringClass = monitoring.state === 'monitoring'
+        ? 'bg-[#EEF6F4] text-[#1E5E54] border border-[#CFE5E1]'
+        : 'bg-[#FAF0EB] text-[#B84E28] border border-[#ECCFC2]';
+      const leaksClass = leaksAssessment.state === 'alert'
+        ? 'bg-[#FAF0EB] text-[#B84E28] border border-[#ECCFC2]'
+        : leaksAssessment.state === 'clear' || leaksAssessment.state === 'not_assessed'
+          ? 'bg-[#F7F5EE] text-[#666666] border border-[#1A1A1A]/10'
+          : 'bg-[#FAF0EB] text-[#B84E28] border border-[#ECCFC2]';
 
       c.innerHTML = `
         <div id="sentinel-tab-errors">${watcherError}</div>
@@ -1084,7 +1126,7 @@
           <div class="dl-card p-6 bg-white space-y-3" style="border-color: var(--border)">
             <div class="flex items-center justify-between">
               <span class="text-[10px] font-extrabold uppercase tracking-wider text-[#1E5E54]">Canary Probes</span>
-              <span class="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-[#EEF6F4] text-[#1E5E54] border border-[#CFE5E1]">ACTIVE</span>
+              <span class="px-2.5 py-0.5 rounded-full text-[10px] font-bold ${monitoringClass}">${escapeHtml(monitoring.label)}</span>
             </div>
             <div class="text-2xl font-extrabold text-[#1A1A1A]">${probes} Probes</div>
             <p class="text-xs text-[#666666]">High-entropy synthetic canary tokens injected across dialogue boundaries.</p>
@@ -1097,8 +1139,8 @@
           <div class="dl-card p-6 bg-white space-y-3" style="border-color: var(--border)">
             <div class="flex items-center justify-between">
               <span class="text-[10px] font-extrabold uppercase tracking-wider text-[#B84E28]">Alerts & Leaks</span>
-              <span class="px-2.5 py-0.5 rounded-full text-[10px] font-bold ${leaks > 0 ? 'bg-[#FAF0EB] text-[#B84E28]' : 'bg-[#EEF6F4] text-[#1E5E54]'}">
-                ${leaks > 0 ? 'ALERT' : 'NO RECORDED FINDING'}
+              <span class="px-2.5 py-0.5 rounded-full text-[10px] font-bold ${leaksClass}">
+                ${escapeHtml(leaksAssessment.label)}
               </span>
             </div>
             <div class="text-2xl font-extrabold text-[#1A1A1A]">${leaks} Detected</div>
@@ -1120,7 +1162,7 @@
             <div>[SENTINEL-DAEMON] Configured target: <strong>${escapeHtml(target)}</strong></div>
             <div>[SENTINEL-DAEMON] Canary token state: <code>${snt.canary_token ? 'Configured' : 'Not configured'}</code></div>
             <div>[SENTINEL-DAEMON] Webhook dispatcher target: <code>${escapeHtml(snt.webhook_url || 'Not configured')}</code></div>
-            <div>[SENTINEL-DAEMON] State: <strong>${isRunning ? 'ACTIVE - Polling every ' + interval + 's' : 'STANDBY - Ready to start'}</strong></div>
+            <div>[SENTINEL-DAEMON] State: <strong>${isRunning ? 'MONITORING - Polling every ' + interval + 's' : 'STANDBY - Not monitoring'}</strong></div>
           </div>
         </div>
       `;
@@ -1132,7 +1174,7 @@
       if (!c) return;
 
       const mcpData = globalTelemetry.mcp || {};
-      const status = mcpData.status || 'ONLINE';
+      const status = mcpData.status || 'Unknown';
       const transport = mcpData.transport || 'stdio';
       const proto = mcpData.protocol || 'JSON-RPC 2.0';
       const tools = Array.isArray(mcpData.tools) ? mcpData.tools : [
@@ -1142,6 +1184,12 @@
         { name: 'agentscan_swarm', description: 'Dispatch an autonomous multi-agent offensive swarm to simulate coordinated red-team attacks.', input_schema: { target: 'string', team: 'string', rounds: 'integer' } }
       ];
 
+      /* A registered tool is not a verified one: show the evidence-derived label. */
+      const toolStatus = mcpData.tool_status || { state: 'unknown', label: 'Unknown' };
+      const toolStatusClass = toolStatus.state === 'registered'
+        ? 'bg-[#F7F5EE] text-[#666666] border border-[#1A1A1A]/10'
+        : 'bg-[#FAF0EB] text-[#B84E28] border border-[#ECCFC2]';
+
       let toolsHtml = '';
       tools.forEach(t => {
         const safeToolName = DashboardSemantics.inlineArgument(t.name);
@@ -1150,7 +1198,7 @@
             <div>
               <div class="flex items-center justify-between mb-3 text-xs">
                 <span class="font-mono text-[10px] font-bold text-[#1E5E54] uppercase">Registered MCP Tool</span>
-                <span class="px-2 py-0.5 rounded-full text-[9px] font-mono font-bold bg-[#EEF6F4] text-[#1E5E54]">READY</span>
+                <span class="px-2 py-0.5 rounded-full text-[9px] font-mono font-bold ${toolStatusClass}">${escapeHtml(toolStatus.label)}</span>
               </div>
               <h3 class="text-base font-extrabold text-[#1A1A1A] font-mono mb-1">${escapeHtml(t.name)}</h3>
               <p class="text-xs text-[#666666] leading-relaxed mb-4">${escapeHtml(t.description)}</p>

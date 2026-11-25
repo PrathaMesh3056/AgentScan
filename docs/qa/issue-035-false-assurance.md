@@ -3,7 +3,7 @@
 - **Issue:** [AgentScan #35](https://github.com/PrathaMesh3056/AgentScan/issues/35) - `[P2] False assurance and status labels`
 - **Base:** `origin/main` at `7c17743` (`refactor(ui): modularize dashboard scripts and dedupe page routes`)
 - **Branch:** `fix/qa-035-false-assurance`
-- **Status:** draft plan -> implementation (docs first, then failing tests, then fix)
+- **Status:** implemented; targeted and related suites green (see Verification)
 
 ## Problem
 
@@ -58,7 +58,7 @@ configured by AgentScan.
 | 7 | `dashboard-app-renderers.js` MCP tool card | `READY` | tool metadata is registered, but no invocation/health evidence is collected per tool | `tool_status.label`: `Registered - not verified` when metadata exists, `Unknown` otherwise |
 | 8 | `dashboard-app-renderers.js` MCP server status fallback | `ONLINE` when payload missing | `/api/mcp` response | fallback becomes `Unknown`; the API still reports `ONLINE` because the same process is answering |
 | 9 | `dashboard-app-renderers.js` Sentinel daemon line | `STANDBY - Ready to start` | `running` flag | `STANDBY - Not monitoring` |
-| 10 | `index.html` swarm section badge | `3 TEAMS READY` | `/api/swarms` teams payload | `#swarm-teams-count` is filled from the payload (`N teams configured`) or `Unknown` |
+| 10 | `index.html` swarm section badge | `3 TEAMS READY` | `/api/swarms` teams payload | `#swarm-teams-count` is filled from the payload (`N Teams Configured`) or `Teams unknown` |
 | 11 | `agentscan/_cli/commands/misc.py` `watch` cycle | `Canary secure, 0 findings.` | one probe cycle returned no finding | `No canary leak detected in this cycle.` (a clean single cycle is not proof of security) |
 
 All evaluated labels must also honour the issue fallbacks `Not assessed`, `Not deployed`, and
@@ -84,6 +84,14 @@ All evaluated labels must also honour the issue fallbacks `Not assessed`, `Not d
 - **`webhook_receiver_status: "online"` in `agentscan/ui/state.py`** - not rendered as a
   status claim in the reviewed tabs and it reflects the in-process receiver; out of this
   bounded subset.
+- **Dependency-graph `NO RECORDED FINDING` in `dashboard-app-actions.js`** - used for package
+  nodes in the supply-chain graph. That surface needs its own evidence source and regression
+  test, so it is out of this bounded label subset.
+- **`renderMcp()` illustrative fallback tools** - when `/api/mcp` is missing entirely the
+  renderer still shows four sample tool cards. They now carry the `Unknown` status label, but
+  replacing the illustrative list is a layout change left for a follow-up.
+- **`General Assistant` role fallback in target-agent cards** - a display default for a missing
+  `declared_role`, not a status badge; flagged for follow-up rather than changed here.
 
 ## Scope
 
@@ -107,35 +115,51 @@ Not touched: `agentscan/core/`, `agentscan/action/`,
 
 ## Test plan
 
-New tests, one per changed label group, must fail on `7c17743` and pass after the fix:
+Tests were written first and observed failing on the pre-fix tree: the new module did not
+exist (`ModuleNotFoundError: agentscan.ui.status_labels`), and the CLI test failed with
+`Canary secure, 0 findings.` in the output.
 
 1. `test_sentinel_status_without_evidence_is_not_assessed` - empty sentinel status yields
    `canary_monitoring.state == "not_deployed"` and `canary_leaks.state == "not_assessed"`;
    the response contains neither `ACTIVE` nor `NO RECORDED FINDING`.
-2. `test_sentinel_status_with_probe_evidence` - synthetic `state.sentinel_status` with
-   `alerts` records yields `Monitoring` + `No leaks recorded`, and `Alert` + leaked count
-   when a record reports findings.
-3. `test_guardrails_report_export_only_deployment` - `/api/guardrails` labels both templates
+2. `test_sentinel_status_with_probe_evidence_reports_actual_outcome` - synthetic `alerts`
+   records yield `Monitoring`, `Alert`, `probes_run == 2`, and `leaks_detected == 2`.
+3. `test_sentinel_status_with_clean_probes_is_not_a_safety_claim` - a configured token that
+   is not running yields `Configured - not running`; one clean probe yields
+   `No leaks recorded`, never `SAFE`.
+4. `test_guardrails_report_export_only_deployment` - `/api/guardrails` labels both templates
    `Exported - not deployed`, never `ACTIVE` / `ENFORCED`; the pure helper returns
    `Not deployed` for missing config.
-4. `test_mcp_tools_are_registered_not_ready` - `/api/mcp` exposes
-   `tool_status.state == "registered"` and no `READY` string.
-5. `test_rbac_nodes_and_identity_agents_derive_enforcement` - `/api/rbac` and
-   `/api/identity` label a matched role `Declared - not verified` and an unmatched role
-   `Not assessed`; no `ENFORCED` / `RBAC Enforced`.
-6. `test_dashboard_sources_do_not_hardcode_assurance_labels` - the static shell/renderer no
-   longer contain the literal badges removed above.
-7. `test_watch_does_not_claim_canary_is_secure` - `agentscan watch` prints
-   `No canary leak detected in this cycle` and not `Canary secure`.
+5. `test_mcp_tools_are_registered_not_ready` and `test_mcp_without_tool_metadata_is_unknown` -
+   `/api/mcp` exposes `tool_status.state == "registered"`, no `READY`; missing metadata is
+   `Unknown`.
+6. `test_rbac_and_identity_expose_evidence_derived_enforcement` and the two
+   `test_manifest_enforcement_*` unit tests - `/api/rbac` and `/api/identity` label a matched
+   role `Declared - not verified`; missing policies or an unmatched role are `Not assessed`.
+7. `test_dashboard_sources_do_not_render_hardcoded_assurance_labels` - the static shell and
+   renderer no longer contain the literal badges removed above and do consume the new fields.
+8. `TestWatchCommand::test_watch_cycle_does_not_claim_canary_is_secure` - `agentscan watch`
+   prints `No canary leak detected in this cycle` and not `Canary secure`.
 
-Commands (venv wrapper with a unique `--basetemp`):
+Commands used (venv wrapper with a unique `--basetemp`):
 
 ```powershell
 $env:PYTHONDONTWRITEBYTECODE='1'
-& 'D:\prathamesh\AgentScan-gw-impl\.venv\Scripts\python.exe' -c "import os,sys; _m=os.mkdir; os.mkdir=lambda p,m=0o777,*a,**k:_m(p,0o777,*a,**k); import pytest; sys.exit(pytest.main(['tests/test_ui_status_labels.py','tests/test_cli.py','tests/test_ui.py','tests/test_ui_structure.py','tests/test_ui_gateway_status.py','-q','-p','no:cacheprovider','--basetemp',r'C:\Users\prath\.deepai-code\scratch\2026-11-24-so-dont-touch-this-issue-c82a4f9a\bt-qa35']))"
-python -m ruff check --no-cache agentscan/ui/status_labels.py agentscan/ui/routers/sentinel.py agentscan/ui/routers/reports.py agentscan/ui/routers/identity.py agentscan/ui/routers/mcp.py agentscan/_cli/commands/misc.py tests/test_ui_status_labels.py
-python -m ruff format --check agentscan/ui/status_labels.py agentscan/ui/routers/sentinel.py agentscan/ui/routers/reports.py agentscan/ui/routers/identity.py agentscan/ui/routers/mcp.py agentscan/_cli/commands/misc.py tests/test_ui_status_labels.py
+& 'D:\prathamesh\AgentScan-gw-impl\.venv\Scripts\python.exe' -c "import os,sys; _m=os.mkdir; os.mkdir=lambda p,m=0o777,*a,**k:_m(p,0o777,*a,**k); import pytest; sys.exit(pytest.main(['tests/test_ui_status_labels.py','tests/test_cli.py','tests/test_ui.py','tests/test_ui_structure.py','tests/test_ui_form_validation.py','tests/test_ui_mcp_inventory.py','tests/test_ui_features.py','tests/test_ui_gateway_status.py','-q','-p','no:cacheprovider','--basetemp',r'C:\Users\prath\.deepai-code\scratch\2026-11-24-so-dont-touch-this-issue-c82a4f9a\bt-qa35']))"
+python -m ruff check --no-cache <changed python files>
+python -m ruff format --check <changed python files>
+node --check agentscan/ui/static/dashboard-app-renderers.js
 ```
+
+## Verification
+
+| Check | Result |
+|-------|--------|
+| New tests (`tests/test_ui_status_labels.py`, `TestWatchCommand`) | 16 passed |
+| Related UI/CLI suites (7 files, 428 tests) | 428 passed, 2 skipped |
+| Ruff check (changed Python files) | clean |
+| Ruff format check (changed Python files) | clean |
+| `node --check` on the renderer | clean |
 
 Only loopback/synthetic fixtures are used: `TestClient`, in-memory state, and synthetic
 canary strings. No live providers, credentials, or customer data.
