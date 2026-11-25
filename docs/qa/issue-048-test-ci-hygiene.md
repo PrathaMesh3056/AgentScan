@@ -56,13 +56,13 @@ SKIPPED [1] tests\test_ui.py:248: could not import 'litellm': No module named 'l
 
 ### QA-022 — audit command
 
-The current gate exports a fully hashed, frozen requirements file and then passes redundant flags:
+The current gate exports a fully hashed, frozen requirements file and then passes four extra flags:
 
 ```text
 --require-hashes --disable-pip --no-deps --desc on
 ```
 
-`--require-hashes` already prevents resolution; `--disable-pip` and `--no-deps` restate that choice, while `--desc on` duplicates the default description behaviour for text output. The security-relevant contract is `--strict --require-hashes` plus the frozen export.
+`--disable-pip` skips the pinned, hash-checked install that makes the audit meaningful, and `--desc on` only restates the default text description. `--no-deps` is not redundant: the frozen export already contains every transitive pin, and dropping it makes pip re-resolve the export into conflicting dependency markers (observed in CI run 45660457601). The cleaned contract is therefore `--strict --require-hashes --no-deps` plus the frozen export.
 
 ### QA-023 — gitleaks allowlists
 
@@ -134,10 +134,10 @@ The current sdist includes only `agentscan/`, `rules/ai_rules.yaml`, `pyproject.
 Replace the audit line with:
 
 ```bash
-uvx --from pip-audit==2.10.1 pip-audit --strict --require-hashes --requirement "$RUNNER_TEMP/agentscan-audit-requirements.txt"
+uvx --from pip-audit==2.10.1 pip-audit --strict --require-hashes --no-deps --requirement "$RUNNER_TEMP/agentscan-audit-requirements.txt"
 ```
 
-Keep the frozen export, `set -euo pipefail`, the pinned tool version, and the absence of `||`/`continue-on-error`.
+Keep the frozen export, `set -euo pipefail`, the pinned tool version, `--no-deps` for the already-complete export, and the absence of `||`/`continue-on-error`.
 
 ### 3.3 Gitleaks (QA-023)
 
