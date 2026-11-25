@@ -452,9 +452,7 @@ def scan(  # noqa: PLR0913
         framework_enum = Framework(framework)
     except ValueError:
         valid_frameworks = ", ".join(item.value for item in Framework)
-        raise typer.BadParameter(
-            f"framework must be one of: {valid_frameworks}."
-        ) from None
+        raise typer.BadParameter(f"framework must be one of: {valid_frameworks}.") from None
 
     try:
         target_obj = Target(

@@ -20,44 +20,50 @@ BROWSER_SETUP_GUIDANCE = (
 )
 
 # Profile keys whose CLI consumers assume a single string (or path-like string).
-PROFILE_STRING_FIELDS = frozenset({
-    "analysis_mode",
-    "attacker_goal",
-    "attacker_model",
-    "auth_header",
-    "canary_token",
-    "data_classification",
-    "escalation_model",
-    "external_model",
-    "fail_on",
-    "framework",
-    "indirect_adapter",
-    "judge_model",
-    "llm_log",
-    "output",
-    "system_prompt",
-    "trajectory_log",
-    "transcript",
-    "url",
-})
+PROFILE_STRING_FIELDS = frozenset(
+    {
+        "analysis_mode",
+        "attacker_goal",
+        "attacker_model",
+        "auth_header",
+        "canary_token",
+        "data_classification",
+        "escalation_model",
+        "external_model",
+        "fail_on",
+        "framework",
+        "indirect_adapter",
+        "judge_model",
+        "llm_log",
+        "output",
+        "system_prompt",
+        "trajectory_log",
+        "transcript",
+        "url",
+    }
+)
 
-PROFILE_BOOLEAN_FIELDS = frozenset({
-    "calibrate",
-    "calibrate_required",
-    "deep",
-    "exploit",
-    "mutate",
-    "verbose",
-})
+PROFILE_BOOLEAN_FIELDS = frozenset(
+    {
+        "calibrate",
+        "calibrate_required",
+        "deep",
+        "exploit",
+        "mutate",
+        "verbose",
+    }
+)
 
 PROFILE_INTEGER_FIELDS = frozenset({"attacker_turns", "escalation_turns"})
 
-PROFILE_MAPPING_FIELDS = frozenset({
-    "browser",
-    "factuality_baseline",
-    "mcp_inventory_baseline",
-    "request_template",
-})
+PROFILE_MAPPING_FIELDS = frozenset(
+    {
+        "browser",
+        "factuality_baseline",
+        "mcp_inventory_baseline",
+        "request_template",
+    }
+)
 
 _HTTP_TARGET_ERROR = re.compile(r"Target returned HTTP (\d{3})")
 
@@ -93,9 +99,7 @@ def validate_profile_fields(config: dict[str, Any]) -> None:
             raise typer.BadParameter(f"Profile field '{key}' must be a whole number.")
     for key in sorted(PROFILE_MAPPING_FIELDS & config.keys()):
         if not isinstance(config[key], dict):
-            raise typer.BadParameter(
-                f"Profile field '{key}' must be a mapping of settings."
-            )
+            raise typer.BadParameter(f"Profile field '{key}' must be a mapping of settings.")
 
 
 def bounded_error_detail(error: BaseException, limit: int = 240) -> str:

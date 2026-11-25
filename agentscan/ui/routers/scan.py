@@ -388,9 +388,7 @@ async def api_scan_cancel() -> Any:
     # finished between the done() check and the cancel, and a terminal status must win.
     cancelled = task is not None and not task.done() and task.cancel()
     if not cancelled:
-        return JSONResponse(
-            {"status": state.scan_status.get("status", "idle"), "cancelled": False}
-        )
+        return JSONResponse({"status": state.scan_status.get("status", "idle"), "cancelled": False})
     state.scan_status["status"] = "cancelled"
     await event_bus.publish({"type": "scan:cancel", "data": {"status": "cancelled"}})
     return JSONResponse({"status": "cancelled", "cancelled": True})

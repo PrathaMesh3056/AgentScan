@@ -132,13 +132,14 @@ def test_bind_failure_never_announces_a_url(monkeypatch) -> None:
         ("url: http://127.0.0.1:9/chat\noutput: 123\n", "output"),
         ('url: http://127.0.0.1:9/chat\nexploit: "yes"\n', "exploit"),
         ("url: [a]\n", "url"),
-        ("url: http://127.0.0.1:9/chat\nbrowser:\n  url: http://127.0.0.1:9/\n  input_selector: 5\n", "browser"),
+        (
+            "url: http://127.0.0.1:9/chat\nbrowser:\n  url: http://127.0.0.1:9/\n  input_selector: 5\n",
+            "browser",
+        ),
         ("url: http://127.0.0.1:9/chat\nrequest_template:\n  method: [POST]\n", "request_template"),
     ],
 )
-def test_wrong_typed_profile_value_is_bounded(
-    tmp_path: Path, body: str, expected: str
-) -> None:
+def test_wrong_typed_profile_value_is_bounded(tmp_path: Path, body: str, expected: str) -> None:
     profile = tmp_path / "profile.yaml"
     profile.write_text(body, encoding="utf-8")
 
@@ -165,7 +166,7 @@ def test_invalid_framework_value_is_bounded(tmp_path: Path) -> None:
 def test_valid_profile_still_scans(tmp_path: Path) -> None:
     profile = tmp_path / "profile.yaml"
     profile.write_text(
-        "url: http://127.0.0.1:9/chat\nattacker_turns: \"4\"\nexploit: false\n",
+        'url: http://127.0.0.1:9/chat\nattacker_turns: "4"\nexploit: false\n',
         encoding="utf-8",
     )
     report = ScanReport(target_url="http://127.0.0.1:9/chat", scan_mode=ScanMode.SCAN)
