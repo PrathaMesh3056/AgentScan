@@ -22,7 +22,7 @@ from agentscan._cli._shared import (
     app,
     console,
 )
-from agentscan.core.models import Finding
+from agentscan.core.models import Finding, ScanMode
 from agentscan.core.scorer import score_band
 
 # ── calibrate ─────────────────────────────────────────────────────────────────
@@ -211,7 +211,8 @@ def verify_claims(
         Path("benchmarks/receipts/reference_runs.json"),
         "--receipt",
         "-r",
-        help="Path to committed benchmark receipt JSON to verify against.",
+        help="Committed benchmark receipt JSON to verify against. "
+        "A missing receipt or any failed claim exits 1.",
     ),
 ) -> None:
     """Deterministically verify benchmark claims against committed run receipts (no network required)."""
@@ -489,6 +490,20 @@ def list_attacks() -> None:
         )
 
     console.print(table)
+    console.print(
+        f"\n{len(modules)} registered modules: "
+        f"{len(registry.get_by_mode(ScanMode.SCAN))} SCAN, "
+        f"{len(registry.get_by_mode(ScanMode.EXPLOIT))} EXPLOIT, "
+        f"{len(registry.get_by_mode(ScanMode.DEEP))} DEEP. "
+        "Counts come from the live registry; modules that support several modes are counted "
+        "in each mode."
+    )
+    unavailable_deep = [error for error in registry.load_errors if error.get("mode") == "deep"]
+    if unavailable_deep:
+        console.print(
+            f"{len(unavailable_deep)} optional DEEP module(s) not loaded; install the deep "
+            "extra for neural checks."
+        )
 
 
 # ── watch ─────────────────────────────────────────────────────────────────────
@@ -606,7 +621,8 @@ def compliance_command(
         "eu-ai-act",
         "--framework",
         "-f",
-        help="Target compliance framework: 'eu-ai-act' or 'nist-ai-rmf'.",
+        help="Target compliance framework: 'eu-ai-act', 'nist-ai-rmf', 'mitre-atlas', "
+        "or 'iso-42001'.",
     ),
     output: Path | None = typer.Option(  # noqa: B008
         None, "--output", "-o", help="Output path for compliance report."
@@ -615,7 +631,7 @@ def compliance_command(
         "markdown", "--format", help="Output format: 'json' or 'markdown'."
     ),
 ) -> None:
-    """Evaluate scan results against enterprise regulatory frameworks (EU AI Act, NIST AI RMF)."""
+    """Evaluate scan results against enterprise regulatory frameworks (EU AI Act, NIST AI RMF, MITRE ATLAS, ISO/IEC 42001)."""
     from agentscan.reporting.compliance_pack import (
         evaluate_eu_ai_act,
         evaluate_iso_42001,

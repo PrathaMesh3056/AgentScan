@@ -60,7 +60,10 @@ def audit(  # noqa: PLR0912, PLR0913
         "--fail-on",
         help="Exit with code 1 if any finding has severity >= this threshold.",
     ),
-    output: Path | None = typer.Option(None, help="Write JSON findings to this file."),  # noqa: B008
+    output: Path | None = typer.Option(  # noqa: B008
+        None,
+        help="Write findings to this file; format from the extension: .json, .html, .pdf, or .sarif.",
+    ),
     offline: bool = typer.Option(
         False,
         "--offline",

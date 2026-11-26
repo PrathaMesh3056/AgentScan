@@ -57,17 +57,24 @@ def _isolated_scan_configuration[**P, R](command: Callable[P, R]) -> Callable[P,
 @_isolated_scan_configuration
 def scan(  # noqa: PLR0913
     target: str | None = typer.Argument(
-        None, help="The HTTP endpoint to scan. Omit if using --config / --curl / --browser-url."
+        None,
+        help="Target endpoint: http://, https://, ws://, wss://, mcp://stdio (or "
+        "mcp+stdio://), mcp+sse:// (HTTP), mcp+sses:// (HTTPS). Omit if using --config / "
+        "--curl / --browser-url.",
     ),
     config: Path | None = typer.Option(  # noqa: B008
         None,
         "--config",
         "-c",
-        help="Load a target profile (YAML): url, connector (browser/curl), and scan settings — "
-        "so you save the long setup once and run it with just '-c target.yaml'. CLI flags override it.",
+        help="Load a target profile (YAML): url, an optional request_template or browser "
+        "connector block, and scan settings — so you save the long setup once and run it with just "
+        "'-c target.yaml'. CLI flags override it.",
     ),
     framework: str = typer.Option("auto", help="Agent framework (auto-detect by default)."),
-    output: Path | None = typer.Option(None, help="Write JSON report to this file."),  # noqa: B008
+    output: Path | None = typer.Option(  # noqa: B008
+        None,
+        help="Write report to this file; format from the extension: .json, .html, .pdf, or .sarif.",
+    ),
     auth_header: str | None = typer.Option(
         None,
         "--auth-header",
@@ -230,7 +237,11 @@ def scan(  # noqa: PLR0913
         "for offline analysis, RLHF safety tuning, and compliance audits.",
     ),
 ) -> None:
-    """Run a security scan against an LLM agent endpoint."""
+    """Run a security scan against an LLM agent endpoint.
+
+    Exit codes: 0 complete; 1 --fail-on threshold or --calibrate-required failure;
+    2 usage/validation error; 3 incomplete assessment (requested exports are kept).
+    """
     # ── Load a target profile (YAML) if given. CLI flags override the file. ────
     cfg: dict[str, Any] = {}
     if config is not None:

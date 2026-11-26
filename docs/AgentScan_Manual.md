@@ -108,6 +108,19 @@ agentscan scan http://localhost:8000/chat \
 | `--transcript [file]` | Writes the **full transcript** — every payload + reply + findings — to a file. The `--output` report shows only findings; the transcript shows everything. |
 | `--trajectory-log [file]` | Writes structured multi-turn attack trajectories and traces (JSON/JSONL) for offline compliance audits and RLHF safety tuning. |
 
+Supported target schemes are `http://`, `https://`, `ws://`, `wss://`, `mcp://stdio` (or `mcp+stdio://`), `mcp+sse://` (HTTP), and `mcp+sses://` (HTTPS). The `--output` format is inferred from the extension: `.json`, `.html`, `.pdf`, or `.sarif`.
+
+#### Exit status
+
+| Code | Meaning |
+| :--- | :--- |
+| `0` | The run completed and no selected exit condition was met. |
+| `1` | A finding met `--fail-on`, `--calibrate-required` failed, or a verification command (`verify-claims`, `verify`, `compliance`) rejected its input. |
+| `2` | Usage or validation error, such as an invalid option, target scheme, analysis selection, or profile. |
+| `3` | `scan` finished but the assessment is incomplete. Requested reports, transcripts, and logs are still written. |
+
+An incomplete assessment (`3`) is distinct from a completed scan with findings. The exit status reflects assessment completeness, not whether the agent is secure.
+
 > [!WARNING]
 > **Interactive Safety Confirmation Gate (`--exploit` & `--deep`)**
 > When invoking `agentscan scan --exploit` or `agentscan scan --deep`, AgentScan displays an explicit warning and prompts for user confirmation before executing destructive-grade payloads (such as system command injection, privilege escalation, or data exfiltration).
@@ -119,8 +132,8 @@ Don't want to figure out the connector or selectors at all? Let AgentScan do it.
 ready-to-run profile for you:
 
 ```bash
-agentscan init https://bitinfusiontechnology.com/backend/chatbot/chat.php -o bitinfusion.yaml
-agentscan scan -c bitinfusion.yaml
+agentscan init http://127.0.0.1:8000/chat -o target.yaml
+agentscan scan -c target.yaml
 ```
 
 `init` works in two ways and **tries the no-browser path first**:
@@ -332,6 +345,17 @@ agentscan benchmark
 
 These smoke checks do not establish independent detector accuracy or certify target safety. A synthetically resistant fixture is not evidence that a deployed agent is secure. Text matches remain candidate observations until corroborated; strict boolean judge output establishes a valid verdict format, not the verdict's accuracy. An explicitly enabled `--llm-log` is a local artifact that needs appropriate access and retention controls.
 
+#### Verify benchmark claims (`verify-claims`)
+
+`verify-claims` deterministically checks committed benchmark receipts without network access. It defaults to `benchmarks/receipts/reference_runs.json` and accepts another receipt with `--receipt` / `-r`:
+
+```bash
+agentscan verify-claims
+agentscan verify-claims --receipt benchmarks/receipts/reference_runs.json
+```
+
+It prints PASS/FAIL for each receipt iteration and exits `0` only when every committed claim verifies. A missing receipt or any failed expectation exits `1`; a malformed receipt is a usage/input error. This validates that the committed receipt is internally consistent and discriminating, not that the detector is accurate on a real target.
+
 ---
 
 ### 3.5. Continuous Sentinel Monitoring (`watch`)
@@ -379,7 +403,7 @@ agentscan scan http://localhost:8000/chat --trajectory-log trajectory.jsonl
 ```
 
 The trajectory log captures:
-- Sequential turn order, timestamps, and active attack module (`ATK-001` through `ATK-013`).
+- Sequential turn order, timestamps, and the active attack module ID (any registered `ATK-*` module, including the optional DEEP modules).
 - Exact attack prompt, mutator transforms applied, and raw agent response.
 - Intermediate tool calls, canary token disclosure status, and detection verdicts.
 - Crucial for post-incident forensics, regulatory compliance audits, and AI alignment dataset synthesis.
@@ -422,7 +446,7 @@ agentscan mcp-serve
 ```
 
 #### Exposed Native MCP Tools:
-1. `agentscan_list_attacks`: Returns the full registry of 23 attack modules, OWASP LLM mappings, and execution modes.
+1. `agentscan_list_attacks`: Returns the live attack registry, OWASP LLM mappings, execution modes, and counts derived from the modules currently loaded.
 2. `agentscan_audit`: Runs deterministic supply chain vulnerability audits, transitive dependency graph tracing, secret detection, and framework analysis.
 3. `agentscan_scan`: Executes automated live security scans against agent endpoints with scoring and SSP posture classification.
 4. `agentscan_swarm`: Orchestrates collaborative multi-agent red-team swarms (Recon, Bypass, Exploit, Judge) against an agent endpoint.
@@ -474,20 +498,20 @@ agents:
 
 ### 3.11. Automated Self-Healing & Webhook Ingestion (`fix` / `heal`, `heal-server`)
 
-AgentScan closes the loop between vulnerability discovery and remediation through its autonomous **Self-Healing Engine** (`agentscan fix`, with `agentscan heal` supported as an alias):
+AgentScan closes the loop between vulnerability discovery and remediation through its **Self-Healing Engine**. Use `agentscan fix` for plan/apply remediation, or `agentscan heal` when you need a unified git patch or a `--report` input:
 
 ```bash
 # 1. Inspect and preview fixes in safe dry-run mode
 agentscan fix ./my-agent-repo
 
 # 2. Export a standard unified git patch ready for CI review or `git apply`
-agentscan fix ./my-agent-repo --patch-out remediation.patch
+agentscan heal ./my-agent-repo --patch-out remediation.patch
 
 # 3. Apply fixes directly to source files
 agentscan fix ./my-agent-repo --apply
 
 # 4. Heal directly from an existing scan or audit JSON report
-agentscan fix ./my-agent-repo --report scan_report.json --apply
+agentscan heal ./my-agent-repo --report scan_report.json --apply
 ```
 
 #### Self-Healing Webhook Receiver (`heal-server`)
@@ -870,7 +894,7 @@ All structured data is strongly validated using Pydantic v2 `BaseModel` classes,
 
 | Model | Purpose | Immutability |
 | :--- | :--- | :--- |
-| **`Target`** | Live endpoint. HTTP(S), `ws(s)://`, `mcp://stdio`, `mcp+sse://`. | Mutable |
+| **`Target`** | Live endpoint. `http://`, `https://`, `ws://`, `wss://`, `mcp://stdio` (or `mcp+stdio://`), `mcp+sse://` (HTTP), `mcp+sses://` (HTTPS). | Mutable |
 | **`Finding`** | Immutable forensic evidence object. Includes `attack_id`, `severity`, `owasp_id`, `atlas_id` (MITRE ATLAS TTP ID, e.g. `AML.T0051`), etc. | **Frozen** |
 | **`ScanReport`** | Mutable container that accumulates `Finding` objects. | Mutable |
 | **`StrEnum`** | Used for enums like `Severity`. Serializes directly to JSON strings. | N/A |
