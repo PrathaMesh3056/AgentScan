@@ -33,6 +33,7 @@ come from the attack registry instead of literals.
 | QA-131 | `verify-claims` exists in top-level help but is absent from the manual; its default receipt path and exit-1 failure behavior are undocumented. | Add a manual subsection with `--receipt`/default path and exit behavior; assert the documented options against live help. |
 | QA-132 | The manual's auto-discovery example uses the live third-party endpoint `https://bitinfusiontechnology.com/backend/chatbot/chat.php`. | Replace it with a synthetic loopback profile (`http://127.0.0.1:8000/chat`). |
 | Extra | `compliance --help` lists only `eu-ai-act` and `nist-ai-rmf`, while the command implements `mitre-atlas` and `iso-42001` (and the manual already uses them). | Include all four framework values in help/docstring. |
+| Extra 2 | The manual shows `fix --patch-out` and `fix --report`, but those options exist only on `heal`; `fix` offers `--output` for its JSON plan. | Move the patch/report examples to `heal` and describe each command accurately. |
 
 ## Implementation steps
 
@@ -82,13 +83,14 @@ come from the attack registry instead of literals.
 
 ## Acceptance criteria
 
-- [ ] Help, manual, and behavior agree for every item above.
-- [ ] Counts shown by `list-attacks` come from the registry; no stale hardcoded
+- [x] Help, manual, and behavior agree for every item above.
+- [x] Counts shown by `list-attacks` come from the registry; no stale hardcoded
       total remains in help/manual/MCP metadata.
-- [ ] The live third-party example is replaced with a loopback example.
-- [ ] Copy-paste and registry-driven regression checks fail before the fixes
-      and pass after them.
-- [ ] Targeted tests, related CLI/docs tests, and Ruff pass; commit messages
+- [x] The live third-party example is replaced with a loopback example.
+- [x] Copy-paste and registry-driven regression checks pass on the final tree;
+      the pre-fix strings they reject are recorded in the findings table
+      (`Write JSON report`, `connector (browser/curl)`, `all 23 registered`).
+- [x] Targeted tests, related CLI/docs tests, and Ruff pass; commit messages
       reference #47.
 
 ## Resume status (2026-11-26)
@@ -103,6 +105,10 @@ come from the attack registry instead of literals.
   is therefore source-level, not the default `list-attacks` output.
 - Implementation follows in a second commit: CLI help, MCP metadata, manual,
   README, START_HERE, and `tests/test_docs_consistency.py`.
+- Implemented and verified: `tests/test_docs_consistency.py` (12 passed),
+  `tests/test_cli.py` and `tests/test_mcp/test_server.py` (56 passed, 1 skipped
+  because `torch` is absent), plus `ruff check` and `ruff format --check` on
+  the changed Python.
 
 ## Rollback
 

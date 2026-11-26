@@ -111,12 +111,14 @@ See the [dashboard feature matrix](docs/dashboard_feature_matrix.md) for each vi
 
 | Interface | Example | Use it for |
 | :--- | :--- | :--- |
-| HTTP agent API | `agentscan scan <url>` | Compatible REST/JSON chat endpoints. |
+| HTTP agent API | `agentscan scan http(s)://<host>/<path>` | Compatible REST/JSON chat endpoints. |
 | Captured cURL request | `agentscan scan --curl request.curl` | Requests with the recorded headers and cookies. |
 | Browser application | `agentscan scan --browser-url <url>` | Supported web chat widgets; requires the browser extra. |
-| WebSocket endpoint | `agentscan scan ws://<host>/<path>` | Supported streaming WebSocket agents. |
+| WebSocket endpoint | `agentscan scan ws(s)://<host>/<path>` | Supported streaming WebSocket agents. |
 | MCP server | `agentscan scan mcp+sse://<host>/<path>` | Supported MCP interfaces and configured assessment criteria. |
 | Local source tree | `agentscan audit <path>` | Source, lockfiles and dependency auditing. |
+
+Target URLs accept `http://`, `https://`, `ws://`, `wss://`, `mcp://stdio` (or `mcp+stdio://`), `mcp+sse://` (HTTP), and `mcp+sses://` (HTTPS). MCP stdio targets start a local server process; review the command before scanning.
 
 Connector and module support are not interchangeable. See the [project manual](docs/AgentScan_Manual.md) and [startup guide](docs/START_HERE.md) before choosing a target profile.
 

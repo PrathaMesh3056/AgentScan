@@ -1,6 +1,6 @@
 # AgentScan startup and attack guide
 
-Use this guide to start the dashboard, run terminal workflows and understand every implemented attack module. Commands run from the repository root. The catalog below covers **27 modules** found in the current source, with overlapping support for **15 SCAN**, **11 EXPLOIT** and **6 DEEP** modules. It describes capabilities and evidence limits, rather than certifying a target or detector.
+Use this guide to start the dashboard, run terminal workflows and understand every implemented attack module. Commands run from the repository root. The catalog below describes the authored modules and their supported modes; `list-attacks` prints the total currently loaded and per-mode counts, so an install without the optional `deep` extra reports fewer DEEP modules than the source catalog. It describes capabilities and evidence limits, rather than certifying a target or detector.
 
 ## 1. Start the local dashboard
 
@@ -190,15 +190,9 @@ The profile's `system_prompt` can supply an operator-known baseline for supporte
 
 The current scan CLI selects suites by mode. It does not expose a `--attack-id` selector; an ID in the catalog is not an individual command. Applicability and runtime prerequisites determine which modules execute.
 
-### This workspace's BitInfusion profile
+### Scan the loopback fixture
 
-The local, Git-ignored `bitinfusion.yaml` points at the existing BitInfusion chat API with its JSON request/response mapping. It uses deterministic analysis and sensitive classification. No model-provider key is needed. It contains no target credentials.
-
-```powershell
-uv run --no-sync python -m agentscan.cli scan --config .\bitinfusion.yaml --output bitinfusion-report.json
-```
-
-This command selects the ordinary SCAN suite; it is broader than the six individually bounded probes authorized for the saved validation. On 7 October 2026, the six-probe run evaluated two variants each of prompt injection, jailbreak and system-prompt disclosure, with no findings and no model-provider calls. The target's actual vulnerability ground truth is unknown. This small sample is not a full assessment or an accuracy benchmark. Only metadata and evidence digests were saved under `internal_docs/diagrams/live-target/`; raw target replies were not retained there. Detector repairs made afterward have not been rerun against that external service.
+When the fixed-refusal fixture from section 2 is running, the saved `target.yaml` above selects it. The ordinary deterministic SCAN suite runs; it is broader than a connectivity check. A fixed-refusal fixture is not expected to produce findings, and its outcome is not a security assessment or an accuracy benchmark. Keep profiles, reports and transcripts synthetic; do not point this example at an external service.
 
 For static MCP client declarations, the audit supports flat `*.mcp.json` files and nested `mcpServers` in `mcp.json`, `mcp_config.json` and `claude_desktop_config.json`. Commands and environment values in declarations are not executed. Malformed declarations produce incomplete coverage; declared authentication or tool scope does not prove runtime enforcement. See [MCP compatibility](MCP_COMPATIBILITY.md).
 
@@ -410,4 +404,4 @@ For source-level understanding, start with the [architecture and complete functi
 
 ## Guide verification
 
-This guide's commands/options were checked against the installed Typer help and local `uv` help; its 27 attack names, IDs and supported modes were checked against the current class definitions by AST. Help verification disabled eager dotenv loading. A historical [connectivity verification](../internal_docs/diagrams/startup-connectivity-verification.json) ran the sample fixture through the actual dashboard scan path: 118 of 118 tests evaluated, no module errors, and JSON/SARIF/HTML downloads succeeded. This used only a local fixed-refusal server, with no model or provider calls. That receipt predates the updated module evidence contracts and does not describe the current suite's evaluated count. It verifies historical routing and report handling, not detector accuracy.
+This guide's commands/options were checked against the installed Typer help and local `uv` help; its attack names, IDs and supported modes were checked against the current class definitions by AST. `list-attacks` derives its totals from the live registry, so optional DEEP modules missing from an install are reported there rather than hidden behind a fixed number. Help verification disabled eager dotenv loading. A historical [connectivity verification](../internal_docs/diagrams/startup-connectivity-verification.json) ran the sample fixture through the actual dashboard scan path: 118 of 118 tests evaluated, no module errors, and JSON/SARIF/HTML downloads succeeded. This used only a local fixed-refusal server, with no model or provider calls. That receipt predates the updated module evidence contracts and does not describe the current suite's evaluated count. It verifies historical routing and report handling, not detector accuracy.

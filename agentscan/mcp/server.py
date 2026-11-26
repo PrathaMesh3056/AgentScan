@@ -21,7 +21,7 @@ from loguru import logger
 TOOLS_METADATA: list[dict[str, Any]] = [
     {
         "name": "agentscan_list_attacks",
-        "description": "List all 23 registered AgentScan security attack modules, their OWASP LLM mappings, and supported scan modes.",
+        "description": "List all registered AgentScan security attack modules, their OWASP LLM mappings, and supported scan modes; the live registry supplies the count.",
         "inputSchema": {
             "type": "object",
             "properties": {},
