@@ -170,9 +170,7 @@ class UpstreamClient:
     @property
     def alive(self) -> bool:
         """True while the upstream transport is connected and usable."""
-        return (
-            self._session is not None and not self._lost.is_set() and not self._closing
-        )
+        return self._session is not None and not self._lost.is_set() and not self._closing
 
     def _require_started(self) -> ClientSession:
         session = self._session
@@ -301,9 +299,7 @@ class UpstreamClient:
         call = asyncio.ensure_future(operation)
         lost = asyncio.ensure_future(self._lost.wait())
         try:
-            done, _pending = await asyncio.wait(
-                {call, lost}, return_when=asyncio.FIRST_COMPLETED
-            )
+            done, _pending = await asyncio.wait({call, lost}, return_when=asyncio.FIRST_COMPLETED)
             if call in done:
                 return call.result()
             raise UpstreamUnavailable(may_have_sent=may_have_sent)

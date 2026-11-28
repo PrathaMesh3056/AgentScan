@@ -87,7 +87,9 @@ def _listener() -> socket.socket:
     return listener
 
 
-async def _start_server(app: Any, listener: socket.socket) -> tuple[uvicorn.Server, asyncio.Task[Any]]:
+async def _start_server(
+    app: Any, listener: socket.socket
+) -> tuple[uvicorn.Server, asyncio.Task[Any]]:
     server = uvicorn.Server(uvicorn.Config(app, log_level="critical", lifespan="on"))
     task = asyncio.create_task(server.serve(sockets=[listener]))
     for _ in range(300):
@@ -99,7 +101,9 @@ async def _start_server(app: Any, listener: socket.socket) -> tuple[uvicorn.Serv
     raise RuntimeError("server did not start")
 
 
-async def _stop_server(server: uvicorn.Server, task: asyncio.Task[Any], listener: socket.socket) -> None:
+async def _stop_server(
+    server: uvicorn.Server, task: asyncio.Task[Any], listener: socket.socket
+) -> None:
     server.should_exit = True
     try:
         await asyncio.wait_for(task, timeout=5)
@@ -108,7 +112,9 @@ async def _stop_server(server: uvicorn.Server, task: asyncio.Task[Any], listener
     listener.close()
 
 
-def _write_config(tmp_path: Path, upstream_port: int, gateway_port: int) -> tuple[Path, Ed25519PrivateKey]:
+def _write_config(
+    tmp_path: Path, upstream_port: int, gateway_port: int
+) -> tuple[Path, Ed25519PrivateKey]:
     private = Ed25519PrivateKey.generate()
     policy_path = tmp_path / "policy.yaml"
     public_path = tmp_path / "policy.pub"
@@ -146,7 +152,9 @@ def _write_config(tmp_path: Path, upstream_port: int, gateway_port: int) -> tupl
     )
     write_signed_policy_atomic(envelope, policy_path)
     public_path.write_bytes(_public_pem(private).encode("ascii"))
-    trust_path.write_text(json.dumps({"keys": {"test-key": _public_pem(private)}}), encoding="utf-8")
+    trust_path.write_text(
+        json.dumps({"keys": {"test-key": _public_pem(private)}}), encoding="utf-8"
+    )
     config_path = tmp_path / "gateway.toml"
     config_path.write_text(
         "\n".join(
@@ -200,7 +208,9 @@ def _token(private: Ed25519PrivateKey) -> str:
 
 
 @asynccontextmanager
-async def _mock_upstream() -> AsyncIterator[tuple[int, socket.socket, asyncio.Task[Any], uvicorn.Server]]:
+async def _mock_upstream() -> AsyncIterator[
+    tuple[int, socket.socket, asyncio.Task[Any], uvicorn.Server]
+]:
     app = create_mock_upstream_app(MockUpstreamConfig(gateway_credential=CREDENTIAL, tenant=TENANT))
     listener = _listener()
     port = listener.getsockname()[1]
@@ -211,12 +221,16 @@ async def _mock_upstream() -> AsyncIterator[tuple[int, socket.socket, asyncio.Ta
         await _stop_server(server, task, listener)
 
 
-async def test_gateway_survives_upstream_outage_mid_session(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_gateway_survives_upstream_outage_mid_session(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Kill the upstream mid-session: the gateway stays alive and returns a stable error."""
     monkeypatch.setenv(CREDENTIAL_ENV, CREDENTIAL)
     private = Ed25519PrivateKey.generate()
     # Build policy/trust/config against a mock upstream we control.
-    upstream_app = create_mock_upstream_app(MockUpstreamConfig(gateway_credential=CREDENTIAL, tenant=TENANT))
+    upstream_app = create_mock_upstream_app(
+        MockUpstreamConfig(gateway_credential=CREDENTIAL, tenant=TENANT)
+    )
     upstream_listener = _listener()
     upstream_port = upstream_listener.getsockname()[1]
     upstream_server, upstream_task = await _start_server(upstream_app, upstream_listener)
@@ -260,7 +274,9 @@ async def test_gateway_survives_upstream_outage_mid_session(tmp_path: Path, monk
     )
     write_signed_policy_atomic(envelope, policy_path)
     public_path.write_bytes(_public_pem(private).encode("ascii"))
-    trust_path.write_text(json.dumps({"keys": {"test-key": _public_pem(private)}}), encoding="utf-8")
+    trust_path.write_text(
+        json.dumps({"keys": {"test-key": _public_pem(private)}}), encoding="utf-8"
+    )
 
     gateway_listener = _listener()
     gateway_port = gateway_listener.getsockname()[1]
@@ -335,7 +351,11 @@ async def test_gateway_survives_upstream_outage_mid_session(tmp_path: Path, monk
                         for code in ("UPSTREAM_ERROR", "TIMEOUT", "OUTCOME_UNKNOWN")
                     ), text
                 except McpError as exc:
-                    code = exc.error.data.get("agentscan_code") if isinstance(exc.error.data, dict) else None
+                    code = (
+                        exc.error.data.get("agentscan_code")
+                        if isinstance(exc.error.data, dict)
+                        else None
+                    )
                     assert code in {"UPSTREAM_ERROR", "TIMEOUT", "OUTCOME_UNKNOWN"}, exc
 
                 # Give the supervisor task a moment to flip readiness.
@@ -430,7 +450,9 @@ def test_startup_unreachable_upstream_is_bounded() -> None:
         )
         write_signed_policy_atomic(envelope, policy_path)
         public_path.write_bytes(_public_pem(private).encode("ascii"))
-        trust_path.write_text(json.dumps({"keys": {"test-key": _public_pem(private)}}), encoding="utf-8")
+        trust_path.write_text(
+            json.dumps({"keys": {"test-key": _public_pem(private)}}), encoding="utf-8"
+        )
 
         config_path = tmp / "gateway.toml"
         config_path.write_text(
@@ -482,7 +504,9 @@ def test_startup_unreachable_upstream_is_bounded() -> None:
         assert "CancelledError" not in completed.stderr, completed.stderr
 
 
-def test_upstream_client_start_maps_cancelled_to_bounded_error(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_upstream_client_start_maps_cancelled_to_bounded_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """CancelledError escaping the MCP transport during start is contained."""
     import mcp.client.session as mcp_session
 
@@ -523,8 +547,11 @@ def test_runtime_contains_request_scoped_cancellation() -> None:
         with tempfile.TemporaryDirectory() as td:
             tmp = Path(td)
             runtime, fake, store = rt_helpers.make_runtime(
-                tmp, {"delete_customer_record": rt_helpers.delete_entry()}, (rt_helpers.delete_tool(),)
+                tmp,
+                {"delete_customer_record": rt_helpers.delete_entry()},
+                (rt_helpers.delete_tool(),),
             )
+
             # Fake upstream that raises CancelledError on call_tool.
             class _CancellingUpstream:
                 async def list_tools(self) -> tuple[Any, ...]:
@@ -553,7 +580,9 @@ def test_runtime_contains_request_scoped_cancellation() -> None:
 
             # Shutdown mode: cancellation must propagate.
             runtime2, _fake2, store2 = rt_helpers.make_runtime(
-                tmp / "shutdown", {"delete_customer_record": rt_helpers.delete_entry()}, (rt_helpers.delete_tool(),)
+                tmp / "shutdown",
+                {"delete_customer_record": rt_helpers.delete_entry()},
+                (rt_helpers.delete_tool(),),
             )
             runtime2._upstream = _CancellingUpstream()
             runtime2._is_shutting_down = lambda: True
@@ -573,13 +602,25 @@ def test_runtime_contains_request_scoped_cancellation() -> None:
 
 
 def test_readiness_upstream_lost_reports_unavailable() -> None:
-    r = Readiness(policy_loaded=True, policy_expired=False, chain_verified=True,
-                 writer_lease_held=True, receipt_sink_healthy=True,
-                 upstream_catalog_loaded=True, upstream_lost=True)
+    r = Readiness(
+        policy_loaded=True,
+        policy_expired=False,
+        chain_verified=True,
+        writer_lease_held=True,
+        receipt_sink_healthy=True,
+        upstream_catalog_loaded=True,
+        upstream_lost=True,
+    )
     assert "upstream_unavailable" in r.issues()
-    r2 = Readiness(policy_loaded=True, policy_expired=False, chain_verified=True,
-                   writer_lease_held=True, receipt_sink_healthy=True,
-                   upstream_catalog_loaded=True, upstream_lost=False)
+    r2 = Readiness(
+        policy_loaded=True,
+        policy_expired=False,
+        chain_verified=True,
+        writer_lease_held=True,
+        receipt_sink_healthy=True,
+        upstream_catalog_loaded=True,
+        upstream_lost=False,
+    )
     assert r2.issues() == ()
 
 

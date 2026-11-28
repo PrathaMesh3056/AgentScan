@@ -155,8 +155,7 @@ def _target_approved_by_policy(url: str, policy: LiveTargetPolicy) -> bool:
     allowed_hosts = policy.allowed_hosts or []
     try:
         enrolled = {
-            str(v).strip().rstrip(".").encode("idna").decode("ascii").lower()
-            for v in allowed_hosts
+            str(v).strip().rstrip(".").encode("idna").decode("ascii").lower() for v in allowed_hosts
         }
     except Exception:
         enrolled = {str(v).strip().lower() for v in allowed_hosts}
@@ -672,6 +671,7 @@ def run_mcp_server(
     **kwargs: Any,
 ) -> None:
     """Run the MCP stdio JSON-RPC loop until EOF."""
+
     # Normalize repeatable CLI options, which may arrive as a single value or list.
     def _as_list(value: Any) -> list[str] | None:
         if value is None:

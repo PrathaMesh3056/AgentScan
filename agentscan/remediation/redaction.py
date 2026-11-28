@@ -53,7 +53,10 @@ def _collect_secret_values(*args: Any, **kwargs: Any) -> list[str]:
         if not env_value:
             continue
         upper = env_key.upper()
-        if any(marker in upper for marker in ("KEY", "SECRET", "TOKEN", "PASSWORD", "CREDENTIAL", "AUTH")):
+        if any(
+            marker in upper
+            for marker in ("KEY", "SECRET", "TOKEN", "PASSWORD", "CREDENTIAL", "AUTH")
+        ):
             values.append(env_value)
 
     try:

@@ -164,9 +164,7 @@ class TestSecretScanningCliRegression:
 
         from agentscan.cli import app
 
-        result = CliRunner().invoke(
-            app, ["audit", str(_FIXTURES / "yaml"), "--scan-secrets"]
-        )
+        result = CliRunner().invoke(app, ["audit", str(_FIXTURES / "yaml"), "--scan-secrets"])
 
         assert result.exit_code == 0, result.output
         assert "SC-015" in result.output

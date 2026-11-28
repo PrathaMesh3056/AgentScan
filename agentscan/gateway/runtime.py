@@ -171,7 +171,9 @@ class GatewayRuntime:
         self._idempotency_lock = asyncio.Lock()
         self._sink_failed = False
         self._upstream_alive = upstream_alive if upstream_alive is not None else (lambda: True)
-        self._is_shutting_down = is_shutting_down if is_shutting_down is not None else (lambda: False)
+        self._is_shutting_down = (
+            is_shutting_down if is_shutting_down is not None else (lambda: False)
+        )
 
     async def list_tools(self, context: GatewayRequestContext) -> Sequence[Tool]:
         if not isinstance(context.identity, VerifiedIdentity) or context.session is None:

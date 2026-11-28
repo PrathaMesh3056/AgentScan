@@ -381,12 +381,8 @@ def test_closed_mobile_drawer_is_inert_and_skipped_by_keyboard(dashboard) -> Non
         assert opened_state["left"] == pytest.approx(0, abs=1)
 
         opened_focus = _sidebar_focus_probe(cdp)
-        assert any(
-            "brand-link" in item["className"] for item in opened_focus["focusable"]
-        )
-        assert any(
-            item["text"].startswith("Overview") for item in opened_focus["focusable"]
-        )
+        assert any("brand-link" in item["className"] for item in opened_focus["focusable"])
+        assert any(item["text"].startswith("Overview") for item in opened_focus["focusable"])
 
         # The open drawer must still accept pointer/touch hits and keep its
         # 44px-tall mobile nav rows.
@@ -413,9 +409,9 @@ def test_closed_mobile_drawer_is_inert_and_skipped_by_keyboard(dashboard) -> Non
         assert touch["hitTarget"] is True, touch
 
         opened_ax = _sidebar_ax_nodes(cdp)
-        assert any(
-            node["role"] == "link" and node["name"] == "Overview" for node in opened_ax
-        ), opened_ax
+        assert any(node["role"] == "link" and node["name"] == "Overview" for node in opened_ax), (
+            opened_ax
+        )
 
         # Closing must also drop focus that was inside the drawer.
         assert cdp.evaluate(
@@ -457,12 +453,9 @@ def test_desktop_sidebar_stays_available_and_viewport_changes_resync(dashboard) 
         assert desktop["expanded"] == "false"
 
         desktop_focus = _sidebar_focus_probe(cdp)
+        assert any(item["text"].startswith("Overview") for item in desktop_focus["focusable"])
         assert any(
-            item["text"].startswith("Overview") for item in desktop_focus["focusable"]
-        )
-        assert any(
-            node["role"] == "link" and node["name"] == "Overview"
-            for node in _sidebar_ax_nodes(cdp)
+            node["role"] == "link" and node["name"] == "Overview" for node in _sidebar_ax_nodes(cdp)
         )
 
         # Crossing below the drawer breakpoint hides and disables the sidebar,
@@ -484,6 +477,5 @@ def test_desktop_sidebar_stays_available_and_viewport_changes_resync(dashboard) 
             " && s.getAttribute('aria-hidden') === null; })()",
         )
         assert any(
-            item["text"].startswith("Overview")
-            for item in _sidebar_focus_probe(cdp)["focusable"]
+            item["text"].startswith("Overview") for item in _sidebar_focus_probe(cdp)["focusable"]
         )
