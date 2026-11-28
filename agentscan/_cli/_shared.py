@@ -177,11 +177,11 @@ def _stdin_is_interactive() -> bool:
         import msvcrt
         from ctypes import wintypes
 
-        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)  # type: ignore[attr-defined]
         get_console_mode = kernel32.GetConsoleMode
         get_console_mode.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
         get_console_mode.restype = wintypes.BOOL
-        handle = msvcrt.get_osfhandle(sys.stdin.fileno())
+        handle = msvcrt.get_osfhandle(sys.stdin.fileno())  # type: ignore[attr-defined]
         mode = wintypes.DWORD()
         if not get_console_mode(wintypes.HANDLE(handle), ctypes.byref(mode)):
             return False

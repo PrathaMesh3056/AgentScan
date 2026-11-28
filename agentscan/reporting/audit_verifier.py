@@ -195,7 +195,7 @@ def _verify_legacy_certificate(
 
     canonical_bytes = canonicalize_report(report_data)
     actual_sha256 = hashlib.sha256(canonical_bytes).hexdigest()
-    if not hmac.compare_digest(actual_sha256, expected_sha256):
+    if not hmac.compare_digest(actual_sha256, str(expected_sha256)):
         return (
             False,
             "Digest mismatch! Report content has been tampered with or modified post-certification.\n"
@@ -211,7 +211,7 @@ def _verify_legacy_certificate(
     except ValueError as exc:
         return False, str(exc)
     computed_sig = hmac.new(key.encode("utf-8"), canonical_bytes, hashlib.sha256).hexdigest()
-    if not hmac.compare_digest(computed_sig, expected_sig):
+    if not hmac.compare_digest(computed_sig, str(expected_sig)):
         return False, "Cryptographic HMAC signature mismatch! Key incorrect or signature forged."
 
     return False, (
@@ -274,7 +274,7 @@ def _verify_envelope_certificate(
 
     canonical_bytes = canonicalize_report(report_data)
     actual_sha256 = hashlib.sha256(canonical_bytes).hexdigest()
-    if not hmac.compare_digest(actual_sha256, expected_sha256):
+    if not hmac.compare_digest(actual_sha256, str(expected_sha256)):
         return (
             False,
             "Digest mismatch! Report content has been tampered with or modified post-certification.\n"
@@ -290,14 +290,14 @@ def _verify_envelope_certificate(
     except ValueError as exc:
         return False, str(exc)
     computed_sig = hmac.new(key.encode("utf-8"), canonical_bytes, hashlib.sha256).hexdigest()
-    if not hmac.compare_digest(computed_sig, expected_sig):
+    if not hmac.compare_digest(computed_sig, str(expected_sig)):
         return False, "Cryptographic HMAC signature mismatch! Key incorrect or signature forged."
 
     try:
         computed_envelope_sig = _compute_envelope_signature(key, certificate)
     except (TypeError, ValueError):
         return False, "Certificate envelope is not canonical JSON and cannot be verified."
-    if not hmac.compare_digest(computed_envelope_sig, certificate[_ENVELOPE_SIGNATURE_FIELD]):
+    if not hmac.compare_digest(computed_envelope_sig, str(certificate[_ENVELOPE_SIGNATURE_FIELD])):
         return False, (
             "Certificate envelope signature mismatch! Certificate metadata "
             "(issued_at, issuer, summary) was forged or modified after certification."
