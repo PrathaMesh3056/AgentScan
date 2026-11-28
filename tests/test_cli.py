@@ -276,6 +276,7 @@ class TestScanCommand:
                     "scan",
                     "http://test-agent.example.com/chat",
                     "--exploit",
+                    "--authorized",
                     "--system-prompt",
                     "secret",
                 ],
@@ -320,7 +321,9 @@ class TestScanCommand:
         with patch(
             "agentscan.cli.run_scan_multi", new_callable=AsyncMock, return_value=report
         ) as mock_run:
-            result = runner.invoke(app, ["scan", "http://test-agent.example.com/chat", "--deep"])
+            result = runner.invoke(
+                app, ["scan", "http://test-agent.example.com/chat", "--deep", "--authorized"]
+            )
 
         assert result.exit_code == 0
         mock_run.assert_called_once()
@@ -476,7 +479,7 @@ class TestListAttacks:
         with patch(
             "agentscan.cli.run_scan_multi", new_callable=AsyncMock, return_value=report
         ) as m:
-            result = runner.invoke(app, ["scan", "-c", str(profile)])
+            result = runner.invoke(app, ["scan", "-c", str(profile), "--authorized"])
 
         assert result.exit_code == 0
         target_obj, modes = m.call_args[0][0], m.call_args[0][1]

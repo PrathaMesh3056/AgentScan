@@ -12,12 +12,12 @@ import asyncio
 import ipaddress
 import re
 import socket
-from collections.abc import Mapping
-from contextlib import AsyncExitStack, suppress
+from collections.abc import Awaitable, Mapping
+from contextlib import AsyncExitStack
 from dataclasses import dataclass
 from datetime import timedelta
 from types import TracebackType
-from typing import Any, Literal
+from typing import Any, Literal, TypeVar
 from urllib.parse import urlsplit
 
 import httpx
@@ -32,6 +32,8 @@ _HASH_PATTERN = re.compile(r"^sha256:[0-9a-f]{64}$")
 _MAX_LIST_PAGES = 100
 _META_KEY_HASH = "agentscan.key_hash"
 _META_REQUEST_HASH = "agentscan.request_hash"
+
+_T = TypeVar("_T")
 
 
 class UpstreamError(RuntimeError):
@@ -112,7 +114,14 @@ def _validate_url(url: str) -> None:
 
 
 class UpstreamClient:
-    """Long-lived authenticated MCP Streamable HTTP session to one upstream."""
+    """Long-lived authenticated MCP Streamable HTTP session to one upstream.
+
+    The MCP transport owns anyio task groups whose cancel scopes cancel their
+    parent task when a connection dies.  This client therefore runs the whole
+    transport stack in a dedicated supervisor task: an upstream outage stops
+    that task (and flips ``alive`` to ``False``) but can never cancel the ASGI
+    server task that is serving agent requests.
+    """
 
     def __init__(
         self,
@@ -142,8 +151,13 @@ class UpstreamClient:
         self._tenant = tenant
         self._timeout_seconds = float(timeout_seconds)
         self._lock = asyncio.Lock()
-        self._stack: AsyncExitStack | None = None
+        self._supervisor: asyncio.Task[None] | None = None
         self._session: ClientSession | None = None
+        self._ready: asyncio.Future[None] | None = None
+        self._stop: asyncio.Event | None = None
+        self._lost = asyncio.Event()
+        self._closing = False
+        self._failure: UpstreamError | None = None
 
     @property
     def server_id(self) -> str:
@@ -151,11 +165,16 @@ class UpstreamClient:
 
     @property
     def started(self) -> bool:
-        return self._session is not None and self._stack is not None
+        return self.alive
+
+    @property
+    def alive(self) -> bool:
+        """True while the upstream transport is connected and usable."""
+        return self._session is not None and not self._lost.is_set() and not self._closing
 
     def _require_started(self) -> ClientSession:
         session = self._session
-        if session is None or self._stack is None:
+        if session is None or self._lost.is_set() or self._closing:
             raise UpstreamUnavailable()
         return session
 
@@ -174,16 +193,46 @@ class UpstreamClient:
 
     async def start(self) -> None:
         """Open the long-lived MCP session; on failure close everything."""
-        if self._stack is not None:
-            return
+        if self._closing:
+            raise UpstreamUnavailable()
+        if self._supervisor is not None:
+            if self.alive:
+                return
+            raise UpstreamUnavailable() from self._failure
         # Probe before entering any MCP/anyio context. Entering the streamable
-        # client starts task groups whose cancel scopes must stay in this task;
-        # a post-timeout probe in a worker thread corrupts them on Linux.
+        # client starts task groups whose cancel scopes must stay in the
+        # supervisor task; a post-timeout probe in a worker thread corrupts
+        # them on Linux.
         probe = await asyncio.to_thread(self._probe_reachable, min(0.5, self._timeout_seconds))
         if probe is False:
             raise UpstreamUnavailable()
+        self._lost.clear()
+        self._stop = asyncio.Event()
+        self._ready = asyncio.get_running_loop().create_future()
+        self._supervisor = asyncio.create_task(
+            self._supervise(), name=f"agentscan-upstream-{self._server_id}"
+        )
+        try:
+            async with asyncio.timeout(self._timeout_seconds):
+                await self._ready
+        except TimeoutError:
+            await self._terminate()
+            raise UpstreamTimeout() from None
+        except asyncio.CancelledError:
+            await self._terminate()
+            raise
+        except UpstreamError:
+            await self._terminate()
+            raise
+        except Exception:
+            await self._terminate()
+            raise UpstreamUnavailable() from None
+
+    async def _supervise(self) -> None:
+        """Own the MCP transport; contain its cancellation inside this task."""
         stack = AsyncExitStack()
-        timed_out = False
+        ready = self._ready
+        failure: UpstreamError | None = None
         try:
             client = await stack.enter_async_context(
                 httpx.AsyncClient(
@@ -204,25 +253,109 @@ class UpstreamClient:
                 async with asyncio.timeout(self._timeout_seconds):
                     await session.initialize()
             except TimeoutError:
-                timed_out = True
+                failure = UpstreamTimeout()
+            else:
+                self._session = session
+                if ready is not None and not ready.done():
+                    ready.set_result(None)
+                stop = self._stop
+                if stop is not None:
+                    await stop.wait()
         except asyncio.CancelledError:
-            with suppress(BaseException):
-                await stack.aclose()
-            raise
+            # The MCP transport cancelled its parent task group because the
+            # connection died, or aclose() stopped the supervisor. Record a
+            # bounded failure; never let this cancellation reach the server.
+            failure = UpstreamUnavailable()
+        except UpstreamError as exc:
+            failure = exc
         except Exception:
-            with suppress(BaseException):
-                await stack.aclose()
-            raise UpstreamUnavailable() from None
-        if not timed_out:
-            self._stack = stack
-            self._session = session
-            return
-        # The deadline expired while initializing. Close the stack and treat
-        # the server as reachable but unresponsive; never probe after this
-        # point because anyio cancel scopes are already unwinding.
-        with suppress(BaseException):
+            failure = UpstreamUnavailable()
+        finally:
+            self._session = None
+            self._lost.set()
+            self._failure = failure
+            if ready is not None and not ready.done():
+                ready.set_exception(failure if failure is not None else UpstreamUnavailable())
+            await self._close_stack(stack)
+
+    @staticmethod
+    async def _close_stack(stack: AsyncExitStack) -> None:
+        """Close transport resources without letting teardown escape."""
+        try:
             await stack.aclose()
-        raise UpstreamTimeout() from None
+        except asyncio.CancelledError:
+            # The transport's own cancel scope is unwinding; the connection is
+            # already gone, so there is nothing left to close.
+            pass
+        except Exception:
+            # Teardown errors are already represented by the bounded failure.
+            pass
+        except BaseExceptionGroup:
+            # anyio aggregates concurrent teardown failures in a group.
+            pass
+
+    async def _await_with_liveness(self, operation: Awaitable[_T], *, may_have_sent: bool) -> _T:
+        """Await one MCP operation, failing fast when the transport is lost."""
+        call = asyncio.ensure_future(operation)
+        lost = asyncio.ensure_future(self._lost.wait())
+        try:
+            done, _pending = await asyncio.wait({call, lost}, return_when=asyncio.FIRST_COMPLETED)
+            if call in done:
+                return call.result()
+            raise UpstreamUnavailable(may_have_sent=may_have_sent)
+        finally:
+            for task in (call, lost):
+                if not task.done():
+                    task.cancel()
+            for task in (call, lost):
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    continue
+                except Exception:
+                    continue
+                except BaseExceptionGroup:
+                    continue
+
+    async def _terminate(self) -> None:
+        """Stop the supervisor task and wait for its transport cleanup."""
+        supervisor = self._supervisor
+        self._supervisor = None
+        self._session = None
+        stop, self._stop = self._stop, None
+        ready, self._ready = self._ready, None
+        if stop is not None:
+            stop.set()
+        if ready is not None and ready.done() and not ready.cancelled():
+            # start() already observed the same failure; mark it retrieved.
+            ready.exception()
+        if supervisor is None:
+            return
+        try:
+            await asyncio.wait_for(
+                asyncio.shield(supervisor), timeout=max(1.0, self._timeout_seconds)
+            )
+        except TimeoutError:
+            supervisor.cancel()
+            await self._drain(supervisor)
+        except asyncio.CancelledError:
+            supervisor.cancel()
+            await self._drain(supervisor)
+        except Exception:
+            pass
+        except BaseExceptionGroup:
+            pass
+
+    @staticmethod
+    async def _drain(task: asyncio.Task[None]) -> None:
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            pass
+        except BaseExceptionGroup:
+            pass
 
     def _probe_reachable(self, timeout_seconds: float) -> bool | None:
         """Quick TCP probe: True reachable, False refused immediately, None timed out."""
@@ -240,11 +373,10 @@ class UpstreamClient:
 
     async def aclose(self) -> None:
         """Idempotent, best-effort shutdown; never raises."""
-        stack, self._stack = self._stack, None
+        self._closing = True
+        self._lost.set()
         self._session = None
-        if stack is not None:
-            with suppress(Exception):
-                await stack.aclose()
+        await self._terminate()
 
     async def list_tools(self) -> tuple[Tool, ...]:
         """List every upstream tool, following cursors up to the page cap."""
@@ -255,7 +387,14 @@ class UpstreamClient:
             seen: set[str] = set()
             for _ in range(_MAX_LIST_PAGES):
                 try:
-                    result = await session.list_tools(cursor=cursor)
+                    async with asyncio.timeout(self._timeout_seconds):
+                        result = await self._await_with_liveness(
+                            session.list_tools(cursor=cursor), may_have_sent=False
+                        )
+                except asyncio.CancelledError:
+                    # Caller cancellation belongs to the request path; the
+                    # runtime decides whether it is request-scoped or shutdown.
+                    raise
                 except TimeoutError as exc:
                     raise UpstreamTimeout() from exc
                 except httpx.TimeoutException as exc:
@@ -296,12 +435,19 @@ class UpstreamClient:
         async with self._lock:
             try:
                 async with asyncio.timeout(deadline):
-                    return await session.call_tool(
-                        name,
-                        payload,
-                        read_timeout_seconds=timedelta(seconds=deadline),
-                        meta=request_meta,
+                    return await self._await_with_liveness(
+                        session.call_tool(
+                            name,
+                            payload,
+                            read_timeout_seconds=timedelta(seconds=deadline),
+                            meta=request_meta,
+                        ),
+                        may_have_sent=True,
                     )
+            except asyncio.CancelledError:
+                # Caller cancellation belongs to the request path; the runtime
+                # converts it to a stable result unless the server is stopping.
+                raise
             except TimeoutError as exc:
                 raise UpstreamTimeout(may_have_sent=True) from exc
             except httpx.TimeoutException as exc:

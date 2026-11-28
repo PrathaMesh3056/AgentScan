@@ -13,6 +13,7 @@ from pydantic import ValidationError
 
 from agentscan.guard.path import PathSecurityError
 from agentscan.remediation.models import FixConflictError
+from agentscan.remediation.redaction import redact
 from agentscan.ui.security import project_root
 from agentscan.ui.state import event_bus, state
 from agentscan.ui.validation import Fields, model_field_errors, validation_error_response
@@ -38,13 +39,15 @@ async def api_heal(request: Request) -> Any:
     patch = generate_unified_patch(plan, base_dir=root)
     pr_payload = generate_github_pr_payload(plan)
     return JSONResponse(
-        {
-            "total_actions": plan.total_actions,
-            "paths_affected": plan.paths_affected,
-            "actions": [a.model_dump(mode="json") for a in plan.actions],
-            "patch": patch,
-            "pr_payload": pr_payload,
-        }
+        redact(
+            {
+                "total_actions": plan.total_actions,
+                "paths_affected": plan.paths_affected,
+                "actions": [a.model_dump(mode="json") for a in plan.actions],
+                "patch": patch,
+                "pr_payload": pr_payload,
+            }
+        )
     )
 
 
@@ -239,11 +242,13 @@ async def api_heal_server_simulate(request: Request, payload: dict[str, Any]) ->
     await event_bus.publish({"type": "heal:alert_ingested", "data": record})
 
     return JSONResponse(
-        {
-            "status": "ingested",
-            "actions_planned": plan.total_actions,
-            "applied": alert.apply,
-            "patch": patch,
-            "pr_payload": pr_payload,
-        }
+        redact(
+            {
+                "status": "ingested",
+                "actions_planned": plan.total_actions,
+                "applied": alert.apply,
+                "patch": patch,
+                "pr_payload": pr_payload,
+            }
+        )
     )

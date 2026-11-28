@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -15,6 +16,29 @@ from agentscan.core.models import ScanReport
 from agentscan.swarm.blackboard import SwarmBlackboard
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
+
+
+def initial_sentinel_status() -> dict[str, Any]:
+    """Return a Sentinel status record with only factual, unset values."""
+    return {
+        "running": False,
+        "status": "IDLE",
+        "error": None,
+        "error_id": None,
+        "webhook_error": None,
+        "target": None,
+        "interval": 60,
+        "canary_token": None,
+        "webhook_url": None,
+        "probes_run": 0,
+        "probes_failed": 0,
+        "leaks_detected": 0,
+        "last_probe_at": None,
+        "last_probe_status": None,
+        "last_probe_error": None,
+        "last_probe_error_id": None,
+        "alerts": [],
+    }
 
 
 class UiState:
@@ -32,14 +56,7 @@ class UiState:
             "findings_count": 0,
         }
         self.swarm_blackboard: SwarmBlackboard = SwarmBlackboard()
-        self.sentinel_status: dict[str, Any] = {
-            "running": False,
-            "target": None,
-            "interval": 60,
-            "canary_token": None,
-            "webhook_url": None,
-            "alerts": [],
-        }
+        self.sentinel_status: dict[str, Any] = initial_sentinel_status()
         self.sentinel_task: asyncio.Task[Any] | None = None
         self.audit_report: dict[str, Any] | None = None
         self.webhook_receiver_status: dict[str, Any] = {
@@ -48,6 +65,38 @@ class UiState:
             "endpoint": "/webhook/alert",
             "recent_alerts": [],
         }
+
+    def record_sentinel_probe(
+        self,
+        status: str,
+        *,
+        error: str | None = None,
+        error_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Record one completed probe attempt without inventing an outcome."""
+        normalized = status if status in {"PASS", "ALERT", "ERROR"} else "ERROR"
+        recorded_at = datetime.now(UTC).isoformat()
+        self.sentinel_status["probes_run"] = int(self.sentinel_status.get("probes_run") or 0) + 1
+        self.sentinel_status["last_probe_at"] = recorded_at
+        self.sentinel_status["last_probe_status"] = normalized
+        if normalized == "ERROR":
+            self.sentinel_status["probes_failed"] = (
+                int(self.sentinel_status.get("probes_failed") or 0) + 1
+            )
+            self.sentinel_status["last_probe_error"] = error
+            self.sentinel_status["last_probe_error_id"] = error_id
+        else:
+            self.sentinel_status["last_probe_error"] = None
+            self.sentinel_status["last_probe_error_id"] = None
+        return {"status": normalized, "timestamp": recorded_at}
+
+    def record_sentinel_alert(self, record: dict[str, Any]) -> None:
+        """Record a leak alert and derive the alert count from recorded evidence."""
+        alerts = self.sentinel_status.setdefault("alerts", [])
+        alerts.insert(0, record)
+        self.sentinel_status["leaks_detected"] = sum(
+            1 for alert in alerts if isinstance(alert, dict) and alert.get("status") == "ALERT"
+        )
 
     def load_report(self, path: Path | None) -> ScanReport | None:
         self.report_path = path

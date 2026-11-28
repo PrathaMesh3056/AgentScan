@@ -108,8 +108,8 @@ language comprehension is not independently measured. This is a same-team small 
 customer accuracy.
 
 ```powershell
-python -m benchmarks.evaluation.atk011_run --output internal_docs/atk011-control-v1
-python -m benchmarks.evaluation.atk011_run --output internal_docs/atk011-model-v1 --snapshot 'D:/path/to/existing/cached/snapshot'
+python -m benchmarks.evaluation.atk011_run --output evaluation-output/atk011-control-v1
+python -m benchmarks.evaluation.atk011_run --output evaluation-output/atk011-model-v1 --snapshot 'D:/path/to/existing/cached/snapshot'
 ```
 
 The first command uses authored responses and proves wiring only. The second uses

@@ -36,7 +36,7 @@ was repaired before the 32 actual generations. That aborted execution is retaine
 The [frozen method](../../benchmarks/evaluation/atk005_support_METHOD.md) and
 [manifest](../../benchmarks/evaluation/atk005_support_manifest.json) document the
 thresholds. Locally retained case files and sanitized receipts remain in ignored
-`internal_docs/atk005-completion-20261012/`; they are not bundled in a release.
+a local directory outside the public repository; they are not bundled in a release.
 From the original evaluation checkout with those inputs and an existing cache:
 
 ```powershell

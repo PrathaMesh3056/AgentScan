@@ -45,6 +45,7 @@ class Readiness:
     writer_lease_held: bool = False
     receipt_sink_healthy: bool = False
     upstream_catalog_loaded: bool = False
+    upstream_lost: bool = False
 
     def issues(self) -> tuple[str, ...]:
         tests = (
@@ -54,6 +55,7 @@ class Readiness:
             (self.writer_lease_held, "writer_lease_missing"),
             (self.receipt_sink_healthy, "receipt_sink_unhealthy"),
             (self.upstream_catalog_loaded, "catalog_unavailable"),
+            (not self.upstream_lost, "upstream_unavailable"),
         )
         return tuple(code for ready, code in tests if not ready)
 
@@ -139,6 +141,7 @@ def create_app(
     runtime: ToolRuntime | None = None,
     readiness: Callable[[], Readiness] | None = None,
     metrics: MetricsRegistry | None = None,
+    shutdown_event: Any | None = None,
 ) -> Starlette:
     """Create the authenticated Streamable HTTP gateway app."""
     tool_runtime = runtime if runtime is not None else UnavailableToolRuntime()
@@ -193,7 +196,11 @@ def create_app(
     @asynccontextmanager
     async def lifespan(_app: Starlette):
         async with session_manager.run():
-            yield
+            try:
+                yield
+            finally:
+                if shutdown_event is not None:
+                    shutdown_event.set()
 
     async def healthz(_request: Request) -> JSONResponse:
         return JSONResponse({"status": "ok"})

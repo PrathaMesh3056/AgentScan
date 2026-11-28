@@ -56,6 +56,12 @@
             <span style="font-weight: 600; color: #0f172a;">{{ generated_at }}</span>
         </div>
     </div>
+    {% if report.exploit_consent %}
+    <div style="margin-top: 10px; font-size: 8.5pt;">
+        <strong style="color: #64748b; text-transform: uppercase; font-size: 7pt; letter-spacing: 0.5px;">Consent</strong>
+        <span style="font-weight: 600; color: #0f172a;">mode={{ report.scan_mode.value }} | exploit={{ report.exploit_consent.exploit }} | deep={{ report.exploit_consent.deep }} | required={{ report.exploit_consent.consent_required }} | granted={{ report.exploit_consent.consent_granted }} | source={{ report.exploit_consent.consent_source or 'n/a' }}</span>
+    </div>
+    {% endif %}
 </div>
 
 <!-- ==========================================

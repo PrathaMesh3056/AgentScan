@@ -107,4 +107,4 @@ Interrupted local remediation can retain private `.agentscan-recovery` journals 
 
 Text matches and synthetic workspace delivery are candidate observations. They do not establish executed tools, target retrieval or changed files/databases. A confidential canary must be provisioned in the target independently and kept out of attack prompts. Synthetic benchmark and local judge controls are smoke checks; they do not establish independent detector accuracy or target safety.
 
-The current flow and function explanations are maintained in [internal diagrams](../internal_docs/diagrams/README.md), including [sensitive data and three analysis choices](../internal_docs/diagrams/17_sensitive_data_flow.md).
+See [ARCHITECTURE.md](ARCHITECTURE.md) for component boundaries and the sensitive-data paths described above.

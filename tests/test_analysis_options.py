@@ -199,7 +199,8 @@ def test_cli_designated_external_scan_and_role_models():
     assert target.analysis_mode == "external" and target.data_classification == "non_sensitive"
     assert target.external_model == "gemini/synthetic-model"
     assert target.judge_model == "gemini/synthetic-judge"
-    assert ScanMode.EXPLOIT in modes
+    # --attacker-model selects the role model; it must not enable EXPLOIT by itself.
+    assert ScanMode.EXPLOIT not in modes
 
 
 @pytest.mark.parametrize("color", [False, True])
@@ -293,6 +294,7 @@ def test_cli_swarm_designated_external_mode():
                 "anthropic/synthetic-model",
                 "--data-classification",
                 "non_sensitive",
+                "--authorized",
                 "--quiet",
             ],
         )

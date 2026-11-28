@@ -9,7 +9,7 @@ from typer.testing import CliRunner
 
 from agentscan.cli import app
 from agentscan.core.connectors import CallableConnector, use_connector
-from agentscan.mcp.server import process_jsonrpc_message
+from agentscan.mcp.server import LiveTargetPolicy, process_jsonrpc_message
 
 runner = CliRunner()
 
@@ -39,6 +39,7 @@ def test_swarm_cli_execution(tmp_path: Path) -> None:
                 "--rounds",
                 "1",
                 "--offline",
+                "--authorized",
                 "--output",
                 str(out_file),
             ],
@@ -56,7 +57,9 @@ def test_swarm_cli_execution(tmp_path: Path) -> None:
 
 
 def test_swarm_cli_invalid_team() -> None:
-    result = runner.invoke(app, ["swarm", "http://test.local/chat", "--team", "non_existent_team"])
+    result = runner.invoke(
+        app, ["swarm", "http://test.local/chat", "--team", "non_existent_team", "--authorized"]
+    )
     assert result.exit_code == 1
     assert "Error loading swarm team" in result.output
 
@@ -88,7 +91,13 @@ def test_mcp_swarm_tool_call() -> None:
                 },
             },
         }
-        resp = process_jsonrpc_message(req)
+        policy = LiveTargetPolicy(
+            allowed_hosts=["mock.local"],
+            allowed_networks=[],
+            request_budget=100,
+            allow_live_targets=True,
+        )
+        resp = process_jsonrpc_message(req, policy=policy)
 
     assert resp is not None
     assert resp["id"] == 11

@@ -182,6 +182,7 @@ async def open_gateway_service(config_path: str | Path) -> AsyncIterator[Gateway
     upstream: UpstreamClient | None = None
     pruner: asyncio.Task[None] | None = None
     prune_stop: asyncio.Event | None = None
+    shutdown_event = asyncio.Event()
     try:
         store.acquire_writer_lease()
         recovery = recover(store)
@@ -198,6 +199,8 @@ async def open_gateway_service(config_path: str | Path) -> AsyncIterator[Gateway
             upstream=upstream,
             catalog=catalog,
             metrics=metrics,
+            upstream_alive=(lambda: upstream.alive) if upstream is not None else None,
+            is_shutting_down=shutdown_event.is_set,
         )
         verifier = IdentityVerifier(
             trusted_issuer=settings.trusted_issuer,
@@ -216,6 +219,7 @@ async def open_gateway_service(config_path: str | Path) -> AsyncIterator[Gateway
             sessions=sessions,
             runtime=runtime,
             metrics=metrics,
+            shutdown_event=shutdown_event,
         )
         prune_stop = asyncio.Event()
         pruner = asyncio.create_task(

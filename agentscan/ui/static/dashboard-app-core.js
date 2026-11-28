@@ -143,6 +143,40 @@
       }
     }
 
+    const MOBILE_SIDEBAR_MEDIA = '(max-width: 1023px)';
+
+    function isMobileSidebarViewport() {
+      return typeof window.matchMedia === 'function'
+        ? window.matchMedia(MOBILE_SIDEBAR_MEDIA).matches
+        : window.innerWidth < 1024;
+    }
+
+    /* The off-canvas drawer is hidden on mobile, so it must not stay in the
+       tab order or the accessibility tree while closed. On desktop the same
+       sidebar is always visible and must remain interactive. */
+    function syncSidebarA11y(forceOpen) {
+      const sb = document.getElementById('sidebar');
+      if (!sb) return;
+      const trigger = document.getElementById('btn-mobile-menu');
+      const isOpen = typeof forceOpen === 'boolean'
+        ? forceOpen
+        : sb.classList.contains('mobile-open');
+      const isHidden = isMobileSidebarViewport() && !isOpen;
+
+      if (isHidden) {
+        sb.setAttribute('inert', '');
+        sb.setAttribute('aria-hidden', 'true');
+      } else {
+        sb.removeAttribute('inert');
+        sb.removeAttribute('aria-hidden');
+      }
+
+      if (trigger) {
+        trigger.setAttribute('aria-controls', 'sidebar');
+        trigger.setAttribute('aria-expanded', String(isMobileSidebarViewport() && isOpen));
+      }
+    }
+
     function toggleSidebarMobile(forceState) {
       const sb = document.getElementById('sidebar');
       const backdrop = document.getElementById('sidebar-backdrop');
@@ -154,6 +188,17 @@
       } else {
         sb.classList.remove('mobile-open');
         if (backdrop) backdrop.classList.add('hidden');
+      }
+      syncSidebarA11y(isOpen);
+    }
+
+    syncSidebarA11y();
+    if (window.matchMedia) {
+      const mobileSidebarMedia = window.matchMedia(MOBILE_SIDEBAR_MEDIA);
+      if (typeof mobileSidebarMedia.addEventListener === 'function') {
+        mobileSidebarMedia.addEventListener('change', syncSidebarA11y);
+      } else if (typeof mobileSidebarMedia.addListener === 'function') {
+        mobileSidebarMedia.addListener(syncSidebarA11y);
       }
     }
 

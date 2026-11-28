@@ -57,7 +57,7 @@ Chromium chart checks passed using synthetic reports, including keyboard filteri
 errors or off-origin requests were observed. The 32 skipped and 8 deselected slow
 tests in the ordinary regression remain explicit. See
 [completion verification](modules/prompt_injection.md#completion-verification).
-The [earlier engineering assessment](../internal_docs/diagrams/atk001-final-engineering-review.md)
-remains the planning/implementation record for the bounded detector. See
+An earlier engineering assessment remains the planning/implementation record
+for the bounded detector. See
 [ATK-001 criteria and limits](modules/prompt_injection.md). Chart implementation
 does not establish an independent detector certification or deployment readiness.

@@ -42,6 +42,12 @@ def swarm(  # noqa: PLR0913
         "-r",
         help="Maximum collaborative execution rounds across agents.",
     ),
+    authorized: bool = typer.Option(
+        False,
+        "--authorized",
+        help="Confirm this is an authorized security test. Required for "
+        "non-interactive swarm runs (or set AGENTSCAN_EXPLOIT_CONSENT=1).",
+    ),
     output: Path | None = typer.Option(  # noqa: B008
         None,
         "--output",
@@ -61,7 +67,7 @@ def swarm(  # noqa: PLR0913
     ),
 ) -> None:
     """Run collaborative multi-agent red-team swarms against an AI agent."""
-    _confirm_exploit_mode()
+    _confirm_exploit_mode(authorized=authorized, require_non_tty_consent=True)
 
     from agentscan.core.models import Target
     from agentscan.swarm.coordinator import SwarmCoordinator

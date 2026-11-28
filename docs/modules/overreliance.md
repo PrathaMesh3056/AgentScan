@@ -134,8 +134,8 @@ module's two-message-per-question profile.
 From the repository root, use fresh output directories:
 
 ```powershell
-python -m benchmarks.evaluation.atk009_run --output internal_docs/atk009-control-1
-python -m benchmarks.evaluation.atk009_run --output internal_docs/atk009-model-1 --snapshot '<existing local Qwen2.5-0.5B-Instruct snapshot>'
+python -m benchmarks.evaluation.atk009_run --output evaluation-output/atk009-control-1
+python -m benchmarks.evaluation.atk009_run --output evaluation-output/atk009-model-1 --snapshot '<existing local Qwen2.5-0.5B-Instruct snapshot>'
 ```
 
 The default is an authored extractive instrumentation control. The optional model

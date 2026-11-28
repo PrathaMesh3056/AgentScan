@@ -1043,25 +1043,127 @@
       const c = document.getElementById('sentinel-container');
       if (!c) return;
 
-      const snt = globalTelemetry.sentinel || {};
-      const isRunning = Boolean(snt.running);
-      const failed = snt.status === 'ERROR' || Boolean(snt.error);
+      const hasData = globalTelemetry.sentinel !== null && typeof globalTelemetry.sentinel === 'object';
+      const snt = hasData ? globalTelemetry.sentinel : {};
+      const isRunning = snt.running === true;
+      const status = String(snt.status || '').toUpperCase();
+      const watcherFailed = status === 'ERROR' || Boolean(snt.error);
+      const watcherState = !hasData ? 'UNAVAILABLE'
+        : watcherFailed ? 'ERROR'
+        : isRunning ? 'RUNNING'
+        : status === 'STOPPED' ? 'STOPPED'
+        : status === 'IDLE' ? 'NOT STARTED'
+        : 'UNKNOWN';
+
+      const integerOrNull = value => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : null;
+      const probes = integerOrNull(snt.probes_run);
+      const probesFailed = integerOrNull(snt.probes_failed);
+      const lastProbeStatus = ['PASS', 'ALERT', 'ERROR'].includes(String(snt.last_probe_status || '').toUpperCase())
+        ? String(snt.last_probe_status).toUpperCase() : null;
+      const lastProbeAt = typeof snt.last_probe_at === 'string' && snt.last_probe_at ? snt.last_probe_at : null;
+      const alertRecords = Array.isArray(snt.alerts)
+        ? snt.alerts.filter(item => item && typeof item === 'object' && String(item.status || '').toUpperCase() === 'ALERT')
+        : null;
+      const leakCount = alertRecords ? alertRecords.length : integerOrNull(snt.leaks_detected);
+      const probeFailedNow = lastProbeStatus === 'ERROR';
+
       const sentinelErrors = [];
-      if (failed) sentinelErrors.push({ module_name: 'Sentinel watcher', error: snt.error || 'The watcher stopped because an execution error occurred.', error_id: snt.error_id });
+      if (watcherFailed) sentinelErrors.push({ module_name: 'Sentinel watcher', error: snt.error || 'The watcher stopped because an execution error occurred.', error_id: snt.error_id });
       if (snt.webhook_error) sentinelErrors.push({ module_name: 'Sentinel webhook', error: snt.webhook_error.error || 'The webhook notification could not be delivered.', error_id: snt.webhook_error.error_id });
-      const watcherError = sentinelErrors.length ? DashboardSemantics.assessmentErrorMarkup({ status: 'ERROR', assessment_scope: failed ? 'watcher' : 'sentinel_delivery', module_errors: sentinelErrors }) : '';
+      if (probeFailedNow && !watcherFailed) sentinelErrors.push({ module_name: 'Sentinel probe', error: snt.last_probe_error || 'The last Sentinel probe failed.', error_id: snt.last_probe_error_id });
+      const watcherError = sentinelErrors.length ? DashboardSemantics.assessmentErrorMarkup({ status: 'ERROR', assessment_scope: watcherFailed ? 'watcher' : undefined, module_errors: sentinelErrors }) : '';
       const runtimeErrors = document.getElementById('sentinel-runtime-errors');
       if (runtimeErrors) runtimeErrors.innerHTML = watcherError;
       const inlineStatus = document.getElementById('sentinel-status-inline');
-      if (inlineStatus) inlineStatus.textContent = failed ? 'ERROR / STOPPED' : isRunning ? 'ACTIVE POLLING' : 'STANDBY / STOPPED';
+      if (inlineStatus) inlineStatus.textContent = watcherState;
       document.getElementById('btn-sentinel-start')?.classList.toggle('pointer-events-none', isRunning);
       document.getElementById('btn-sentinel-start')?.classList.toggle('opacity-50', isRunning);
       document.getElementById('btn-sentinel-stop')?.classList.toggle('pointer-events-none', !isRunning);
       document.getElementById('btn-sentinel-stop')?.classList.toggle('opacity-50', !isRunning);
-      const target = snt.target || 'No agent endpoint configured';
-      const interval = snt.interval || 30;
-      const probes = snt.probes_run || 0;
-      const leaks = snt.leaks_detected || 0;
+
+      const target = typeof snt.target === 'string' && snt.target ? snt.target : 'No agent endpoint configured';
+      const interval = integerOrNull(snt.interval);
+      const badgeClass = tone => tone === 'error' ? 'bg-[#FAF0EB] text-[#B84E28] border border-[#ECCFC2]'
+        : tone === 'warn' ? 'bg-[#F7F5EE] text-[#8A5A1E] border border-[#E5D6BF]'
+        : tone === 'ok' ? 'bg-[#EEF6F4] text-[#1E5E54] border border-[#CFE5E1]'
+        : 'bg-[#F7F5EE] text-[#666666] border border-[#1A1A1A]/10';
+      const watcherTone = watcherFailed ? 'error' : isRunning ? 'ok' : 'neutral';
+      const watcherHeadline = watcherFailed ? 'STOPPED AFTER ERROR'
+        : isRunning ? 'RUNNING'
+        : watcherState === 'STOPPED' ? 'STOPPED'
+        : watcherState === 'NOT STARTED' ? 'NOT STARTED'
+        : 'UNAVAILABLE';
+
+      let probeBadge = 'UNAVAILABLE';
+      let probeTone = 'neutral';
+      let probeSummary = 'Probe evidence unavailable';
+      let probeDetail = 'No probe evidence is available.';
+      if (hasData) {
+        if (probeFailedNow) { probeBadge = 'PROBE ERROR'; probeTone = 'error'; }
+        else if (probes === null) { probeBadge = 'UNKNOWN'; }
+        else if (probes === 0) { probeBadge = 'NO PROBES'; }
+        else { probeBadge = 'RECORDED'; probeTone = 'ok'; }
+        probeSummary = probes === null ? 'Probe count unavailable' : `${probes} Probe${probes === 1 ? '' : 's'}`;
+        if (probesFailed !== null && probesFailed > 0) probeSummary += ` · ${probesFailed} failed`;
+        probeDetail = lastProbeAt || lastProbeStatus
+          ? `Last probe: ${lastProbeAt || 'time not recorded'}${lastProbeStatus ? ' · ' + lastProbeStatus : ''}`
+          : 'No probe recorded yet.';
+      }
+
+      let alertBadge = 'UNAVAILABLE';
+      let alertTone = 'neutral';
+      let alertSummary = 'Alert count unavailable';
+      if (hasData) {
+        if (leakCount === null) {
+          alertBadge = 'UNKNOWN';
+          alertSummary = 'Alert count unavailable';
+        } else if (leakCount > 0) {
+          alertBadge = 'ALERT';
+          alertTone = 'error';
+          alertSummary = `${leakCount} Detected`;
+        } else if (probeFailedNow || (probes !== null && probes > 0 && probesFailed === probes)) {
+          alertBadge = 'INCONCLUSIVE';
+          alertTone = 'warn';
+          alertSummary = 'No alert recorded; probe coverage is incomplete.';
+        } else if (probes !== null && probes > 0 && probesFailed !== null && probesFailed > 0) {
+          alertBadge = 'PARTIAL COVERAGE';
+          alertTone = 'warn';
+          alertSummary = `0 Detected · ${probesFailed} failed probe${probesFailed === 1 ? '' : 's'}`;
+        } else if (probes !== null && probes > 0) {
+          alertBadge = 'NO RECORDED FINDING';
+          alertTone = 'ok';
+          alertSummary = '0 Detected';
+        } else {
+          alertBadge = 'NOT EVALUATED';
+          alertSummary = 'No alert history';
+        }
+      }
+
+      const feedBadge = watcherState === 'RUNNING' ? 'WATCHER RUNNING'
+        : watcherState === 'ERROR' ? 'WATCHER ERROR'
+        : watcherState === 'STOPPED' ? 'WATCHER STOPPED'
+        : watcherState === 'NOT STARTED' ? 'NO WATCHER RUNNING'
+        : 'STATUS UNAVAILABLE';
+
+      let alertLines;
+      if (!hasData) {
+        alertLines = '<div>[SENTINEL-DAEMON] No Sentinel status available.</div>';
+      } else if (alertRecords && alertRecords.length) {
+        alertLines = alertRecords.slice(0, 3).map(alert => {
+          const findings = integerOrNull(alert.findings_count);
+          return `<div>[ALERT] ${escapeHtml(alert.timestamp || 'time not recorded')} · ${findings === null ? 'finding count unavailable' : findings + ' finding(s)'} · ${escapeHtml(alert.target || target)}</div>`;
+        }).join('');
+      } else if (leakCount === null) {
+        alertLines = '<div>[SENTINEL-DAEMON] Alert history unavailable.</div>';
+      } else if (probeFailedNow) {
+        alertLines = '<div>[SENTINEL-DAEMON] No alert recorded; probe coverage is incomplete.</div>';
+      } else if (probes !== null && probes > 0) {
+        alertLines = probesFailed !== null && probesFailed > 0
+          ? `<div>[SENTINEL-DAEMON] No canary leakage recorded in ${probes} probe${probes === 1 ? '' : 's'}; ${probesFailed} failed.</div>`
+          : `<div>[SENTINEL-DAEMON] No canary leakage recorded in ${probes} probe${probes === 1 ? '' : 's'}.</div>`;
+      } else {
+        alertLines = '<div>[SENTINEL-DAEMON] No probes recorded. No alert history.</div>';
+      }
 
       c.innerHTML = `
         <div id="sentinel-tab-errors">${watcherError}</div>
@@ -1069,14 +1171,14 @@
           <div class="dl-card p-6 bg-white space-y-3" style="border-color: var(--border)">
             <div class="flex items-center justify-between">
               <span class="text-[10px] font-extrabold uppercase tracking-wider text-[#666666]">Watcher Status</span>
-              <span class="px-2.5 py-0.5 rounded-full text-[10px] font-bold ${isRunning ? 'bg-[#EEF6F4] text-[#1E5E54] border border-[#CFE5E1]' : 'bg-[#FAF0EB] text-[#B84E28] border border-[#ECCFC2]'}">
-                ${failed ? 'ERROR' : isRunning ? 'ACTIVE POLLING' : 'STANDBY'}
+              <span class="px-2.5 py-0.5 rounded-full text-[10px] font-bold ${badgeClass(watcherTone)}">
+                ${watcherState}
               </span>
             </div>
-            <div class="text-2xl font-extrabold text-[#1A1A1A]">${failed ? 'STOPPED AFTER ERROR' : isRunning ? 'RUNNING' : 'STOPPED'}</div>
+            <div class="text-2xl font-extrabold text-[#1A1A1A]">${watcherHeadline}</div>
             <p class="text-xs text-[#666666]">Target: <code class="font-mono font-bold text-[#1A1A1A]">${escapeHtml(target)}</code></p>
             <div class="pt-3 border-t border-[#1A1A1A]/10 flex items-center justify-between text-xs">
-              <span class="text-[#888888]">Interval: ${interval}s</span>
+              <span class="text-[#888888]">Interval: ${interval === null ? 'Not configured' : interval + 's'}</span>
               <button onclick="openSentinelModal()" class="text-xs font-bold text-[#1A1A1A] hover:underline">&rarr; Configure</button>
             </div>
           </div>
@@ -1084,10 +1186,10 @@
           <div class="dl-card p-6 bg-white space-y-3" style="border-color: var(--border)">
             <div class="flex items-center justify-between">
               <span class="text-[10px] font-extrabold uppercase tracking-wider text-[#1E5E54]">Canary Probes</span>
-              <span class="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-[#EEF6F4] text-[#1E5E54] border border-[#CFE5E1]">ACTIVE</span>
+              <span class="px-2.5 py-0.5 rounded-full text-[10px] font-bold ${badgeClass(probeTone)}">${probeBadge}</span>
             </div>
-            <div class="text-2xl font-extrabold text-[#1A1A1A]">${probes} Probes</div>
-            <p class="text-xs text-[#666666]">High-entropy synthetic canary tokens injected across dialogue boundaries.</p>
+            <div class="text-2xl font-extrabold text-[#1A1A1A]">${probeSummary}</div>
+            <p class="text-xs text-[#666666]">${escapeHtml(probeDetail)}</p>
             <div class="pt-3 border-t border-[#1A1A1A]/10 flex items-center justify-between text-xs">
               <span class="text-[#1E5E54] font-bold">Review recorded probe outcomes</span>
               <button onclick="runSentinelProbeAction()" class="text-xs font-bold text-[#1E5E54] hover:underline">&rarr; Probe Now</button>
@@ -1097,11 +1199,9 @@
           <div class="dl-card p-6 bg-white space-y-3" style="border-color: var(--border)">
             <div class="flex items-center justify-between">
               <span class="text-[10px] font-extrabold uppercase tracking-wider text-[#B84E28]">Alerts & Leaks</span>
-              <span class="px-2.5 py-0.5 rounded-full text-[10px] font-bold ${leaks > 0 ? 'bg-[#FAF0EB] text-[#B84E28]' : 'bg-[#EEF6F4] text-[#1E5E54]'}">
-                ${leaks > 0 ? 'ALERT' : 'NO RECORDED FINDING'}
-              </span>
+              <span class="px-2.5 py-0.5 rounded-full text-[10px] font-bold ${badgeClass(alertTone)}">${alertBadge}</span>
             </div>
-            <div class="text-2xl font-extrabold text-[#1A1A1A]">${leaks} Detected</div>
+            <div class="text-2xl font-extrabold text-[#1A1A1A]">${alertSummary}</div>
             <p class="text-xs text-[#666666]">Unsanitized canary token reflections or unauthorized external exfiltration.</p>
             <div class="pt-3 border-t border-[#1A1A1A]/10 flex items-center justify-between text-xs">
               <span class="text-[#888888]">Webhook: ${escapeHtml(snt.webhook_url || 'Not configured')}</span>
@@ -1112,15 +1212,19 @@
 
         <div class="dl-card p-6 bg-white space-y-3" style="border-color: var(--border)">
           <div class="flex items-center justify-between pb-3 border-b border-[#1A1A1A]/10">
-            <h3 class="text-base font-extrabold text-[#1A1A1A]">Continuous Sentinel Event Telemetry</h3>
-            <span class="text-[10px] font-mono font-bold px-2 py-0.5 rounded-full bg-[#F7F5EE] text-[#1A1A1A]">LIVE FEED</span>
+            <h3 class="text-base font-extrabold text-[#1A1A1A]">Sentinel Probe & Alert Telemetry</h3>
+            <span class="text-[10px] font-mono font-bold px-2 py-0.5 rounded-full ${badgeClass(watcherTone)}">${feedBadge}</span>
           </div>
-          <p class="text-xs text-[#666666]">Background surveillance daemon monitors running agents for prompt injections and canary leaks in real-time.</p>
+          <p class="text-xs text-[#666666]">Recorded Sentinel probe and alert outcomes. Only events written by the backend are shown.</p>
           <div class="p-4 rounded-2xl bg-[#F7F5EE] font-mono text-[11px] text-[#1A1A1A] space-y-1">
+            <div>[SENTINEL-DAEMON] Watcher state: <strong>${watcherState}</strong></div>
+            <div>[SENTINEL-DAEMON] Probes recorded: <strong>${probes === null ? 'Unavailable' : probes}</strong>${probesFailed !== null && probesFailed > 0 ? ` · ${probesFailed} failed` : ''}</div>
+            <div>[SENTINEL-DAEMON] Last probe: <strong>${lastProbeAt ? escapeHtml(lastProbeAt) : 'None recorded'}</strong>${lastProbeStatus ? ` · ${lastProbeStatus}` : ''}</div>
+            <div>[SENTINEL-DAEMON] Alerts recorded: <strong>${leakCount === null ? 'Unavailable' : leakCount}</strong></div>
             <div>[SENTINEL-DAEMON] Configured target: <strong>${escapeHtml(target)}</strong></div>
             <div>[SENTINEL-DAEMON] Canary token state: <code>${snt.canary_token ? 'Configured' : 'Not configured'}</code></div>
             <div>[SENTINEL-DAEMON] Webhook dispatcher target: <code>${escapeHtml(snt.webhook_url || 'Not configured')}</code></div>
-            <div>[SENTINEL-DAEMON] State: <strong>${isRunning ? 'ACTIVE - Polling every ' + interval + 's' : 'STANDBY - Ready to start'}</strong></div>
+            ${alertLines}
           </div>
         </div>
       `;

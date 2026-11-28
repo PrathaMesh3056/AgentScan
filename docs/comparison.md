@@ -240,4 +240,4 @@ hyperfine --warmup 1 --runs 5 'uv run agentscan scan http://localhost:8000/chat'
 - [NVIDIA Garak Repository & Documentation](https://github.com/NVIDIA/garak)
 - [Promptfoo Evaluation Framework](https://github.com/promptfoo/promptfoo)
 - [Microsoft PyRIT (Python Risk Identification Tool)](https://github.com/Azure/PyRIT)
-- [AgentScan Architecture Documentation](file:///d:/prathamesh/AgentScan/docs/)
+- [AgentScan Architecture Documentation](ARCHITECTURE.md)
