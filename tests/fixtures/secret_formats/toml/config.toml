@@ -1,0 +1,3 @@
+# Synthetic fixture for QA-046. Not a real credential.
+[service]
+api_key = "sk-proj-QA046FakeTomlSecret1234567890abcdef"

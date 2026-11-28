@@ -9,6 +9,7 @@ from agentscan.remediation.patch_generator import (
     generate_github_pr_payload,
     generate_unified_patch,
 )
+from agentscan.remediation.redaction import redact
 from agentscan.remediation.webhook_receiver import app as heal_app
 from agentscan.remediation.webhook_receiver import run_heal_server
 
@@ -20,5 +21,6 @@ __all__ = [
     "generate_unified_patch",
     "heal_app",
     "plan_and_apply",
+    "redact",
     "run_heal_server",
 ]

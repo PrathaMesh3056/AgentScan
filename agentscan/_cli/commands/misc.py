@@ -10,6 +10,7 @@ import asyncio
 import contextlib
 import difflib
 import json
+import uuid
 from pathlib import Path
 
 import typer
@@ -403,7 +404,9 @@ def fix(
             )
         )
         if diff_lines:
-            diff_text = "".join(diff_lines)
+            from agentscan.remediation.redaction import redact
+
+            diff_text = redact("".join(diff_lines))
             console.print(Syntax(diff_text, "diff", theme="monokai", line_numbers=False))
         else:
             console.print("  [dim](New file to be created)[/dim]")
@@ -457,7 +460,10 @@ def fix(
             )
 
     if output:
-        output.write_text(plan.model_dump_json(indent=2), encoding="utf-8")
+        from agentscan.remediation.redaction import redact
+
+        redacted_plan = redact(plan.model_dump(mode="json"))
+        output.write_text(json.dumps(redacted_plan, indent=2), encoding="utf-8")
         console.print(f"FixPlan written to [cyan]{output}[/cyan]")
 
 
@@ -509,11 +515,21 @@ def watch(
     ),
 ) -> None:
     """Run continuous monitoring sentinel against an agent endpoint."""
-    from agentscan.core.connectors import HttpJsonConnector
+    from agentscan.core.client import AgentScanClient
     from agentscan.core.models import Target
-    from agentscan.sentinel.watcher import ContinuousWatcher
+    from agentscan.sentinel.watcher import (
+        ContinuousWatcher,
+        SentinelIterationResult,
+        SentinelProbeError,
+        SentinelRunResult,
+    )
 
-    target = Target(url=url)
+    try:
+        target = Target(url=url)
+    except Exception:
+        console.print("[bold red]Sentinel setup failed:[/bold red] invalid target configuration.")
+        raise typer.Exit(code=1) from None
+
     watcher = ContinuousWatcher(
         target=target,
         interval_seconds=interval,
@@ -527,25 +543,52 @@ def watch(
     if webhook:
         console.print(f"Alert Webhook: [dim]{webhook}[/dim]")
 
-    connector = HttpJsonConnector(target)
-
-    def _on_iter(num: int, findings: list[Finding]) -> None:
-        if findings:
+    def _on_iter(num: int, result: SentinelIterationResult) -> None:
+        if result.findings:
             console.print(
-                f"Cycle {num}: [bold red]ALERT[/bold red] - {len(findings)} finding(s) detected!"
+                f"Cycle {num}: [bold red]ALERT[/bold red] - {len(result.findings)} finding(s) detected!"
             )
-        else:
+        elif result.clean:
             console.print(
                 f"Cycle {num}: [bold green]PASS[/bold green] - Canary secure, 0 findings."
             )
+        else:
+            console.print(
+                f"Cycle {num}: [bold red]{result.status.value}[/bold red] - "
+                f"{result.error or 'No verdict.'}"
+            )
 
-    findings = asyncio.run(watcher.run_loop(connector, callback=_on_iter))
-    if findings:
+    async def _run() -> SentinelRunResult:
+        async with AgentScanClient(target) as client:
+            watcher.self_test(client)
+            console.print("[green]Sentinel self-test OK; ready.[/green]")
+            return await watcher.run_loop_result(client, callback=_on_iter)
+
+    try:
+        result = asyncio.run(_run())
+    except SentinelProbeError as error:
+        console.print(f"[bold red]Sentinel setup failed:[/bold red] {error}")
+        raise typer.Exit(code=1) from None
+    except Exception:
+        reference = str(uuid.uuid4())
         console.print(
-            f"\n[bold red]Sentinel detected {len(findings)} vulnerability/leakage event(s).[/bold red]"
+            "[bold red]Sentinel setup failed.[/bold red] Check the target URL, interval, "
+            f"iterations, canary and webhook configuration. Reference: {reference}"
+        )
+        raise typer.Exit(code=1) from None
+
+    if result.clean:
+        console.print("\n[bold green]Sentinel completed cleanly with 0 regressions.[/bold green]")
+    elif result.complete:
+        console.print(
+            f"\n[bold red]Sentinel detected {len(result.findings)} vulnerability/leakage event(s).[/bold red]"
         )
     else:
-        console.print("\n[bold green]Sentinel completed cleanly with 0 regressions.[/bold green]")
+        console.print(
+            f"\n[bold red]Sentinel evaluation failed ({result.status.value}).[/bold red] "
+            f"{result.error_message or 'No verdict was produced.'}"
+        )
+        raise typer.Exit(code=1)
 
 
 # ── export-guardrails ─────────────────────────────────────────────────────────
@@ -589,11 +632,39 @@ def export_guardrails(
 
 
 @app.command(name="mcp-serve")
-def mcp_serve() -> None:
+def mcp_serve(
+    allowed_host: list[str] | None = typer.Option(  # noqa: B008
+        None,
+        "--allowed-host",
+        help="Repeatable host allowlisted for live MCP scan/swarm targets.",
+    ),
+    allowed_cidr: list[str] | None = typer.Option(  # noqa: B008
+        None,
+        "--allowed-cidr",
+        help="Repeatable CIDR allowlisted for live MCP scan/swarm targets.",
+    ),
+    request_budget: int | None = typer.Option(  # noqa: B008
+        None, "--request-budget", help="Maximum target requests for live MCP scans."
+    ),
+    allow_live_targets: bool = typer.Option(  # noqa: B008
+        False,
+        "--allow-live-targets",
+        help="Enable live scan/swarm targets (disabled by default).",
+    ),
+    consent: bool = typer.Option(  # noqa: B008
+        False, "--consent", help="Explicit consent for live MCP scan/swarm targets."
+    ),
+) -> None:
     """Run native Model Context Protocol (MCP) JSON-RPC server over stdio."""
     from agentscan.mcp.server import run_mcp_server
 
-    run_mcp_server()
+    run_mcp_server(
+        allowed_hosts=allowed_host,
+        allowed_cidrs=allowed_cidr,
+        request_budget=request_budget,
+        allow_live_targets=allow_live_targets or consent,
+        consent=consent,
+    )
 
 
 # ── compliance ────────────────────────────────────────────────────────────────

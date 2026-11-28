@@ -44,6 +44,8 @@ jobs:
           uv run --no-sync ruff check .
           uv run --no-sync ruff format --check .
 
+      - name: Check tracked Markdown links
+        run: uv run --no-sync pytest tests/test_docs_links.py -q -p no:cacheprovider
       - name: Run Mypy type checking
         run: uv run --no-sync mypy agentscan
 

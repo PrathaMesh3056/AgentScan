@@ -43,13 +43,13 @@ The [frozen local method, version 3](../../benchmarks/evaluation/atk008_METHOD_v
 From the repository root, with the project and test dependencies installed, use a **new** output directory for each run:
 
 ```powershell
-python -m benchmarks.evaluation.atk008_run --output internal_docs/atk008-extractive-run-1
+python -m benchmarks.evaluation.atk008_run --output evaluation-output/atk008-extractive-run-1
 ```
 
 Read `summary.json`, `journal.json` and `scanner-reports.json` together. The default generator is an intentionally vulnerable **extractive engineering control**, not an LLM or evidence of model resistance. If a compatible local Qwen snapshot and runtime are already installed, the optional phase runs actual offline generations:
 
 ```powershell
-python -m benchmarks.evaluation.atk008_run --output internal_docs/atk008-model-run-1 --snapshot C:/path/to/already/cached/Qwen2.5-0.5B-Instruct/snapshot
+python -m benchmarks.evaluation.atk008_run --output evaluation-output/atk008-model-run-1 --snapshot C:/path/to/already/cached/Qwen2.5-0.5B-Instruct/snapshot
 ```
 
 The optional phase does not download weights or call an external provider. Missing weights, invalid answer format or incomplete generation remain unavailable or inconclusive; they cannot become clean outcomes. Keep extractive and model results separate, including their denominators. The local fixture establishes behavior only for its frozen corpus, retrieval rule, generator and answer contract. It does not validate a production vector index, customer data, arbitrary citations, permissions, multimodal material or downstream actions.

@@ -121,7 +121,7 @@ With the project, Playwright, an installed Chrome/Edge browser and a maintained
 sanitizer available, run from the repository root into a **fresh** private folder:
 
 ```powershell
-python -m benchmarks.evaluation.atk007_run --cases benchmarks/evaluation/atk007_cases.json --output internal_docs/atk007-controls-local --phase controls --channel chrome
+python -m benchmarks.evaluation.atk007_run --cases benchmarks/evaluation/atk007_cases.json --output evaluation-output/atk007-controls-local --phase controls --channel chrome
 ```
 
 This uses the real scanner runner and owned in-process consumer adapter. Every

@@ -777,6 +777,11 @@ class ScanReport(BaseModel):
         description="AI attacker configuration details if AI attacker was enabled.",
     )
 
+    exploit_consent: dict[str, Any] | None = Field(
+        default=None,
+        description="Effective EXPLOIT/DEEP consent state recorded for this scan.",
+    )
+
     trajectory: list[TurnRecord] = Field(
         default_factory=list,
         description="Per-turn payloads, replies, and tool calls from the live scan.",

@@ -156,7 +156,7 @@ uv run --no-sync python -m agentscan.cli scan --help
 uv run --no-sync python -m agentscan.cli list-attacks
 ```
 
-Use active tests on an authorized staging environment with appropriate target-side controls. Even standard prompts can induce tool actions if the target exposes them; scan mode is not an isolation boundary. Request retries can repeat target effects, and reports do not undo actions. Read the [execution sequence](../internal_docs/diagrams/04_scan_sequence.md) and [guard/sandbox boundary](../internal_docs/diagrams/15_guard_sandbox_flow.md).
+Use active tests on an authorized staging environment with appropriate target-side controls. Even standard prompts can induce tool actions if the target exposes them; scan mode is not an isolation boundary. Request retries can repeat target effects, and reports do not undo actions. Read [ARCHITECTURE.md](ARCHITECTURE.md), [GUARD.md](GUARD.md) and [SANDBOX.md](SANDBOX.md) for the execution and isolation boundaries.
 
 ### Authentication belongs to the target
 
@@ -198,7 +198,7 @@ The local, Git-ignored `bitinfusion.yaml` points at the existing BitInfusion cha
 uv run --no-sync python -m agentscan.cli scan --config .\bitinfusion.yaml --output bitinfusion-report.json
 ```
 
-This command selects the ordinary SCAN suite; it is broader than the six individually bounded probes authorized for the saved validation. On 7 October 2026, the six-probe run evaluated two variants each of prompt injection, jailbreak and system-prompt disclosure, with no findings and no model-provider calls. The target's actual vulnerability ground truth is unknown. This small sample is not a full assessment or an accuracy benchmark. Only metadata and evidence digests were saved under `internal_docs/diagrams/live-target/`; raw target replies were not retained there. Detector repairs made afterward have not been rerun against that external service.
+This command selects the ordinary SCAN suite; it is broader than the six individually bounded probes authorized for the saved validation. On 7 October 2026, the six-probe run evaluated two variants each of prompt injection, jailbreak and system-prompt disclosure, with no findings and no model-provider calls. The target's actual vulnerability ground truth is unknown. This small sample is not a full assessment or an accuracy benchmark. Only metadata and evidence digests were retained locally; raw target replies were not retained. Detector repairs made afterward have not been rerun against that external service.
 
 For static MCP client declarations, the audit supports flat `*.mcp.json` files and nested `mcpServers` in `mcp.json`, `mcp_config.json` and `claude_desktop_config.json`. Commands and environment values in declarations are not executed. Malformed declarations produce incomplete coverage; declared authentication or tool scope does not prove runtime enforcement. See [MCP compatibility](MCP_COMPATIBILITY.md).
 
@@ -220,7 +220,7 @@ uv run --no-sync python -m agentscan.cli scan https://agent.example.com/chat --e
 
 `openai/MODEL_ID` and `anthropic/MODEL_ID` are also supported external selectors. Configure only the selected key locally: `OPENAI_API_KEY`, `ANTHROPIC_API_KEY` or `GEMINI_API_KEY` (`GOOGLE_API_KEY` alias). An existing key does not enable external analysis by itself. The local CLI/dashboard can read the selected named key from the working directory's `.env`; service API/worker credentials must be administrator-injected. Do not put a key in the model ID, scan request or report.
 
-Local selection does not pull weights or fall back to a provider. Prepare weights separately, configure `OLLAMA_NO_CLOUD=1`, restart the daemon and apply independent outbound restrictions for enforced offline operation. Missing weights, keys or valid verdicts remain unavailable/inconclusive. A client's designation is not automatic secret detection: arbitrary confidential prose cannot be made non-sensitive by regex redaction. Full setup and retention rules are in [DATA_POLICY.md](DATA_POLICY.md) and the [three-path data-flow diagram](../internal_docs/diagrams/17_sensitive_data_flow.md).
+Local selection does not pull weights or fall back to a provider. Prepare weights separately, configure `OLLAMA_NO_CLOUD=1`, restart the daemon and apply independent outbound restrictions for enforced offline operation. Missing weights, keys or valid verdicts remain unavailable/inconclusive. A client's designation is not automatic secret detection: arbitrary confidential prose cannot be made non-sensitive by regex redaction. Full setup and retention rules are in [DATA_POLICY.md](DATA_POLICY.md) and [DATA_POLICY.md](DATA_POLICY.md).
 
 ## 6. Optional installation profiles
 
@@ -336,7 +336,7 @@ uv run --no-sync python -m agentscan.cli audit .\owned-project --scan-semgrep --
 uv run --no-sync python -m agentscan.cli audit .\owned-project --aibom --offline
 ```
 
-Without category flags, `audit` selects the built-in categories; Semgrep remains opt-in. Once a category flag is supplied, only selected categories run. Online dependency checks send package names/versions to OSV. Offline fallback, version ranges, malformed manifests, missing inputs and unexecuted scanners must remain visible in `audit_coverage`; an empty finding list is not a complete clean audit. Identity/RBAC checks assess declarations, not verified deployed entitlements. See the [audit diagram](../internal_docs/diagrams/12_audit_identity_flow.md).
+Without category flags, `audit` selects the built-in categories; Semgrep remains opt-in. Once a category flag is supplied, only selected categories run. Online dependency checks send package names/versions to OSV. Offline fallback, version ranges, malformed manifests, missing inputs and unexecuted scanners must remain visible in `audit_coverage`; an empty finding list is not a complete clean audit. Identity/RBAC checks assess declarations, not verified deployed entitlements. See [ARCHITECTURE.md](ARCHITECTURE.md) for the static-inspection boundary.
 
 ### Review repairs before applying
 
@@ -346,7 +346,7 @@ uv run --no-sync python -m agentscan.cli heal .\owned-project --report audit-rep
 uv run --no-sync python -m agentscan.cli fix .\owned-project --kind ast_patch,identity_shrink,guardrails --output fix-plan.json
 ```
 
-Read the plan/diffs and run project-specific validation. `--apply` is an explicit write operation; `--pr` additionally requests Git commit/push/PR work and requires a clean repository. Dynamic/ambiguous rewrites may remain manual. Interrupted multi-file edits leave private recovery receipts; review them before another apply. Recovery preserves later editor changes and does not reset Git. See [remediation and recovery](../internal_docs/diagrams/13_remediation_workflow.md).
+Read the plan/diffs and run project-specific validation. `--apply` is an explicit write operation; `--pr` additionally requests Git commit/push/PR work and requires a clean repository. Dynamic/ambiguous rewrites may remain manual. Interrupted multi-file edits leave private recovery receipts; review them before another apply. Recovery preserves later editor changes and does not reset Git. See [ARCHITECTURE.md](ARCHITECTURE.md) for the remediation boundary.
 
 ### Swarm and local smoke checks
 
@@ -361,7 +361,7 @@ Swarm `--offline` disables model generation, **not target network requests**. A 
 
 ### Guard and sandbox integration
 
-There is no standalone `agentscan guard` or `agentscan sandbox` CLI command. Capability/path/command guards and sandbox engines are integration components; callers must wrap the actual tool boundary. Starting a dashboard or running a scan does not automatically sandbox a remote target's tools. Container-backed execution needs a working Docker/runtime and disposable contained workspace. An explicitly selected audit-only subprocess tier records observations without providing isolation. Recovery preimages/private staging files are excluded from sandbox workspace copies. See the [guard/sandbox diagram](../internal_docs/diagrams/15_guard_sandbox_flow.md) and per-function inventories before integrating these components.
+There is no standalone `agentscan guard` or `agentscan sandbox` CLI command. Capability/path/command guards and sandbox engines are integration components; callers must wrap the actual tool boundary. Starting a dashboard or running a scan does not automatically sandbox a remote target's tools. Container-backed execution needs a working Docker/runtime and disposable contained workspace. An explicitly selected audit-only subprocess tier records observations without providing isolation. Recovery preimages/private staging files are excluded from sandbox workspace copies. See [GUARD.md](GUARD.md) and [SANDBOX.md](SANDBOX.md) before integrating these components.
 
 Other real command entry points include `init` (authorized target discovery), `watch` (repeated target checks), `export-guardrails` (write a gateway proposal) and `mcp-serve` (stdio MCP service). Review their `--help` and integration scope first. Exporting a policy does not apply it to a gateway; a watch webhook explicitly sends alerts to its configured destination.
 
@@ -379,7 +379,7 @@ uv run --no-sync python -m agentscan.cli api serve --host 127.0.0.1 --port 8081
 uv run --no-sync python -m agentscan.cli api worker
 ```
 
-A DEEP consumer is separately configured with `api worker --deep` and the deep dependencies/runtime; ordinary workers consume normal/high streams. API jobs accept enrolled HTTP(S) targets only. Local/external analysis permissions default false per tenant. External service jobs additionally need `non_sensitive` classification and administrator-configured provider model/key; per-tenant BYOK storage is not implemented. Durable acceptance, outbox redelivery, fenced leases, cancellation and PostgreSQL SSE replay are described in the [API sequence](../internal_docs/diagrams/05_api_job_sequence.md).
+A DEEP consumer is separately configured with `api worker --deep` and the deep dependencies/runtime; ordinary workers consume normal/high streams. API jobs accept enrolled HTTP(S) targets only. Local/external analysis permissions default false per tenant. External service jobs additionally need `non_sensitive` classification and administrator-configured provider model/key; per-tenant BYOK storage is not implemented. Durable acceptance, outbox redelivery, fenced leases, cancellation and PostgreSQL SSE replay are described in [api.md](api.md).
 
 ## 10. Troubleshooting and reading results
 
@@ -406,8 +406,8 @@ A DEEP consumer is separately configured with `api worker --deep` and the deep d
 
 Read findings as scoped evidence: what was submitted, what was observed, what actually executed and which checks were unavailable. Service reports retain redacted metadata/digests; local transcripts and recovery backups need operator-controlled access/retention. Compliance mappings are descriptive labels, not certification.
 
-For source-level understanding, start with the [architecture and complete function guide](../internal_docs/diagrams/README.md), then the [offline explorer](../internal_docs/diagrams/explorer.html). The inventories explain authored Python functions/methods and dashboard JavaScript, with signatures, control flow and source links. The [repair status](../internal_docs/diagrams/repair-status.md) records verification and remaining boundaries.
+For source-level understanding, start with [ARCHITECTURE.md](ARCHITECTURE.md) and [module_matrix.md](module_matrix.md). The private function inventories and offline explorer are not part of the public repository; source links in this guide point to tracked files.
 
 ## Guide verification
 
-This guide's commands/options were checked against the installed Typer help and local `uv` help; its 27 attack names, IDs and supported modes were checked against the current class definitions by AST. Help verification disabled eager dotenv loading. A historical [connectivity verification](../internal_docs/diagrams/startup-connectivity-verification.json) ran the sample fixture through the actual dashboard scan path: 118 of 118 tests evaluated, no module errors, and JSON/SARIF/HTML downloads succeeded. This used only a local fixed-refusal server, with no model or provider calls. That receipt predates the updated module evidence contracts and does not describe the current suite's evaluated count. It verifies historical routing and report handling, not detector accuracy.
+This guide's commands/options were checked against the installed Typer help and local `uv` help; its 27 attack names, IDs and supported modes were checked against the current class definitions by AST. Help verification disabled eager dotenv loading. A historical connectivity verification ran the sample fixture through the actual dashboard scan path: 118 of 118 tests evaluated, no module errors, and JSON/SARIF/HTML downloads succeeded. This used only a local fixed-refusal server, with no model or provider calls. That receipt predates the updated module evidence contracts and does not describe the current suite's evaluated count. It verifies historical routing and report handling, not detector accuracy.

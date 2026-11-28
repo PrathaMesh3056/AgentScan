@@ -102,8 +102,8 @@ separately. Private outputs/reference are withheld, preventing byte-identical re
 
 Run `python -m benchmarks.evaluation.atk001_local.run --output <fresh-dir>`;
 `--controls-only` runs adapter controls without loading a model. Existing pinned
-cached weights are required, never downloaded. Detailed local receipts are under
-`internal_docs/diagrams/atk001-local-model-20261011/` (Git-ignored).
+cached weights are required, never downloaded. Detailed local receipts are retained outside the public repository and are not
+published.
 
 ## Controlled document ingestion validation, 11 October 2026
 
@@ -132,8 +132,8 @@ percentages. Seven exposed seeds on one small model do not estimate general accu
 
 Replay with an existing cached-model environment:
 `python -m benchmarks.evaluation.atk005_document_http --output <fresh-owned-dir>`.
-No downloads/providers are allowed. Detailed receipts and the preserved initial
-failures are under `internal_docs/diagrams/atk005-document-20261011/` (Git-ignored).
+No downloads/providers are allowed. Detailed receipts and the preserved initial failures are retained outside the
+public repository and are not published.
 
 ## Preserved results, 7–8 October 2026
 
@@ -233,8 +233,8 @@ dynamically compiled regular expressions.
 
 ```powershell
 uv sync --locked --group dev --extra ui
-uv run --no-sync python -m benchmarks.evaluation.run --corpus benchmarks/evaluation/cases.json --output internal_docs/diagrams/evaluation/my-v1-regression
-uv run --no-sync python -m benchmarks.evaluation.run --corpus benchmarks/evaluation/holdout_v2.json --output internal_docs/diagrams/evaluation/my-v2-verification
+uv run --no-sync python -m benchmarks.evaluation.run --corpus benchmarks/evaluation/cases.json --output evaluation-output/my-v1-regression
+uv run --no-sync python -m benchmarks.evaluation.run --corpus benchmarks/evaluation/holdout_v2.json --output evaluation-output/my-v2-verification
 uv run --no-sync python -m pytest tests/test_detection_evidence.py tests/test_evaluation_metrics.py tests/test_evaluation_http.py tests/test_evaluation_dashboard.py
 ```
 
@@ -243,7 +243,8 @@ an exposed regression too. Create a separately authored and frozen corpus before
 making a fresh generalization claim. Do not refreeze a changed file after viewing
 predictions.
 
-Saved local receipts live under `internal_docs/diagrams/evaluation/`:
+Saved local receipts are retained outside the public repository; their relative
+names are listed here for reference:
 
 - `baseline/results.json` and `baseline/REPORT.md`: preserved pre-repair results.
 - `regression-2026-10-08/`: repaired original corpus, with unchanged dataset hash

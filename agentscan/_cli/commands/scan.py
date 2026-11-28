@@ -17,6 +17,7 @@ from rich.table import Table
 from agentscan._cli._shared import (
     _SEVERITY_COLOURS,
     _confirm_exploit_mode,
+    _exploit_consent_from_env,
     _fail_on_should_exit,
     _format_ssp_class,
     app,
@@ -81,6 +82,13 @@ def scan(  # noqa: PLR0913
     exploit: bool = typer.Option(
         False, "--exploit", help="Run active EXPLOIT modules alongside SCAN modules."
     ),
+    authorized: bool = typer.Option(
+        False,
+        "--authorized",
+        help="Confirm this is an authorized security test. Skips the interactive prompt; "
+        "required for --exploit/--deep in non-interactive runs "
+        "(or set AGENTSCAN_EXPLOIT_CONSENT=1).",
+    ),
     system_prompt: str | None = typer.Option(
         None,
         "--system-prompt",
@@ -116,7 +124,8 @@ def scan(  # noqa: PLR0913
     attacker_model: str | None = typer.Option(
         None,
         "--attacker-model",
-        help="Attacker model compatible with selected local or external analysis. Implies --exploit.",
+        help="Attacker model compatible with selected local or external analysis. "
+        "Active AI attacker modules require an explicit --exploit.",
     ),
     judge_model: str | None = typer.Option(
         None,
@@ -293,9 +302,8 @@ def scan(  # noqa: PLR0913
         escalation_turns = int(cfg["escalation_turns"])
     if llm_log is None and cfg.get("llm_log"):
         llm_log = Path(cfg["llm_log"])
-    # The AI attacker is an EXPLOIT-mode module, so enabling it implies --exploit.
-    if attacker_model:
-        exploit = True
+    # Selecting the AI attacker does not enable EXPLOIT mode: active modules need
+    # an explicit --exploit (or exploit: true in the profile).
 
     # Enable recording if the user wants to see or save the full exchange (target
     # traffic and/or LLM attacker/judge calls).
@@ -471,8 +479,26 @@ def scan(  # noqa: PLR0913
         + ([ScanMode.DEEP] if deep else [])
     )
 
+    consent_source: str | None = None
+
+    if attacker_model and not exploit:
+        console.print(
+            "[yellow][WARN] --attacker-model is configured, but EXPLOIT mode is not enabled. "
+            "Active AI attacker and other EXPLOIT modules require an explicit --exploit; "
+            "continuing with SCAN-mode modules only.[/yellow]"
+        )
+
     if exploit or deep:
-        _confirm_exploit_mode()
+        _confirm_exploit_mode(
+            authorized=authorized,
+            require_non_tty_consent=True,
+        )
+        if authorized:
+            consent_source = "--authorized"
+        elif _exploit_consent_from_env():
+            consent_source = "environment"
+        else:
+            consent_source = "interactive"
 
     # Local synthetic controls check protocol behavior only, not detector accuracy.
     cal_result = None
@@ -522,6 +548,14 @@ def scan(  # noqa: PLR0913
             escalation_model=escalation_model,
             seed_techniques_used=[],
         )
+
+    report.exploit_consent = {
+        "exploit": exploit,
+        "deep": deep,
+        "consent_required": bool(exploit or deep),
+        "consent_granted": True if (exploit or deep) else None,
+        "consent_source": consent_source,
+    }
 
     # Keep catalog policy findings separate from agent execution findings.
     catalog_scope = report.assessment_scope == "mcp_catalog_policy"

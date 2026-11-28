@@ -149,6 +149,8 @@ class GatewayRuntime:
         catalog: ToolCatalog,
         metrics: MetricsRegistry | None = None,
         clock: Callable[[], datetime] | None = None,
+        upstream_alive: Callable[[], bool] | None = None,
+        is_shutting_down: Callable[[], bool] | None = None,
     ) -> None:
         if (store.tenant, store.gateway_id, store.chain_id) != (
             settings.tenant,
@@ -168,6 +170,8 @@ class GatewayRuntime:
         self._catalog_lock = asyncio.Lock()
         self._idempotency_lock = asyncio.Lock()
         self._sink_failed = False
+        self._upstream_alive = upstream_alive if upstream_alive is not None else (lambda: True)
+        self._is_shutting_down = is_shutting_down if is_shutting_down is not None else (lambda: False)
 
     async def list_tools(self, context: GatewayRequestContext) -> Sequence[Tool]:
         if not isinstance(context.identity, VerifiedIdentity) or context.session is None:
@@ -413,8 +417,16 @@ class GatewayRuntime:
                 meta=upstream_meta,
                 timeout_seconds=self._settings.upstream_timeout_seconds,
             )
+        except asyncio.CancelledError:
+            if self._is_shutting_down():
+                raise
+            status: _OutcomeStatus = "unknown"
+            summary_text = "upstream effect unconfirmed"
+            returned = tool_error_result(
+                ErrorCode.OUTCOME_UNKNOWN, "upstream effect could not be confirmed"
+            )
         except UpstreamTimeout:
-            status: _OutcomeStatus = "timeout"
+            status = "timeout"
             summary_text = "upstream call timed out"
             returned = tool_error_result(ErrorCode.TIMEOUT, "upstream request timed out")
         except UpstreamError as exc:
@@ -518,6 +530,7 @@ class GatewayRuntime:
                 writer_lease_held=self._store.lease_held,
                 receipt_sink_healthy=self._store.healthy and not self._sink_failed,
                 upstream_catalog_loaded=self._catalog.loaded,
+                upstream_lost=not self._upstream_alive(),
             )
         except Exception:
             return Readiness()
@@ -527,6 +540,12 @@ class GatewayRuntime:
             try:
                 tools = await self._upstream.list_tools()
                 self._catalog.replace(tools)
+            except asyncio.CancelledError:
+                if self._is_shutting_down():
+                    raise
+                raise GatewayError(
+                    ErrorCode.GATEWAY_UNAVAILABLE, "upstream catalog unavailable", 503
+                ) from None
             except Exception:
                 raise GatewayError(
                     ErrorCode.GATEWAY_UNAVAILABLE, "upstream catalog unavailable", 503

@@ -4,7 +4,7 @@ The optional service uses FastAPI for authentication and scan submission, Redis 
 
 ## Service boundaries
 
-See the [deployment and trust-boundary diagram](../internal_docs/diagrams/07_deployment_trust_boundaries.md) and the [component architecture](../internal_docs/diagrams/03_components.md). Diagram sources and previews are maintained in `internal_docs/diagrams/`.
+See [ARCHITECTURE.md](ARCHITECTURE.md) for component boundaries and [RELEASE_READINESS.md](RELEASE_READINESS.md) for deployment responsibilities.
 
 Enrollment is an operator action. The same credential cannot request another tenant's token. The service-wide host list is an outer admission boundary. Each tenant also needs exact permitted origins (scheme, hostname and port), private-network CIDRs and scan quotas. HTTP initial URLs and every redirect are checked. Service connections resolve once per connection and connect to an approved literal IP while retaining the original TLS/Host identity. Mixed public/private DNS answers are rejected unless every address is permitted. Link-local metadata destinations, multicast and reserved destinations remain blocked. Infrastructure egress enforcement and identity-provider federation remain deployment responsibilities.
 
@@ -118,7 +118,7 @@ SSE data frames contain JSON, for example `data: {"status":"completed","progress
 
 ## Delivery and failure behavior
 
-See the [API submission and worker sequence](../internal_docs/diagrams/05_api_job_sequence.md) and [job/scan state machine](../internal_docs/diagrams/06_job_state_machine.md).
+See [ARCHITECTURE.md](ARCHITECTURE.md) for the service boundary and the delivery behavior below.
 
 The worker leaves an entry pending when it cannot persist a terminal result, loses its lease or shuts down. A replacement consumer uses `XAUTOCLAIM` after the idle threshold. A database lease token fences stale owners from committing results. A terminal redelivery is acknowledged without rerunning the scan. Retry counters live in PostgreSQL; exhausted expired attempts become a durable failed result before ACK. Malformed deliveries without a valid persisted scan identity are quarantined with a bounded Redis receipt.
 
@@ -169,6 +169,6 @@ Private targets require an explicit narrow CIDR as well as their origin. Quotas 
 
 Analysis defaults to `analysis_mode: "deterministic"` and `data_classification: "sensitive"`. `"local"` requires tenant permission and an administrator-operated offline loopback model. `"external"` requires explicit client designation `data_classification: "non_sensitive"`, tenant permission and the administrator's provider/model/key configuration. Both submission and worker execution reject sensitive external analysis. Neither a configured key nor a permitted tenant changes these defaults, and availability failures never trigger an external fallback.
 
-External analysis can send relevant objectives and target responses to the selected provider; classification is the client's decision. Keys and arbitrary provider URLs are never accepted in scan requests. Service keys are administrator-configured rather than per-tenant BYOK; a client can use its own key through a locally owned CLI/dashboard process. See [data policy](DATA_POLICY.md) for external setup, offline setup, encryption, redaction and retention, and [data-flow diagram](../internal_docs/diagrams/17_sensitive_data_flow.md) for the three paths.
+External analysis can send relevant objectives and target responses to the selected provider; classification is the client's decision. Keys and arbitrary provider URLs are never accepted in scan requests. Service keys are administrator-configured rather than per-tenant BYOK; a client can use its own key through a locally owned CLI/dashboard process. See [data policy](DATA_POLICY.md) for external setup, offline setup, encryption, redaction and retention, and [ARCHITECTURE.md](ARCHITECTURE.md) for the three analysis paths.
 
 Database encryption key and tenant policy settings are required in the Compose and Kubernetes templates. Existing rolling deployments need a coordinated schema/config rollout; these local checks do not establish deployed cluster isolation.

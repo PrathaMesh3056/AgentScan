@@ -572,7 +572,7 @@
        DESIGNLAB SIDEBAR NAVIGATION
        ======================================================== -->
   <aside id="sidebar" class="border-r flex flex-col justify-between shrink-0 h-screen sticky top-0 z-40 select-none"
-    style="border-color: var(--border)">
+    style="border-color: var(--border)" inert aria-hidden="true">
 
     <div>
       <div class="brand-header flex items-center px-3.5 border-b h-16 transition-all"
@@ -770,6 +770,7 @@
       <div class="flex items-center gap-1.5 sm:gap-3 relative min-w-0 flex-1 sm:flex-initial" id="top-search-wrapper">
         <!-- Mobile hamburger menu button -->
         <button id="btn-mobile-menu" onclick="toggleSidebarMobile(true)" aria-label="Open Navigation Menu"
+          aria-controls="sidebar" aria-expanded="false"
           class="lg:hidden w-8 h-8 rounded-xl border bg-white text-[#1A1A1A] hover:bg-[#F2EFE8] cursor-pointer shadow-xs shrink-0 flex items-center justify-center"
           style="border-color: var(--border)">
           <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">

@@ -2,7 +2,7 @@
 
 AgentScan is a Python assessment application with three entry points: the terminal, a local dashboard and an optional multi-tenant service. They share the scan models, attack registry, connectors and report formats. Feature registration means that code exists; execution still depends on applicability, installed packages, target configuration and evidence.
 
-The full use-case, component, sequence, state, data-flow, deployment and function diagrams are saved locally in **`internal_docs/diagrams/`**, as requested. That folder also contains an offline searchable explorer and inventories of authored Python and dashboard JavaScript functions. It is Git-ignored because it contains local verification receipts and private working material. It is excluded from distribution packages. Public installation and operation instructions are in [START_HERE.md](START_HERE.md).
+This document is the public architecture summary. Detailed use-case, component, sequence, state, data-flow, deployment and function inventories are not published because they contain local verification receipts and private working material; they are excluded from distribution packages. Public installation and operation instructions are in [START_HERE.md](START_HERE.md).
 
 ## Execution and evidence
 
@@ -26,7 +26,7 @@ UTF-8 document digest. Missing evidence is inconclusive, and unsupported connect
 remain unavailable. Findings additionally require a complete known private
 reference. This is target-reported correlation, without independent causal or
 tool-execution proof. See [the adapter contract](modules/indirect_injection.md)
-and [document sequence](../internal_docs/diagrams/atk005-document-20261011/document-flow.md).
+and the adapter contract for the request/response shape and evidence fields.
 
 The [separately authored retrieval validation](modules/atk005_retrieval_validation.md)
 uses an owned three-document SQLite FTS5 corpus per probe. Search derives from
@@ -34,7 +34,7 @@ the clean task and ranks candidates with BM25; event-chain checks bind actual
 stored, selected, callback-visible and rendered model-input content. That
 benchmark application is separate from the shipped scanner, which does not own
 a client's retrieval engine or install the benchmark's numeric output control.
-See the [retrieval sequence](../internal_docs/diagrams/atk005-retrieval-20261011/retrieval-flow.md).
+See [the retrieval validation](modules/atk005_retrieval_validation.md) for the corpus and event-chain checks.
 
 DEEP reference probes load a pinned local model through `agentscan.neural`. Those observations describe that local reference model, not the hidden states of a remote application. Reference observations do not contribute to the remote-target score. CPU execution, GPU execution and a Kubernetes deployment require separate verification.
 

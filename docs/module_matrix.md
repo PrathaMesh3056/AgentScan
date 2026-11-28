@@ -1,6 +1,6 @@
 # Complete Module Engineering Status Matrix
 
-This document lists engineering features in **AgentScan**. Status indicates implementation presence, not verified production readiness or detector accuracy. The current [architecture and function guide](../internal_docs/diagrams/README.md) and [repair status](../internal_docs/diagrams/repair-status.md) provide source coverage, verification and limits.
+This document lists engineering features in **AgentScan**. Status indicates implementation presence, not verified production readiness or detector accuracy. The current [architecture guide](ARCHITECTURE.md) and [release readiness](RELEASE_READINESS.md) provide component coverage, verification and limits.
 
 ---
 

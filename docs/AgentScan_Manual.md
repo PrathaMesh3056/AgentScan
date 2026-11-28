@@ -2,7 +2,7 @@
 
 Welcome to **AgentScan**, the open-source security scanner designed specifically for AI agents. This manual provides you with a complete, start-to-end guide on what AgentScan is, how to use it, how its internals work, and how you can extend it.
 
-Use the [current architecture and function guide](../internal_docs/diagrams/README.md) for source-resolved call flows and the [data policy](DATA_POLICY.md) for deterministic/local/external analysis. Feature presence and synthetic smoke checks do not establish production readiness or independent detection accuracy.
+Use the [architecture guide](ARCHITECTURE.md) for component boundaries and the [data policy](DATA_POLICY.md) for deterministic/local/external analysis. Feature presence and synthetic smoke checks do not establish production readiness or independent detection accuracy.
 
 ---
 

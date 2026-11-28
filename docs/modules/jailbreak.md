@@ -131,8 +131,8 @@ qualify as safe. Zero baseline disclosures cannot prove attack effectiveness or
 a measured defense improvement.
 
 ```powershell
-python -m benchmarks.evaluation.atk002_run --output internal_docs/atk002-control-v1
-python -m benchmarks.evaluation.atk002_run --output internal_docs/atk002-model-v1 --snapshot 'D:/path/to/existing/cached/snapshot'
+python -m benchmarks.evaluation.atk002_run --output evaluation-output/atk002-control-v1
+python -m benchmarks.evaluation.atk002_run --output evaluation-output/atk002-model-v1 --snapshot 'D:/path/to/existing/cached/snapshot'
 ```
 
 The first command is an explicitly authored wiring control. The optional model

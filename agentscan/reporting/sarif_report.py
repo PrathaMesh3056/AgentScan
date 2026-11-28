@@ -128,6 +128,7 @@ def to_sarif(report: ScanReport | IdentityReport) -> dict[str, Any]:
                 "tests_run": report.tests_run,
                 "module_errors": report.module_errors,
                 "module_outcomes": report.module_outcomes,
+                "exploit_consent": report.exploit_consent,
             }
         }
         run["invocations"] = [{"executionSuccessful": report.status == "COMPLETE"}]

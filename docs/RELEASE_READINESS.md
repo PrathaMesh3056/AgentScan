@@ -3,26 +3,23 @@
 Updated **11 October 2026** for source version **0.2.0**. The default deterministic CLI and local dashboard do not require Ollama, Torch, a GPU or Kubernetes. Select and validate the optional profiles needed for a deployment.
 
 The [ATK-001 update](modules/prompt_injection.md) and dashboard charts have a
-[completion receipt](../internal_docs/diagrams/atk001-completion-verification.json).
-The [earlier detector-only receipt](../internal_docs/diagrams/atk001-verification.json)
-retains its original source snapshot. Earlier
+completion record. The earlier detector-only verification retains its original
+source snapshot. Earlier
 CPU-image and live-service proofs below retain their 9 October source scope;
 they were not rerun for this module change. The later chart completion has a
 separate dated verification record. Ordinary Linux/Python 3.12 mypy passed
 on 182 source files on 10 October after a behavior-preserving trace typing repair;
-[the type-check record](../internal_docs/diagrams/atk001-completion-type-report.md)
-retains the Windows Application Control failures and the Linux environment's
-scope. The complete Python 3.12/3.13 CI matrix remains a release requirement.
+the type-check record retains the Windows Application Control failures and the
+Linux environment's scope. The complete Python 3.12/3.13 CI matrix remains a release requirement.
 Synthetic checks do not certify a release or deployment.
 
 The 11 October [ATK-005 document profile](modules/indirect_injection.md) has current
 functional regression, owned HTTP/model-ingestion and fresh package evidence.
 Its Windows mypy attempt was blocked by Application Control before checking code;
-that historical [document QA report](../internal_docs/diagrams/atk005-document-20261011/report.md)
-retains its blocked verdict. Docker became available later on 11 October, and
+that historical document QA report retains its blocked verdict. Docker became available later on 11 October, and
 ordinary Linux mypy passed on all 182 current production Python files with network
-disconnected during analysis. The [current receipt](../internal_docs/diagrams/atk001-completion-type-linux-retrieval-20261011-initial-verification.json)
-records the unchanged source snapshot and removal of the owned checking container.
+disconnected during analysis. The current verification record documents the unchanged source snapshot and
+removal of the owned checking container.
 The [separately authored retrieval step](modules/atk005_retrieval_validation.md)
 also completed; its 4/6 benign result remains a utility limitation.
 
@@ -55,7 +52,7 @@ uv sync --frozen --no-dev --extra ui --extra api --extra telemetry
 uv run --no-sync python -m agentscan.cli --help
 ```
 
-This command is a setup instruction; it was not run against the user's current environment during the inventory. Local evidence is saved in `internal_docs/diagrams/runtime-readiness.json`, `deep-runtime-readiness.json`, `cpu-image-verification.json`, `release-gates-1007-junit.xml` and `deployment-templates-1008-junit.xml`. That directory is intentionally private and ignored by Git.
+This command is a setup instruction; it was not run against the user's current environment during the inventory. Local evidence is retained outside the public repository and is not published.
 
 ## Image and local service preparation
 
@@ -109,6 +106,6 @@ These template checks inspect security defaults and configuration structure. The
 
 ## Preserve architecture safely
 
-The requested diagrams/function guides remain in `internal_docs/diagrams/`; `internal_docs/` is Git-ignored and excluded from wheel/sdist/build contexts. It also contains private historical audits and local verification data. Do not remove the whole ignore rule or force-add the entire directory.
+Detailed diagrams/function guides and private historical audits remain outside the public repository and are excluded from wheel/sdist/build contexts. Do not force-add private working material to the public tree.
 
 For a public/reviewable architecture set, manually review and copy only selected sanitized Mermaid sources and explanatory Markdown into a tracked folder such as `docs/architecture/`, remove target-specific data and audit evidence, and link it from the tracked documentation. Keep detailed receipts/local explorers private unless separately reviewed. Root diagram sources can be regenerated from their source snapshots, but static call graphs cannot resolve every runtime receiver or plugin callback.

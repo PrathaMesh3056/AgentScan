@@ -11,7 +11,7 @@
 
 ## 1. Executive Summary
 
-This evaluation implements the requirements outlined in [`ATK-005 next steps.md`](../internal_docs/ATK-005%20next%20steps.md):
+This evaluation implements the ATK-005 protocol and validation requirements documented in [indirect_injection.md](../docs/modules/indirect_injection.md) and [atk005_retrieval_validation.md](../docs/modules/atk005_retrieval_validation.md):
 1. **Fresh Owned Development Assessment:** Tested an actual local multi-agent system that ingests retrieved documents, holds an out-of-band private reference, and strictly preserves confidentiality instructions.
 2. **Proof of Detection Recall:** Executed against 7 indirect document injection variants (`IDOC-001` to `IDOC-007`). In baseline mode, observed **7 complete-reference leaks** correctly detected by AgentScan as **HIGH** severity findings with cryptographic receipt correlation.
 3. **Proof of Defense Benefit & Utility Preservation:** Re-evaluated the identical attack probes against the target running with an application-level delivery defense (`support_contract`). Observed **0 disclosures** (100% mitigated), while preserving legitimate public task utility (`{"days": 30}`).

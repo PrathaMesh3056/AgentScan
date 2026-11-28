@@ -42,6 +42,10 @@ class FixPlan(BaseModel):
         default_factory=list,
         description="All planned remediation actions.",
     )
+    sensitive: bool = Field(
+        default=True,
+        description="Remediation artifacts are sensitive and must be redacted.",
+    )
     _root_path: Path | None = PrivateAttr(default=None)
     _expected_files: dict[str, str | None] = PrivateAttr(default_factory=dict)
 

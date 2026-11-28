@@ -1,0 +1,4 @@
+# Synthetic fixture for QA-046. Not real credentials.
+api_key: "sk-proj-QA046FakeYamlQuotedSecret1234567890abcdef"
+service:
+  client_secret: sk-proj-QA046FakeYamlUnquotedSecret1234567890abcdef

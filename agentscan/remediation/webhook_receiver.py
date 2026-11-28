@@ -21,6 +21,7 @@ from agentscan.remediation.engine import RemediationEngine
 from agentscan.remediation.models import FixConflictError
 from agentscan.remediation.patch_generator import generate_github_pr_payload, generate_unified_patch
 from agentscan.remediation.paths import contained_path
+from agentscan.remediation.redaction import redact
 
 app = FastAPI(
     title="AgentScan Self-Healing Webhook Receiver",
@@ -171,14 +172,16 @@ def receive_alert(
             stream.write(patch_content)
         logger.info(f"Wrote self-healing patch to {out_file}")
 
-    return {
-        "status": "remediation_planned" if not payload.apply else "remediation_applied",
-        "total_actions": plan.total_actions,
-        "applied_count": applied_count,
-        "paths_affected": plan.paths_affected,
-        "patch": patch_content,
-        "pr_payload": pr_payload,
-    }
+    return redact(
+        {
+            "status": "remediation_planned" if not payload.apply else "remediation_applied",
+            "total_actions": plan.total_actions,
+            "applied_count": applied_count,
+            "paths_affected": plan.paths_affected,
+            "patch": patch_content,
+            "pr_payload": pr_payload,
+        }
+    )
 
 
 @app.post("/webhook/heal")
